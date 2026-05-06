@@ -1,10 +1,15 @@
 import { NestFactory } from '@nestjs/core';
+
+import helmet from 'helmet';
+
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     bodyParser: false,
   });
+
+  app.use(helmet());
 
   app.setGlobalPrefix('api/v1');
 

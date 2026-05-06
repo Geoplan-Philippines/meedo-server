@@ -7,15 +7,23 @@ import { HealthModule } from './core/health/health.module';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard } from '@nestjs/throttler';
+import { RateLimitModule } from './core/security/rate-limit.module';
 
 @Module({
   imports: [
     AuthModule.forRoot({ auth }),
-    HealthModule
+    HealthModule,
+    RateLimitModule
   ],
   controllers: [AppController],
   providers: [
-    AppService
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}
