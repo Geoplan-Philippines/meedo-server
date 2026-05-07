@@ -5,11 +5,13 @@ export class CreateTicketCategoryDTO {
   @MaxLength(100)
   name!: string;
 
-  // @IsUUID()
-  // organizationId!: string;
-
   @IsOptional()
   @IsString()
   @MaxLength(255)
   description!: string;
+
+
+  //temp
+  @IsString()
+  organizationId!: string;
 }
