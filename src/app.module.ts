@@ -11,6 +11,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { RateLimitModule } from './core/security/rate-limit.module';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
+import { NewsletterModule } from './modules/newsletter/newsletter.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { MaintenanceModule } from './modules/maintenance/maintenance.module';
     HealthModule,
     RateLimitModule,
     MaintenanceModule,
+    NewsletterModule
   ],
   controllers: [AppController],
   providers: [

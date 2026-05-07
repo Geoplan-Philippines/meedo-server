@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { TicketCategories } from '@prisma/client';
+import { TicketCategory } from '@prisma/client';
 
 import { PrismaService } from 'src/core/database/prisma.service';
 import { CreateTicketCategoryDTO } from './dto/create-ticket-category.dto';
@@ -10,14 +10,14 @@ export class TicketCategoriesService {
 
   async createTicketCategory(
     createTicketCategoryDTO: CreateTicketCategoryDTO
-  ): Promise<TicketCategories> {
-    return this.prisma.ticketCategories.create({
+  ): Promise<TicketCategory> {
+    return this.prisma.ticketCategory.create({
       data: createTicketCategoryDTO,
     });
   }
 
-  async getAllTicketCategories(): Promise<TicketCategories[]> {
-    return this.prisma.ticketCategories.findMany();
+  async getAllTicketCategories(): Promise<TicketCategory[]> {
+    return this.prisma.ticketCategory.findMany();
   }
 
   async getTicketCategoryById(id: string): Promise<TicketCategories | null> {

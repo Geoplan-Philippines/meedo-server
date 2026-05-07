@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Post, Patch, Delete, Param, } from '@nestjs/common';
 
-import { TicketCategories } from '@prisma/client';
+import { TicketCategory } from '@prisma/client';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import { TicketCategoriesService } from './ticket-categories.service';
@@ -14,13 +14,13 @@ export class TicketCategoriesController {
   @Post()
   async create(
     @Body() createTicketCategoryDTO: CreateTicketCategoryDTO
-  ): Promise<TicketCategories> {
+  ): Promise<TicketCategory> {
     return this.ticketCategoriesService.createTicketCategory(createTicketCategoryDTO);
   }
 
   @AllowAnonymous()
   @Get()
-  async findAll(): Promise<TicketCategories[]> {
+  async findAll(): Promise<TicketCategory[]> {
     return this.ticketCategoriesService.getAllTicketCategories();
   }
 
