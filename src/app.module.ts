@@ -10,12 +10,14 @@ import { AppService } from './app.service';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { RateLimitModule } from './core/security/rate-limit.module';
+import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 
 @Module({
   imports: [
     AuthModule.forRoot({ auth }),
     HealthModule,
-    RateLimitModule
+    RateLimitModule,
+    MaintenanceModule,
   ],
   controllers: [AppController],
   providers: [

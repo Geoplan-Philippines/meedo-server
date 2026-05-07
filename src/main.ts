@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
 
 import helmet from 'helmet';
 
@@ -12,6 +13,13 @@ async function bootstrap() {
   app.use(helmet());
 
   app.setGlobalPrefix('api/v1');
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true, 
+    })
+  );
 
   app.enableCors({
     origin: process.env.CORS_ALLOWED_ORIGINS?.split(',') ?? ['http://localhost:4200'],
