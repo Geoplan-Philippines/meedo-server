@@ -12,7 +12,15 @@ export class TicketCategoriesService {
     createTicketCategoryDTO: CreateTicketCategoryDTO
   ): Promise<TicketCategory> {
     return this.prisma.ticketCategory.create({
-      data: createTicketCategoryDTO,
+      data: {
+        name: createTicketCategoryDTO.name,
+        description: createTicketCategoryDTO.description,
+        organization: {
+          connect: {
+            id: createTicketCategoryDTO.organizationId,
+          },
+        },
+      },
     });
   }
 
@@ -20,8 +28,8 @@ export class TicketCategoriesService {
     return this.prisma.ticketCategory.findMany();
   }
 
-  async getTicketCategoryById(id: string): Promise<TicketCategories | null> {
-    return this.prisma.ticketCategories.findUnique({
+  async getTicketCategoryById(id: string): Promise<TicketCategory | null> {
+    return this.prisma.ticketCategory.findUnique({
       where: { id },
     });
   }
@@ -29,15 +37,15 @@ export class TicketCategoriesService {
   async updateTicketCategory(
     id: string,
     data: Partial<CreateTicketCategoryDTO>
-  ): Promise<TicketCategories> {
-    return this.prisma.ticketCategories.update({
+  ): Promise<TicketCategory> {
+    return this.prisma.ticketCategory.update({
       where: { id },
       data,
     });
   }
 
-  async deleteTicketCategory(id: string): Promise<TicketCategories> {
-    return this.prisma.ticketCategories.delete({
+  async deleteTicketCategory(id: string): Promise<TicketCategory> {
+    return this.prisma.ticketCategory.delete({
       where: { id },
     });
   }

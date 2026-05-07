@@ -26,7 +26,7 @@ export class TicketCategoriesController {
 
   @AllowAnonymous()
   @Get(':id')
-  async findOne(@Param('id') id: string): Promise<TicketCategories | null> {
+  async findOne(@Param('id') id: string): Promise<TicketCategory | null> {
     return this.ticketCategoriesService.getTicketCategoryById(id);
   }
 
@@ -35,13 +35,13 @@ export class TicketCategoriesController {
   async update(
     @Param('id') id: string,
     @Body() body: Partial<CreateTicketCategoryDTO>
-  ): Promise<TicketCategories> {
+  ): Promise<TicketCategory> {
     return this.ticketCategoriesService.updateTicketCategory(id, body);
   }
 
   @AllowAnonymous()
   @Delete(':id')
-  async remove(@Param('id') id: string): Promise<TicketCategories> {
+  async remove(@Param('id') id: string): Promise<TicketCategory> {
     return this.ticketCategoriesService.deleteTicketCategory(id);
   }
 }
