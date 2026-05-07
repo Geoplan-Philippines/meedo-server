@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Patch, Delete, Param, } from '@nestjs/common';
 
 import { TicketCategories } from '@prisma/client';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
@@ -23,4 +23,27 @@ export class TicketCategoriesController {
   async findAll(): Promise<TicketCategories[]> {
     return this.ticketCategoriesService.getAllTicketCategories();
   }
+
+  @AllowAnonymous()
+  @Get(':id')
+  async findOne(@Param('id') id: string): Promise<TicketCategories | null> {
+    return this.ticketCategoriesService.getTicketCategoryById(id);
+  }
+
+  @AllowAnonymous()
+  @Patch(':id')
+  async update(
+    @Param('id') id: string,
+    @Body() body: Partial<CreateTicketCategoryDTO>
+  ): Promise<TicketCategories> {
+    return this.ticketCategoriesService.updateTicketCategory(id, body);
+  }
+
+  @AllowAnonymous()
+  @Delete(':id')
+  async remove(@Param('id') id: string): Promise<TicketCategories> {
+    return this.ticketCategoriesService.deleteTicketCategory(id);
+  }
 }
+
+

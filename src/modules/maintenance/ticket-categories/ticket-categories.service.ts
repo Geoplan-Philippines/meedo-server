@@ -19,4 +19,27 @@ export class TicketCategoriesService {
   async getAllTicketCategories(): Promise<TicketCategories[]> {
     return this.prisma.ticketCategories.findMany();
   }
+
+  async getTicketCategoryById(id: string): Promise<TicketCategories | null> {
+    return this.prisma.ticketCategories.findUnique({
+      where: { id },
+    });
+  }
+
+  async updateTicketCategory(
+    id: string,
+    data: Partial<CreateTicketCategoryDTO>
+  ): Promise<TicketCategories> {
+    return this.prisma.ticketCategories.update({
+      where: { id },
+      data,
+    });
+  }
+
+  async deleteTicketCategory(id: string): Promise<TicketCategories> {
+    return this.prisma.ticketCategories.delete({
+      where: { id },
+    });
+  }
+
 }

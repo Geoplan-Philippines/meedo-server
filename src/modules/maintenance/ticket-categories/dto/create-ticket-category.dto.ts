@@ -9,4 +9,5 @@ export class CreateTicketCategoryDTO {
   @IsString()
   @MaxLength(255)
   description!: string;
+
 }
