@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Patch, Delete, Param, } from '@nestjs/common';
+import { Body, Controller, Get, Post, Patch, Delete, Param } from '@nestjs/common';
 
 import { TicketCategory } from '@prisma/client';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';

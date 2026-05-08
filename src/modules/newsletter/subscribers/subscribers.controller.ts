@@ -1,8 +1,10 @@
 import { Controller, Get, Post, Body } from '@nestjs/common';
-import { SubscribersService } from './subscribers.service';
-import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
-import { CreateSubscriberDTO } from './dto/create-subscriber.dto';
+
 import { NewsletterSubscriber } from '@prisma/client';
+import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
+
+import { CreateSubscriberDTO } from './dto/create-subscriber.dto';
+import { SubscribersService } from './subscribers.service';
 
 @Controller('newsletter/subscribers')
 export class SubscribersController {
