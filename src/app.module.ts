@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+
 import { AuthModule } from '@thallesp/nestjs-better-auth';
 
 import { auth } from "./core/auth/auth";
@@ -14,14 +16,19 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import { RateLimitModule } from './core/security/rate-limit.module';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { NewsletterModule } from './modules/newsletter/newsletter.module';
+import { TimekeepingModule } from './modules/timekeeping/timekeeping.module';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
     AuthModule.forRoot({ auth }),
     HealthModule,
     RateLimitModule,
     MaintenanceModule,
-    NewsletterModule
+    NewsletterModule,
+    TimekeepingModule
   ],
   controllers: [AppController],
   providers: [
@@ -40,4 +47,5 @@ import { NewsletterModule } from './modules/newsletter/newsletter.module';
     },
   ],
 })
+
 export class AppModule {}
