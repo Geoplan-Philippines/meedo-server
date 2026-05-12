@@ -1,0 +1,15 @@
+node_modules
+dist
+npm-debug.log
+bun.lockb
+.git
+.env
+.claude
+CLAUDE.md
+README.md
+test
+*.spec.ts
+*.test.ts
+docker-compose*.yml
+Dockerfile
+.gitignore

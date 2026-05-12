@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { TicketCategory } from '@prisma/client';
 
-import { PrismaService } from 'src/core/database/prisma.service';
+import { PrismaService } from '../../../core/database/prisma.service';
 import { CreateTicketCategoryDTO } from './dto/create-ticket-category.dto';
 
 @Injectable()

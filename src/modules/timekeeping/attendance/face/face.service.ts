@@ -1,6 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { Injectable, InternalServerErrorException, RequestTimeoutException, ServiceUnavailableException } from '@nestjs/common';
-import { PrismaService } from 'src/core/database/prisma.service';
+import { PrismaService } from '../../../../core/database/prisma.service';
 import { CreateFaceProfileDTO } from './dto/create-face-profile.dto';
 import { CreateFaceEmbeddingDTO } from './dto/create-face-embedding.dto';
 import { FaceEmbedding, FaceProfile } from '@prisma/client';
