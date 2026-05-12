@@ -1,116 +1,104 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
   extensions = [vector]
 }
 
 model User {
-  id                            String                        @id @default(uuid())
-  name                          String?
-  email                         String                        @unique
-  emailVerified                 Boolean                       @default(false) @map("is_email_verified")
-  image                         String?                       @map("image_url")
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
-
-  sessions                      Session[]
-  accounts                      Account[]
-  members                       Member[]
-  invitations                   Invitation[]
-  faceProfiles                  FaceProfile[]
+  id            String        @id @default(uuid())
+  name          String?
+  email         String        @unique
+  emailVerified Boolean       @default(false) @map("is_email_verified")
+  image         String?       @map("image_url")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  accounts      Account[]
+  faceProfiles  FaceProfile[]
+  invitations   Invitation[]
+  members       Member[]
+  sessions      Session[]
 
   @@map("users")
 }
 
 model Session {
-  id                            String                        @id @default(uuid())
-  expiresAt                     DateTime                      @map("expires_at")
-  token                         String                        @unique
-  ipAddress                     String?                       @map("ip_address")
-  userAgent                     String?                       @map("user_agent")
-  activeOrganizationId          String?                       @map("active_organization_id")
-
-  userId                        String                        @map("user_id")
-  user                          User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
+  id                   String   @id @default(uuid())
+  expiresAt            DateTime @map("expires_at")
+  token                String   @unique
+  ipAddress            String?  @map("ip_address")
+  userAgent            String?  @map("user_agent")
+  activeOrganizationId String?  @map("active_organization_id")
+  userId               String   @map("user_id")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("sessions")
 }
 
 model Account {
-  id                            String                        @id @default(uuid())
-  accountId                     String                        @map("account_id")
-  providerId                    String                        @map("provider_id")
-  accessToken                   String?                       @map("access_token")
-  refreshToken                  String?                       @map("refresh_token")
-  idToken                       String?                       @map("id_token")
-  accessTokenExpiresAt          DateTime?                     @map("access_token_expires_at")
-  refreshTokenExpiresAt         DateTime?                     @map("refresh_token_expires_at")
-  scope                         String?
-  password                      String?
-
-  userId                        String                        @map("user_id")
-  user                          User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
+  id                    String    @id @default(uuid())
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id")
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  idToken               String?   @map("id_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at")
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at")
+  scope                 String?
+  password              String?
+  userId                String    @map("user_id")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("accounts")
 }
 
 model Verification {
-  id                            String                        @id @default(uuid())
-  identifier                    String
-  value                         String
-  expiresAt                     DateTime                      @map("expires_at")
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
+  id         String   @id @default(uuid())
+  identifier String
+  value      String
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
 
   @@index([identifier])
   @@map("verifications")
 }
 
 model Organization {
-  id                            String                        @id @default(uuid())
-  name                          String
-  slug                          String                        @unique
-  logo                          String?
-  metadata                      String?
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
-
-  members                       Member[]
-  invitations                   Invitation[]
-  ticketCategories              TicketCategory[]
-  faceProfiles                  FaceProfile[]
-  faceEmbeddings                FaceEmbedding[]
+  id               String           @id @default(uuid())
+  name             String
+  slug             String           @unique
+  logo             String?
+  metadata         String?
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  faceEmbeddings   FaceEmbedding[]
+  faceProfiles     FaceProfile[]
+  invitations      Invitation[]
+  members          Member[]
+  ticketCategories TicketCategory[]
 
   @@map("organizations")
 }
 
 model Member {
-  id                            String                        @id @default(uuid())
-  role                          String                        @default("member")
-
-  organizationId                String                        @map("organization_id")
-  organization                  Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  userId                        String                        @map("user_id")
-  user                          User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
+  id             String       @id @default(uuid())
+  role           String       @default("member")
+  organizationId String       @map("organization_id")
+  userId         String       @map("user_id")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, userId])
   @@index([organizationId])
@@ -119,20 +107,17 @@ model Member {
 }
 
 model Invitation {
-  id                            String                        @id @default(uuid())
-  email                         String
-  role                          String?
-  status                        String                        @default("pending")
-  expiresAt                     DateTime                      @map("expires_at")
-
-  inviterId                     String                        @map("inviter_id")
-  user                          User                          @relation(fields: [inviterId], references: [id], onDelete: Cascade)
-
-  organizationId                String                        @map("organization_id")
-  organization                  Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
+  id             String       @id @default(uuid())
+  email          String
+  role           String?
+  status         String       @default("pending")
+  expiresAt      DateTime     @map("expires_at")
+  inviterId      String       @map("inviter_id")
+  organizationId String       @map("organization_id")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  user           User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
   @@index([email])
@@ -140,22 +125,18 @@ model Invitation {
 }
 
 model FaceProfile {
-  id                            String                        @id @default(uuid())
-  status                        FaceProfileStatus             @default(PENDING)
-  enrolledAt                    DateTime?                     @default(now()) @map("enrolled_at")
-  disabledAt                    DateTime?                     @map("disabled_at")
-  isArchived                    Boolean                       @default(false) @map("is_archived")
-
-  organizationId                String                        @map("organization_id")
-  organization                  Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  userId                        String                        @map("user_id")
-  user                          User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
-
-  faceEmbeddings                FaceEmbedding[]
+  id             String            @id @default(uuid())
+  status         FaceProfileStatus @default(PENDING)
+  enrolledAt     DateTime?         @default(now()) @map("enrolled_at")
+  disabledAt     DateTime?         @map("disabled_at")
+  isArchived     Boolean           @default(false) @map("is_archived")
+  organizationId String            @map("organization_id")
+  userId         String            @map("user_id")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  faceEmbeddings FaceEmbedding[]
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
   @@index([userId])
@@ -164,22 +145,19 @@ model FaceProfile {
 }
 
 model FaceEmbedding {
-  id                            String                        @id @default(uuid())
-  embedding                     Unsupported("vector(512)")
-  provider                      FaceEmbeddingProvider         @default(DEEPFACE)
-  model                         FaceEmbeddingModel
-  imageUrl                      String?                       @map("image_url")
-  qualityScore                  Float?                        @map("quality_score")
-  isArchived                    Boolean                       @default(false) @map("is_archived")
-
-  organizationId                String                        @map("organization_id")
-  organization                  Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  faceProfileId                 String                        @map("face_profile_id")
-  faceProfile                   FaceProfile                   @relation(fields: [faceProfileId], references: [id], onDelete: Cascade)
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
+  id             String                @id @default(uuid())
+  provider       FaceEmbeddingProvider @default(DEEPFACE)
+  model          FaceEmbeddingModel
+  embedding      Unsupported("vector")
+  imageUrl       String?               @map("image_url")
+  qualityScore   Float?                @map("quality_score")
+  isArchived     Boolean               @default(false) @map("is_archived")
+  organizationId String                @map("organization_id")
+  faceProfileId  String                @map("face_profile_id")
+  createdAt      DateTime              @default(now()) @map("created_at")
+  updatedAt      DateTime              @updatedAt @map("updated_at")
+  faceProfile    FaceProfile           @relation(fields: [faceProfileId], references: [id], onDelete: Cascade)
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
   @@index([faceProfileId])
@@ -189,28 +167,33 @@ model FaceEmbedding {
 }
 
 model TicketCategory {
-  id                            String                        @id @default(uuid())
-  name                          String
-  description                   String?
-
-  organizationId                String                        @map("organization_id")
-  organization                  Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
+  id             String       @id @default(uuid())
+  name           String
+  description    String?
+  organizationId String       @map("organization_id")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@map("ticket_categories")
 }
 
 model NewsletterSubscriber {
-  id                            String                        @id @default(uuid())
-  email                         String                        @unique
-  name                          String?
-
-  createdAt                     DateTime                      @default(now()) @map("created_at")
-  updatedAt                     DateTime                      @updatedAt @map("updated_at")
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("newsletter_subscribers")
+}
+
+model Ticket {
+  id           BigInt    @id
+  customerName String
+  status       String
+  total        Float
+  reportedDate String
 }
 
 enum FaceProfileStatus {
