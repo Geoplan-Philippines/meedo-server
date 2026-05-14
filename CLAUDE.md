@@ -10,6 +10,8 @@ Before making changes, read and follow:
 
 Project-specific skills are located in:
 
+## PR Review Behavior
+
 - `.claude/skills`
 
 Use the relevant skill when the task matches the skill description.

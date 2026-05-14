@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../../core/database/prisma.service';
+import { PrismaService } from '../../../../core/database/prisma.service';
 import { NewsletterSubscriber } from '@prisma/client';
 import { CreateSubscriberDTO } from './dto/create-subscriber.dto';
 
@@ -17,5 +17,3 @@ export class SubscribersService {
     return this.prisma.newsletterSubscriber.findMany();
   }
 }
-
-////

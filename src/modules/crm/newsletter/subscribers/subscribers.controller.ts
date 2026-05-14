@@ -6,7 +6,7 @@ import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 import { CreateSubscriberDTO } from './dto/create-subscriber.dto';
 import { SubscribersService } from './subscribers.service';
 
-@Controller('newsletter/subscribers')
+@Controller('crm/newsletter/subscribers')
 export class SubscribersController {
   constructor(private readonly subscribersService: SubscribersService) {}
 

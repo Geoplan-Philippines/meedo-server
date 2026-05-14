@@ -15,8 +15,9 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { RateLimitModule } from './core/security/rate-limit.module';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
-import { NewsletterModule } from './modules/newsletter/newsletter.module';
+import { NewsletterModule } from './modules/crm/newsletter/newsletter.module';
 import { TimekeepingModule } from './modules/timekeeping/timekeeping.module';
+import { CrmModule } from './modules/crm/crm.module';
 
 @Module({
   imports: [
@@ -28,7 +29,8 @@ import { TimekeepingModule } from './modules/timekeeping/timekeeping.module';
     RateLimitModule,
     MaintenanceModule,
     NewsletterModule,
-    TimekeepingModule
+    TimekeepingModule,
+    CrmModule
   ],
   controllers: [AppController],
   providers: [
