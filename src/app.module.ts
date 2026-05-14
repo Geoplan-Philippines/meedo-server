@@ -18,6 +18,7 @@ import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { NewsletterModule } from './modules/crm/newsletter/newsletter.module';
 import { TimekeepingModule } from './modules/timekeeping/timekeeping.module';
 import { CrmModule } from './modules/crm/crm.module';
+import { PrismaModule } from './core/database/prisma.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { CrmModule } from './modules/crm/crm.module';
       isGlobal: true,
     }),
     AuthModule.forRoot({ auth }),
+    PrismaModule,
     HealthModule,
     RateLimitModule,
     MaintenanceModule,
