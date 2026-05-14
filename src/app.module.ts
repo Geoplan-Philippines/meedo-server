@@ -19,9 +19,11 @@ import { NewsletterModule } from './modules/crm/newsletter/newsletter.module';
 import { TimekeepingModule } from './modules/timekeeping/timekeeping.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { PrismaModule } from './core/database/prisma.module';
+import { ProjectsModule } from './modules/maintenance/projects/projects.module';
 
 @Module({
   imports: [
+    ProjectsModule,
     ConfigModule.forRoot({
       isGlobal: true,
     }),

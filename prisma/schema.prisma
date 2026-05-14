@@ -2,7 +2,7 @@
 // For fucks sake dipshit,
 // Follow existing formatting, (alignment, spacing, ordering)
 
-generator client {s
+generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
 }
@@ -216,15 +216,32 @@ model NewsletterSubscriber {
   @@map("newsletter_subscribers")
 }
 
-model Ticket {
+model Project {
   id                            String                    @id @default(uuid())
   apptivoId                     String                    @unique
   customerName                  String
   status                        String
   total                         Float
-  reportedDate                  String?
+  reportedDate                  DateTime?
 
-  @@map("tickets")
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+  @@map("projects")
+}
+
+model Lead {
+  id                            String                    @id @default(uuid())
+  firstName                     String                    @map("first_name")
+  lastName                      String                    @map("last_name")
+  email                         String                    @unique
+  company                       String?
+  phoneNumber                   String?                   @map("phone_number")
+  status                        LeadStatus                @default(PENDING)
+  message                       String?
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+  @@map("leads")
 }
 
 enum FaceProfileStatus {
@@ -243,4 +260,11 @@ enum FaceEmbeddingModel {
   ARCFACE
   FACENET
   VGG_FACE
+}
+
+enum LeadStatus {
+  PENDING
+  CONTACTED
+  QUALIFIED
+  LOST
 }
