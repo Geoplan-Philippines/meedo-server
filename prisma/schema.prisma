@@ -189,11 +189,14 @@ model NewsletterSubscriber {
 }
 
 model Ticket {
-  id           BigInt    @id
+  id           String   @id @default(uuid())
+  apptivoId    String   @unique
   customerName String
   status       String
   total        Float
-  reportedDate String
+  reportedDate String?
+
+  @@map("tickets")
 }
 
 enum FaceProfileStatus {

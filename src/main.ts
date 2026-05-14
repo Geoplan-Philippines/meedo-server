@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { auth } from './core/auth/auth'; 
 
 import helmet from 'helmet';
 
@@ -10,9 +11,9 @@ async function bootstrap() {
     bodyParser: false,
   });
 
-  app.use(helmet());
-
   app.setGlobalPrefix('api/v1');
+
+  app.use(helmet());
 
   app.useGlobalPipes(
     new ValidationPipe({

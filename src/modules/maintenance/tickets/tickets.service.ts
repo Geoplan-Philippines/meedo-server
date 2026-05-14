@@ -9,15 +9,21 @@ export class ApptivoTicketsService {
   // runs every 10 minutes
   @Cron('0 */10 * * * *')
   async handleCron() {
-    const count = await this.syncApptivoTicketsToDB();
-    console.log(`Auto-sync complete: ${count} tickets`);
+    await this.syncApptivoTicketsToDB();
+    
   }
 
   async getApptivoWorkOrders() {
     try {
-      const url = `${process.env.APPTIVO_API_RESOURCE}&apiKey=${process.env.APPTIVO_API_KEY}&accessKey=${process.env.APPTIVO_API_ACCESS_KEY}`;
+        const url = process.env.APPTIVO_API_RESOURCE!;
+        const response = await fetch(url, {
+        headers: {
+            'x-api-key': String(process.env.APPTIVO_API_KEY),
+            'x-access-key': String(process.env.APPTIVO_API_ACCESS_KEY),
+        },
+        });
 
-      const response = await fetch(url);
+      
       const text = await response.text();
 
       let parsed;
@@ -44,16 +50,14 @@ export class ApptivoTicketsService {
 
       
       return tickets.map((item) => ({
-        id: Number(item.id), 
+        apptivoId: String(item.id), 
         customerName: item.customerName || '',
         status: item.statusName || 'Unknown',
         total: Number(item.total) || 0,
-        reportedDate: item.reportedDate
-          ? String(item.reportedDate)
-          : '',
+        reportedDate: item.reportedDate ? String(item.reportedDate) : null,
       }));
     } catch (error) {
-      console.error('FULL ERROR:', error);
+     
       throw error;
     }
   }
@@ -61,33 +65,33 @@ export class ApptivoTicketsService {
     async syncApptivoTicketsToDB() {
     try {
         const tickets = await this.getApptivoWorkOrders();
-        console.log(`Fetched ${tickets.length} tickets from Apptivo`);
+        
 
         await Promise.all(
         tickets.map((ticket) =>
             this.prisma.ticket.upsert({
-            where: { id: BigInt(ticket.id) },
+            where: {  apptivoId: ticket.apptivoId  },
             update: {
-                customerName: ticket.customerName || 'Unknown',
-                status: ticket.status || 'Unknown',
-                total: Number(ticket.total) || 0,
-                reportedDate: ticket.reportedDate || new Date().toISOString(),
+                customerName: ticket.customerName,
+                status: ticket.status,
+                total: ticket.total,
+                reportedDate: ticket.reportedDate,
             },
             create: {
-                id: BigInt(ticket.id),
-                customerName: ticket.customerName || 'Unknown',
-                status: ticket.status || 'Unknown',
-                total: Number(ticket.total) || 0,
-                reportedDate: ticket.reportedDate || new Date().toISOString(),
+                apptivoId: ticket.apptivoId,
+                customerName: ticket.customerName,
+                status: ticket.status,
+                total: ticket.total,
+                reportedDate: ticket.reportedDate,
             },
             }),
         ),
         );
 
-        console.log(`Sync complete: ${tickets.length} tickets`);
+        
         return tickets.length;
     } catch (error) {
-        console.error('Sync failed:', error);
+        
         throw error;
     }
     }
