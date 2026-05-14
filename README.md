@@ -1,98 +1,105 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
-
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
-
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+# Meedo Backend Server
 
 ## Description
+Backend service for the Meedo application built with NestJS, Prisma, and PostgreSQL.  
+Includes face recognition features using vector embeddings (pgvector).
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+---
 
-## Project setup
+## Tech Stack
+- NestJS
+- Bun
+- Prisma
+- PostgreSQL
+- pgvector
 
+---
+
+## Project Structure
+src/    # Main application source code
+prisma/ # Prisma schema and migrations
+.env    # Environment variables (not committed)
+.env.example # Example env template
+
+
+---
+
+## Setup
+
+### 1. Clone the repository
 ```bash
-$ npm install
-```
+git clone https://github.com/Geoplan-Philippines/meedo-server
+cd meedo-server
+2. Install dependencies
+bun install
+3. Set up environment variables
+cp .env.example .env
 
-## Compile and run the project
+Update .env:
 
-```bash
-# development
-$ npm run start
+NODE_ENV=development
+APP_URL=http://localhost:8000
+PORT=8000
 
-# watch mode
-$ npm run start:dev
+DATABASE_URL="postgresql://postgres:password@localhost:54321/meedo"
 
-# production mode
-$ npm run start:prod
-```
+BETTER_AUTH_SECRET=your-secret-key
 
-## Run tests
+CORS_ALLOWED_ORIGINS=http://localhost:4200
 
-```bash
-# unit tests
-$ npm run test
+FACE_API_BASE_URL=http://localhost:8001/api/v1
+FACE_API_TIMEOUT_MS=8000
 
-# e2e tests
-$ npm run test:e2e
 
-# test coverage
-$ npm run test:cov
-```
+Database Setup
+Generate Prisma Client
+bunx prisma generate
+Run migrations
+bunx prisma migrate dev
+Enable pgvector
 
-## Deployment
+Run in PostgreSQL (via pgAdmin Query Tool or psql):
+CREATE EXTENSION vector;
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+Reset database (if needed)
+bunx prisma migrate reset
+pgvector Setup (Windows)
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+If pgvector is not available via StackBuilder, install it manually:
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
+Obtain the pgvector binary (e.g. vector.v0.8.2-pg18.zip)
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Extract the zip file
 
-## Resources
+Copy contents to your PostgreSQL installation directory:
 
-Check out a few resources that may come in handy when working with NestJS:
+bin/   > C:\Program Files\PostgreSQL\<version>\bin\
+lib/   > C:\Program Files\PostgreSQL\<version>\lib\
+share/ > C:\Program Files\PostgreSQL\<version>\share\
+Restart PostgreSQL service
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+Enable extension in database:
+CREATE EXTENSION vector;
 
-## Support
+Note: Contact the team for the correct pgvector binary if not available.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+Running the Server
+bun run start
+Server will run at:
 
-## Stay in touch
+http://localhost:8000
+API Endpoints
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+Base URL:
 
-## License
+http://localhost:8000/api/v1
+Health Check
+GET /api/v1/health
+Notes
+Ensure PostgreSQL is running
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Make sure the correct port is used in DATABASE_URL
+
+pgvector extension is required for face recognition features
+
+Use a strong BETTER_AUTH_SECRET for production
