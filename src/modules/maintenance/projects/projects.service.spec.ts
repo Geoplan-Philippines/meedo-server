@@ -13,7 +13,17 @@ describe('ProjectsService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ProjectsService],
+      providers: [
+        ProjectsService,  
+        {
+          provide: PrismaService,
+          useValue: {
+            project: {
+              upsert: jest.fn(),
+            },
+          },
+        },
+      ],
     }).compile();
 
     service = module.get<ProjectsService>(ProjectsService);

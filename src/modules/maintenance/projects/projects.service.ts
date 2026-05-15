@@ -6,41 +6,47 @@ export class ProjectsService {
   constructor(private prisma: PrismaService) {}
 
   async getApptivoWorkOrders() {
+      const now = new Date();
+      const formatDate = (date: Date) => {
+        const dd = String(date.getDate()).padStart(2, '0');
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const yyyy = date.getFullYear();
+        return `${dd}/${mm}/${yyyy}`;
+      };
+
+      const startOfYear = new Date(now.getFullYear(), 0, 1);
+
       const searchParams = {
-        reportedDateFrom: '01/01/2024',
-        reportedDateTo: '31/12/2025',
+        reportedDateFrom: formatDate(startOfYear),
+        reportedDateTo: formatDate(now),
       };
       const searchData = encodeURIComponent(JSON.stringify(searchParams));
-      const url = `${process.env.APPTIVO_API_RESOURCE!}&apiKey=${encodeURIComponent(String(process.env.APPTIVO_API_KEY))}&accessKey=${encodeURIComponent(String(process.env.APPTIVO_API_ACCESS_KEY))}&searchData=${searchData}&numRecords=1000`;
+      const numRecords = Number(process.env.APPTIVO_NUM_RECORDS) || 1000;
+      const url = `${process.env.APPTIVO_API_RESOURCE!}&apiKey=${encodeURIComponent(String(process.env.APPTIVO_API_KEY))}&accessKey=${encodeURIComponent(String(process.env.APPTIVO_API_ACCESS_KEY))}&searchData=${searchData}&numRecords=${numRecords}`;
 
-      const response = await fetch(url, {
+    let response;
+
+    try {
+      response = await fetch(url, {
         headers: {
           Accept: 'application/json',
         },
       });
+    } catch (error) {  
+      throw new HttpException(
+        'Network error while fetching Apptivo data',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
 
-      if (!response.ok) {
-        throw new HttpException('Failed to fetch Apptivo data', HttpStatus.BAD_GATEWAY);
-      }
-
-    // const contentType = response.headers.get('content-type');
-
-    // if (!contentType?.includes('application/json')) {
-    //   const text = await response.text();
-    //   throw new HttpException(
-    //     {
-    //       message: 'Apptivo returned non-JSON (likely auth issue)',
-    //       raw: text.slice(0, 200),
-    //     },
-    //     HttpStatus.BAD_GATEWAY,
-    //   );
-    // }
-
+    if (!response.ok) {
+      throw new HttpException(
+        'Failed to fetch Apptivo data',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
       const parsed = await response.json();
-      //tempppp
-      // console.log('PARSED:', parsed);
-
-      const projects = parsed?.data
+      const projects = parsed?.data?.data || parsed?.data || parsed;
 
       if (!Array.isArray(projects)) {
         throw new HttpException(
@@ -48,13 +54,16 @@ export class ProjectsService {
           HttpStatus.INTERNAL_SERVER_ERROR,
         );
       }
-    
+      
       return projects.map((item) => ({
         apptivoId: String(item.id), 
         customerName: item.customerName || '',
         status: item.statusName || 'Unknown',
-        total: Number(item.total) || 0,
-        reportedDate: item.reportedDate ? String(item.reportedDate) : null,
+        total: !isNaN(Number(item.total)) ? Number(item.total) : 0,
+        reportedDate: (() => {
+        const d = item.reportedDate ? new Date(item.reportedDate) : null;
+        return d && !isNaN(d.getTime()) ? d : null;
+        })(),
       }));
     } 
   
