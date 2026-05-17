@@ -7,13 +7,15 @@ import { CreateSubscriberDTO } from './dto/create-subscriber.dto';
 export class SubscribersService {
   constructor(private prisma: PrismaService) {}
 
-  async create(data: CreateSubscriberDTO): Promise<NewsletterSubscriber> {
+  async createSubscriber(
+    data: CreateSubscriberDTO
+  ): Promise<NewsletterSubscriber> {
     return this.prisma.newsletterSubscriber.create({
       data,
     });
   }
 
-  async findAll(): Promise<NewsletterSubscriber[]> {
+  async getAllSubscribers(): Promise<NewsletterSubscriber[]> {
     return this.prisma.newsletterSubscriber.findMany();
   }
 }

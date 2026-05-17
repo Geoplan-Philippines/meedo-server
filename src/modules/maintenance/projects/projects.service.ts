@@ -1,96 +1,85 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../core/database/prisma.service';
+
+interface WorkOrder {
+  id: string | number;
+  customerName?: string;
+  statusName?: string;
+  total?: string | number;
+  reportedDate?: string;
+}
+
+type ProjectInput = Prisma.ProjectCreateInput;
 
 @Injectable()
 export class ProjectsService {
   constructor(private prisma: PrismaService) {}
 
-  async getApptivoWorkOrders() {
-      const now = new Date();
-      const formatDate = (date: Date) => {
-        const dd = String(date.getDate()).padStart(2, '0');
-        const mm = String(date.getMonth() + 1).padStart(2, '0');
-        const yyyy = date.getFullYear();
-        return `${dd}/${mm}/${yyyy}`;
-      };
-
-      const startOfYear = new Date(now.getFullYear(), 0, 1);
-
-      const searchParams = {
-        reportedDateFrom: formatDate(startOfYear),
-        reportedDateTo: formatDate(now),
-      };
-      const searchData = encodeURIComponent(JSON.stringify(searchParams));
-      const numRecords = Number(process.env.APPTIVO_NUM_RECORDS) || 1000;
-      const url = `${process.env.APPTIVO_API_RESOURCE!}&apiKey=${encodeURIComponent(String(process.env.APPTIVO_API_KEY))}&accessKey=${encodeURIComponent(String(process.env.APPTIVO_API_ACCESS_KEY))}&searchData=${searchData}&numRecords=${numRecords}`;
-
-    let response;
-
-    try {
-      response = await fetch(url, {
-        headers: {
-          Accept: 'application/json',
-        },
-      });
-    } catch (error) {  
-      throw new HttpException(
-        'Network error while fetching Apptivo data',
-        HttpStatus.BAD_GATEWAY,
-      );
-    }
-
-    if (!response.ok) {
-      throw new HttpException(
-        'Failed to fetch Apptivo data',
-        HttpStatus.BAD_GATEWAY,
-      );
-    }
-      const parsed = await response.json();
-      const projects = parsed?.data?.data || parsed?.data || parsed;
-
-      if (!Array.isArray(projects)) {
-        throw new HttpException(
-          'Unexpected response structure',
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-      }
-      
-      return projects.map((item) => ({
-        apptivoId: String(item.id), 
-        customerName: item.customerName || '',
-        status: item.statusName || 'Unknown',
-        total: !isNaN(Number(item.total)) ? Number(item.total) : 0,
-        reportedDate: (() => {
-        const d = item.reportedDate ? new Date(item.reportedDate) : null;
-        return d && !isNaN(d.getTime()) ? d : null;
-        })(),
-      }));
-    } 
-  
-  async syncApptivoProjectsToDB() {
-
-      const projects = await this.getApptivoWorkOrders();
-  
-      await Promise.all(
-      projects.map((project) =>
-          this.prisma.project.upsert({
-          where: {  apptivoId: project.apptivoId  },
-          update: {
-              customerName: project.customerName,
-              status: project.status,
-              total: project.total,
-              reportedDate: project.reportedDate,
-            },
-          create: {
-              apptivoId: project.apptivoId,
-              customerName: project.customerName,
-              status: project.status,
-              total: project.total,
-              reportedDate: project.reportedDate,
-            },
-          }),
-        ),
-      );
-      return projects.length;
+  getAllProjects() {
+    return this.prisma.project.findMany();
   }
+
+  async syncWorkOrdersFromApptivo() {
+    const projects = (await this.fetchApptivoWorkOrders()).map(normalize);
+    const apptivoIds = projects.map((p) => p.apptivoId);
+
+    const upserts = projects.map(({ apptivoId, ...data }) =>
+      this.prisma.project.upsert({
+        where: { apptivoId },
+        update: data,
+        create: { apptivoId, ...data },
+      }),
+    );
+
+    const purge = this.prisma.project.deleteMany({
+      where: { apptivoId: { notIn: apptivoIds } },
+    });
+
+    const results = await this.prisma.$transaction([...upserts, purge]);
+    const deleted = (results.at(-1) as { count: number }).count;
+
+    return { synced: projects.length, deleted };
+  }
+
+  private async fetchApptivoWorkOrders(): Promise<WorkOrder[]> {
+    const apptivoApiUrl = `${process.env.APPTIVO_API_RESOURCE}&numRecords=1000&apiKey=${process.env.APPTIVO_API_KEY}&accessKey=${process.env.APPTIVO_API_ACCESS_KEY}`;
+
+    let payload: any;
+    try {
+      const response = await fetch(apptivoApiUrl, 
+        { headers: { Accept: 'application/json' } }
+      );
+
+      if (!response.ok) {
+        throw new HttpException('Failed to fetch Apptivo data', HttpStatus.BAD_GATEWAY);
+      }
+
+      payload = await response.json();
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException('Network error while fetching Apptivo data', HttpStatus.BAD_GATEWAY);
+    }
+
+    const items = payload?.data?.data ?? payload?.data ?? payload;
+
+    if (!Array.isArray(items)) {
+      throw new HttpException('Unexpected Apptivo response structure', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    
+    return items;
+  }
+}
+
+function normalize(wo: WorkOrder): ProjectInput {
+  const total = Number(wo.total);
+  const date = wo.reportedDate ? new Date(wo.reportedDate) : null;
+
+  return {
+    apptivoId: String(wo.id),
+    customerName: wo.customerName || '',
+    status: wo.statusName || 'Unknown',
+    total: Number.isFinite(total) ? total : 0,
+    reportedDate: date && !isNaN(date.getTime()) ? date : null,
+  };
 }

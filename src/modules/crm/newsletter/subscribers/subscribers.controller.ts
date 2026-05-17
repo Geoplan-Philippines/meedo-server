@@ -12,15 +12,15 @@ export class SubscribersController {
 
   @AllowAnonymous()
   @Post()
-  async create(
+  async createSubscriber(
     @Body() body: CreateSubscriberDTO
   ): Promise<NewsletterSubscriber> {
-    return this.subscribersService.create(body);
+    return this.subscribersService.createSubscriber(body);
   }
 
   @AllowAnonymous()
   @Get()
-  async findAll(): Promise<NewsletterSubscriber[]> {
-    return this.subscribersService.findAll();
+  async getAllSubscribers(): Promise<NewsletterSubscriber[]> {
+    return this.subscribersService.getAllSubscribers();
   }
 }

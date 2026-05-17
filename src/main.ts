@@ -1,15 +1,11 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
-import { auth } from './core/auth/auth'; 
-
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
-    bodyParser: false,
-  });
+  const app = await NestFactory.create(AppModule);
 
   app.setGlobalPrefix('api/v1');
 
