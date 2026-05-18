@@ -18,10 +18,11 @@ export class LeadsService {
   async getAllLeads(query: GetAllLeadsQueryDTO): Promise<PaginatedResponse<Lead>> {
     const { page, limit } = query;
     
-    const [leads, total] = await this.prisma.$transaction([
+    const [leads, total] = await Promise.all([
       this.prisma.lead.findMany({
         skip: (page - 1) * limit,
         take: limit,
+        orderBy: { createdAt: 'desc' },
       }),
       this.prisma.lead.count(),
     ]);

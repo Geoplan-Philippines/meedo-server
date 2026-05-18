@@ -22,13 +22,15 @@ export class SubscribersService {
   ): Promise<PaginatedResponse<NewsletterSubscriber>> {
     const { page, limit } = query;
     
-    const [subscribers, total] = await this.prisma.$transaction([
+    const [subscribers, total] = await Promise.all([
       this.prisma.newsletterSubscriber.findMany({
         skip: (page - 1) * limit,
         take: limit,
+        orderBy: { createdAt: 'desc' },
       }),
       this.prisma.newsletterSubscriber.count(),
     ]);
+
     return {
       data: subscribers,
       meta: {

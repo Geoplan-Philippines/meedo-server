@@ -28,10 +28,11 @@ export class ProjectsService {
   async getAllProjects(query: GetAllProjectsQueryDTO): Promise<PaginatedResponse<Project>> {
     const { page, limit } = query;
     
-    const [projects, total] = await this.prisma.$transaction([
+    const [projects, total] = await Promise.all([
       this.prisma.project.findMany({
         skip: (page - 1) * limit,
         take: limit,
+        orderBy: { createdAt: 'desc' },
       }),
       this.prisma.project.count(),
     ]);
