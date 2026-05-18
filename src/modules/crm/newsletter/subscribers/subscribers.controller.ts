@@ -1,10 +1,13 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 
 import { NewsletterSubscriber } from '@prisma/client';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import { CreateSubscriberDTO } from './dto/create-subscriber.dto';
 import { SubscribersService } from './subscribers.service';
+
+import { GetAllSubscribersQueryDTO } from './dto/get-all-subscribers-query.dto';
+import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 
 @Controller('crm/newsletter/subscribers')
 export class SubscribersController {
@@ -20,7 +23,9 @@ export class SubscribersController {
 
   @AllowAnonymous()
   @Get()
-  async getAllSubscribers(): Promise<NewsletterSubscriber[]> {
-    return this.subscribersService.getAllSubscribers();
+  async getAllSubscribers(
+    @Query() query: GetAllSubscribersQueryDTO,
+  ): Promise<PaginatedResponse<NewsletterSubscriber>> {
+    return this.subscribersService.getAllSubscribers(query);
   }
 }

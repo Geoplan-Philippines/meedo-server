@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../core/database/prisma.service';
 import { NewsletterSubscriber } from '@prisma/client';
 import { CreateSubscriberDTO } from './dto/create-subscriber.dto';
+import { GetAllSubscribersQueryDTO } from './dto/get-all-subscribers-query.dto';
+import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 
 @Injectable()
 export class SubscribersService {
@@ -15,7 +17,26 @@ export class SubscribersService {
     });
   }
 
-  async getAllSubscribers(): Promise<NewsletterSubscriber[]> {
-    return this.prisma.newsletterSubscriber.findMany();
+  async getAllSubscribers(
+    query: GetAllSubscribersQueryDTO
+  ): Promise<PaginatedResponse<NewsletterSubscriber>> {
+    const { page, limit } = query;
+    
+    const [subscribers, total] = await this.prisma.$transaction([
+      this.prisma.newsletterSubscriber.findMany({
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.newsletterSubscriber.count(),
+    ]);
+    return {
+      data: subscribers,
+      meta: {
+        total,
+        limit,
+        page,
+        lastPage: Math.ceil(total / limit),
+      },
+    }
   }
 }
