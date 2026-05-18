@@ -12,7 +12,7 @@ export class CreateLeadDTO {
   @IsEmail()
   email!: string;
 
-  @IsString()
+  @IsOptional()
   @MaxLength(20)
   phoneNumber!: string;
 

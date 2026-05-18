@@ -6,6 +6,7 @@ import { ProjectsService } from './projects.service';
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
+  // TODO: findMany() With No Pagination Anywhere
   @AllowAnonymous()
   @Get()
   getAllProjects() {

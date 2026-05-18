@@ -5,7 +5,7 @@ import { AttendanceService } from './attendance.service';
 export class AttendanceController {
   constructor(private readonly attendanceService: AttendanceService) {}
 
-  @Get('')
+  @Get()
   async recognize() {
     return 'this.subscribersService.findAll();'
   }

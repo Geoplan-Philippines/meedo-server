@@ -10,12 +10,14 @@ import { LeadsService } from './leads.service';
 export class LeadsController {
   constructor(private readonly leadsService: LeadsService) {}
 
+  // TODO: Research best practice to not keep this @AllowAnonymous()... but is also can access by our Geoplan Website..
   @AllowAnonymous()
   @Post()
   async createLead(@Body() body: CreateLeadDTO): Promise<Lead> {
     return this.leadsService.createLead(body);
   }
 
+  // TODO: findMany() With No Pagination Anywhere
   @AllowAnonymous()
   @Get()
   async getAllLeads(): Promise<Lead[]> {

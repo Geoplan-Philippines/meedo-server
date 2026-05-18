@@ -14,7 +14,6 @@ import { AppService } from './app.service';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { RateLimitModule } from './core/security/rate-limit.module';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
-import { NewsletterModule } from './modules/crm/newsletter/newsletter.module';
 import { TimekeepingModule } from './modules/timekeeping/timekeeping.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { PrismaModule } from './core/database/prisma.module';
@@ -29,7 +28,6 @@ import { PrismaModule } from './core/database/prisma.module';
     HealthModule,
     RateLimitModule,
     MaintenanceModule,
-    NewsletterModule,
     TimekeepingModule,
     CrmModule
   ],

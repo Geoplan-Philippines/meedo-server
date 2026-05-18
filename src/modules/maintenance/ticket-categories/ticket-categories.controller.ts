@@ -49,5 +49,3 @@ export class TicketCategoriesController {
     return this.ticketCategoriesService.deleteTicketCategory(id);
   }
 }
-
-

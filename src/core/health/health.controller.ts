@@ -11,7 +11,7 @@ export class HealthController {
     private readonly prisma: PrismaService,
   ) {}
 
-  @Get('')
+  @Get()
   @HealthCheck()
   @AllowAnonymous()
   liveness() {

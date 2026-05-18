@@ -42,6 +42,7 @@ export class ProjectsService {
     return { synced: projects.length, deleted };
   }
 
+  // TODO: refactor do not use any as type.
   private async fetchApptivoWorkOrders(): Promise<WorkOrder[]> {
     const apptivoApiUrl = `${process.env.APPTIVO_API_RESOURCE}&numRecords=1000&apiKey=${process.env.APPTIVO_API_KEY}&accessKey=${process.env.APPTIVO_API_ACCESS_KEY}`;
 
