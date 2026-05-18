@@ -1,16 +1,18 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
+import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
 import { ProjectsService } from './projects.service';
+import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
+import { Project } from '@prisma/client';
 
 @Controller('maintenance/projects')
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
-  // TODO: findMany() With No Pagination Anywhere
   @AllowAnonymous()
   @Get()
-  getAllProjects() {
-    return this.projectsService.getAllProjects();
+  getAllProjects(@Query() query: GetAllProjectsQueryDTO): Promise<PaginatedResponse<Project>> {
+    return this.projectsService.getAllProjects(query);
   }
 
   @AllowAnonymous()

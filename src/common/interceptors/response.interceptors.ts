@@ -9,6 +9,16 @@ export class ResponseInteceptor<T> implements NestInterceptor<T, ApiResponse<T>>
 
     return next.handle().pipe(
       map((data) => {
+        if (data && typeof data === 'object' && 'data' in data && 'meta' in data) {
+          // paginated response case
+          return {
+            statusCode,
+            message: 'Success',
+            data: data.data,
+            meta: data.meta,
+          };
+        }
+        
         return {
           statusCode,
           message: 'Success',
