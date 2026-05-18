@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 
 import { Lead } from '@prisma/client';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
@@ -10,17 +10,21 @@ import { LeadsService } from './leads.service';
 export class LeadsController {
   constructor(private readonly leadsService: LeadsService) {}
 
-  // TODO: Research best practice to not keep this @AllowAnonymous()... but is also can access by our Geoplan Website..
   @AllowAnonymous()
   @Post()
   async createLead(@Body() body: CreateLeadDTO): Promise<Lead> {
     return this.leadsService.createLead(body);
   }
 
-  // TODO: findMany() With No Pagination Anywhere
   @AllowAnonymous()
   @Get()
-  async getAllLeads(): Promise<Lead[]> {
-    return this.leadsService.getAllLeads();
+  async getAllLeads(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ): Promise<any> {
+    
+    const pageNumber = Math.max(1, Number(page));
+    const limitNumber = Math.min(50, Number(limit));
+    return this.leadsService.getAllLeads(pageNumber, limitNumber);
   }
 }

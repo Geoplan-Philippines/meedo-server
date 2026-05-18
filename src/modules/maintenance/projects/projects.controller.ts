@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 import { ProjectsService } from './projects.service';
 
@@ -6,11 +6,15 @@ import { ProjectsService } from './projects.service';
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
-  // TODO: findMany() With No Pagination Anywhere
   @AllowAnonymous()
   @Get()
-  getAllProjects() {
-    return this.projectsService.getAllProjects();
+  getAllProjects(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
+    const pageNumber = Math.max(1, Number(page));
+    const limitNumber = Math.min(50, Number(limit));
+    return this.projectsService.getAllProjects(pageNumber, limitNumber);
   }
 
   @AllowAnonymous()

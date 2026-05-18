@@ -12,13 +12,36 @@ interface WorkOrder {
 
 type ProjectInput = Prisma.ProjectCreateInput;
 
+type ApptivoResponse = {
+  data?: {
+    data?: WorkOrder[];
+  } | WorkOrder[];
+};
+
+
 @Injectable()
 export class ProjectsService {
   constructor(private prisma: PrismaService) {}
 
-  getAllProjects() {
-    return this.prisma.project.findMany();
-  }
+  async getAllProjects(page: number, limit: number) {
+    const [projects, total] = await this.prisma.$transaction([
+      this.prisma.project.findMany({
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.project.count(),
+    ]);
+    return { 
+      
+      data : projects,
+      meta: {
+        total,
+        limit,
+        page,
+        totalPages: Math.ceil(total / limit),
+    },
+  };
+}
 
   async syncWorkOrdersFromApptivo() {
     const projects = (await this.fetchApptivoWorkOrders()).map(normalize);
@@ -42,11 +65,10 @@ export class ProjectsService {
     return { synced: projects.length, deleted };
   }
 
-  // TODO: refactor do not use any as type.
   private async fetchApptivoWorkOrders(): Promise<WorkOrder[]> {
     const apptivoApiUrl = `${process.env.APPTIVO_API_RESOURCE}&numRecords=1000&apiKey=${process.env.APPTIVO_API_KEY}&accessKey=${process.env.APPTIVO_API_ACCESS_KEY}`;
 
-    let payload: any;
+    let payload: ApptivoResponse;
     try {
       const response = await fetch(apptivoApiUrl, 
         { headers: { Accept: 'application/json' } }
@@ -62,15 +84,18 @@ export class ProjectsService {
       throw new HttpException('Network error while fetching Apptivo data', HttpStatus.BAD_GATEWAY);
     }
 
-    const items = payload?.data?.data ?? payload?.data ?? payload;
+    const items = 
+    payload?.data && 'data' in payload.data
+      ? payload.data.data
+      : payload?.data ?? payload;
 
     if (!Array.isArray(items)) {
       throw new HttpException('Unexpected Apptivo response structure', HttpStatus.INTERNAL_SERVER_ERROR);
     }
     
-    return items;
+    return items as WorkOrder[];
   }
-}
+};
 
 function normalize(wo: WorkOrder): ProjectInput {
   const total = Number(wo.total);
@@ -84,3 +109,5 @@ function normalize(wo: WorkOrder): ProjectInput {
     reportedDate: date && !isNaN(date.getTime()) ? date : null,
   };
 }
+
+
