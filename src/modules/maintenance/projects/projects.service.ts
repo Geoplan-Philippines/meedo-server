@@ -1,6 +1,9 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { Project } from '@prisma/client';
 import { PrismaService } from '../../../core/database/prisma.service';
+import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
+import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
 
 interface WorkOrder {
   id: string | number;
@@ -18,12 +21,13 @@ type ApptivoResponse = {
   } | WorkOrder[];
 };
 
-
 @Injectable()
 export class ProjectsService {
   constructor(private prisma: PrismaService) {}
 
-  async getAllProjects(page: number, limit: number) {
+  async getAllProjects(query: GetAllProjectsQueryDTO): Promise<PaginatedResponse<Project>> {
+    const { page, limit } = query;
+    
     const [projects, total] = await this.prisma.$transaction([
       this.prisma.project.findMany({
         skip: (page - 1) * limit,
@@ -31,17 +35,17 @@ export class ProjectsService {
       }),
       this.prisma.project.count(),
     ]);
+
     return { 
-      
       data : projects,
       meta: {
         total,
         limit,
         page,
-        totalPages: Math.ceil(total / limit),
-    },
-  };
-}
+        lastPage: Math.ceil(total / limit),
+      },
+    };
+  }
 
   async syncWorkOrdersFromApptivo() {
     const projects = (await this.fetchApptivoWorkOrders()).map(normalize);

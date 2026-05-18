@@ -4,7 +4,9 @@ import { Lead } from '@prisma/client';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import { CreateLeadDTO } from './dto/create-lead.dto';
+import { GetAllLeadsQueryDTO } from './dto/get-all-leads-query.dto';
 import { LeadsService } from './leads.service';
+import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 
 @Controller('crm/leads')
 export class LeadsController {
@@ -18,13 +20,7 @@ export class LeadsController {
 
   @AllowAnonymous()
   @Get()
-  async getAllLeads(
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10',
-  ): Promise<any> {
-    
-    const pageNumber = Math.max(1, Number(page));
-    const limitNumber = Math.min(50, Number(limit));
-    return this.leadsService.getAllLeads(pageNumber, limitNumber);
+  async getAllLeads(@Query() query: GetAllLeadsQueryDTO): Promise<PaginatedResponse<Lead>> {
+    return this.leadsService.getAllLeads(query);
   }
 }

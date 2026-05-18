@@ -1,6 +1,9 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
+import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
 import { ProjectsService } from './projects.service';
+import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
+import { Project } from '@prisma/client';
 
 @Controller('maintenance/projects')
 export class ProjectsController {
@@ -8,13 +11,8 @@ export class ProjectsController {
 
   @AllowAnonymous()
   @Get()
-  getAllProjects(
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10',
-  ) {
-    const pageNumber = Math.max(1, Number(page));
-    const limitNumber = Math.min(50, Number(limit));
-    return this.projectsService.getAllProjects(pageNumber, limitNumber);
+  getAllProjects(@Query() query: GetAllProjectsQueryDTO): Promise<PaginatedResponse<Project>> {
+    return this.projectsService.getAllProjects(query);
   }
 
   @AllowAnonymous()

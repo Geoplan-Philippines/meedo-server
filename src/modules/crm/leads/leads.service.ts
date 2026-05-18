@@ -2,16 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../core/database/prisma.service';
 import { Lead } from '@prisma/client';
 import { CreateLeadDTO } from './dto/create-lead.dto';
-
-type PaginatedLeads = {
-  data: Lead[];
-  meta: {
-    total: number;
-    limit: number;
-    page: number;
-    totalPages: number;
-  };
-};
+import { GetAllLeadsQueryDTO } from './dto/get-all-leads-query.dto';
+import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 
 @Injectable()
 export class LeadsService {
@@ -23,7 +15,9 @@ export class LeadsService {
     });
   }
 
-  async getAllLeads(page: number, limit: number): Promise<PaginatedLeads> {
+  async getAllLeads(query: GetAllLeadsQueryDTO): Promise<PaginatedResponse<Lead>> {
+    const { page, limit } = query;
+    
     const [leads, total] = await this.prisma.$transaction([
       this.prisma.lead.findMany({
         skip: (page - 1) * limit,
@@ -31,13 +25,14 @@ export class LeadsService {
       }),
       this.prisma.lead.count(),
     ]);
+
     return {
       data: leads,
       meta: {
         total,
         limit,
         page,
-        totalPages: Math.ceil(total / limit),
+        lastPage: Math.ceil(total / limit),
       },
     };
   }
