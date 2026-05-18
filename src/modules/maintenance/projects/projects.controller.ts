@@ -1,33 +1,24 @@
-import { Controller, Get, Req, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
+import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
+import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
 import { ProjectsService } from './projects.service';
+import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
+import { Project } from '@prisma/client';
 
-@Controller('projects')
+@Controller('maintenance/projects')
 export class ProjectsController {
-  constructor(
-      private readonly projectsService: ProjectsService,
-  ) {}
+  constructor(private readonly projectsService: ProjectsService) {}
 
-  @Get('work-orders')
-  getApptivoWorkOrders() {
-      return this.projectsService.getApptivoWorkOrders();
+  @AllowAnonymous()
+  @Get()
+  getAllProjects(@Query() query: GetAllProjectsQueryDTO): Promise<PaginatedResponse<Project>> {
+    return this.projectsService.getAllProjects(query);
   }
 
+  @AllowAnonymous()
   @Get('sync')
-  async getSync(@Req() req: any) {
-    const apiKey = req.headers['x-api-key']?.toString().trim();
-    
-    console.log('=== API KEY DEBUG ===');
-    console.log('Received:', `"${apiKey}"`);
-    console.log('Expected:', `"${process.env.INTERNAL_API_KEY}"`);
-    console.log('Lengths:', apiKey?.length, process.env.INTERNAL_API_KEY?.length);
-    console.log('Match:', apiKey === process.env.INTERNAL_API_KEY);
-    console.log('====================');
-
-    if (apiKey !== process.env.INTERNAL_API_KEY) {
-      throw new UnauthorizedException();
-    }
-
-    const count = await this.projectsService.syncApptivoTicketsToDB();
-    return { message: 'Sync complete', count };
+  async syncWorkOrders() {
+    const { synced, deleted } = await this.projectsService.syncWorkOrdersFromApptivo();
+    return { message: 'Sync complete', synced, deleted };
   }
 }

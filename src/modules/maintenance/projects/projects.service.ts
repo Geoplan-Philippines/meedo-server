@@ -1,98 +1,117 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
+import type { Project } from '@prisma/client';
 import { PrismaService } from '../../../core/database/prisma.service';
+import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
+import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
+
+interface WorkOrder {
+  id: string | number;
+  customerName?: string;
+  statusName?: string;
+  total?: string | number;
+  reportedDate?: string;
+}
+
+type ProjectInput = Prisma.ProjectCreateInput;
+
+type ApptivoResponse = {
+  data?: {
+    data?: WorkOrder[];
+  } | WorkOrder[];
+};
 
 @Injectable()
 export class ProjectsService {
   constructor(private prisma: PrismaService) {}
 
-  // runs every 10 minutes
-  @Cron('0 */10 * * * *')
-  async handleCron() {
-    await this.syncApptivoTicketsToDB();
+  async getAllProjects(query: GetAllProjectsQueryDTO): Promise<PaginatedResponse<Project>> {
+    const { page, limit } = query;
     
-  }
+    const [projects, total] = await this.prisma.$transaction([
+      this.prisma.project.findMany({
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.project.count(),
+    ]);
 
-  async getApptivoWorkOrders() {
-    try {
-      const url = process.env.APPTIVO_API_RESOURCE!;
-      const response = await fetch(url, {
-      headers: {
-          'x-api-key': String(process.env.APPTIVO_API_KEY),
-          'x-access-key': String(process.env.APPTIVO_API_ACCESS_KEY),
+    return { 
+      data : projects,
+      meta: {
+        total,
+        limit,
+        page,
+        lastPage: Math.ceil(total / limit),
       },
-      });
-
-      
-      const text = await response.text();
-
-      let parsed;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        throw new HttpException(
-          {
-            message: 'Invalid JSON response from Apptivo',
-            raw: text,
-          },
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-      }
-
-      const tickets = parsed?.data?.data || parsed?.data || parsed;
-
-      if (!Array.isArray(tickets)) {
-        throw new HttpException(
-          'Unexpected response structure',
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-      }
-
-      
-      return tickets.map((item) => ({
-        apptivoId: String(item.id), 
-        customerName: item.customerName || '',
-        status: item.statusName || 'Unknown',
-        total: Number(item.total) || 0,
-        reportedDate: item.reportedDate ? String(item.reportedDate) : null,
-      }));
-    } catch (error) {
-     
-      throw error;
-    }
+    };
   }
 
-    async syncApptivoTicketsToDB() {
+  async syncWorkOrdersFromApptivo() {
+    const projects = (await this.fetchApptivoWorkOrders()).map(normalize);
+    const apptivoIds = projects.map((p) => p.apptivoId);
+
+    const upserts = projects.map(({ apptivoId, ...data }) =>
+      this.prisma.project.upsert({
+        where: { apptivoId },
+        update: data,
+        create: { apptivoId, ...data },
+      }),
+    );
+
+    const purge = this.prisma.project.deleteMany({
+      where: { apptivoId: { notIn: apptivoIds } },
+    });
+
+    const results = await this.prisma.$transaction([...upserts, purge]);
+    const deleted = (results.at(-1) as { count: number }).count;
+
+    return { synced: projects.length, deleted };
+  }
+
+  private async fetchApptivoWorkOrders(): Promise<WorkOrder[]> {
+    const apptivoApiUrl = `${process.env.APPTIVO_API_RESOURCE}&numRecords=1000&apiKey=${process.env.APPTIVO_API_KEY}&accessKey=${process.env.APPTIVO_API_ACCESS_KEY}`;
+
+    let payload: ApptivoResponse;
     try {
-        const tickets = await this.getApptivoWorkOrders();
-        
+      const response = await fetch(apptivoApiUrl, 
+        { headers: { Accept: 'application/json' } }
+      );
 
-        await Promise.all(
-        tickets.map((ticket) =>
-            this.prisma.ticket.upsert({
-            where: {  apptivoId: ticket.apptivoId  },
-            update: {
-                customerName: ticket.customerName,
-                status: ticket.status,
-                total: ticket.total,
-                reportedDate: ticket.reportedDate,
-            },
-            create: {
-                apptivoId: ticket.apptivoId,
-                customerName: ticket.customerName,
-                status: ticket.status,
-                total: ticket.total,
-                reportedDate: ticket.reportedDate,
-            },
-            }),
-        ),
-        );
+      if (!response.ok) {
+        throw new HttpException('Failed to fetch Apptivo data', HttpStatus.BAD_GATEWAY);
+      }
 
-        
-        return tickets.length;
+      payload = await response.json();
     } catch (error) {
-        
-        throw error;
+      if (error instanceof HttpException) throw error;
+      throw new HttpException('Network error while fetching Apptivo data', HttpStatus.BAD_GATEWAY);
     }
+
+    const items = 
+    payload?.data && 'data' in payload.data
+      ? payload.data.data
+      : payload?.data ?? payload;
+
+    if (!Array.isArray(items)) {
+      throw new HttpException('Unexpected Apptivo response structure', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    
+    return items as WorkOrder[];
   }
+};
+
+function normalize(wo: WorkOrder): ProjectInput {
+  const total = Number(wo.total);
+  const date = wo.reportedDate ? new Date(wo.reportedDate) : null;
+
+  return {
+    apptivoId: String(wo.id),
+    customerName: wo.customerName || '',
+    status: wo.statusName || 'Unknown',
+    total: Number.isFinite(total) ? total : 0,
+    reportedDate: date && !isNaN(date.getTime()) ? date : null,
+  };
 }
+
+

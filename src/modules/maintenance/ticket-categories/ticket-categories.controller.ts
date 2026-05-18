@@ -12,7 +12,7 @@ export class TicketCategoriesController {
 
   @AllowAnonymous()
   @Post()
-  async create(
+  async createTicketCategory(
     @Body() createTicketCategoryDTO: CreateTicketCategoryDTO
   ): Promise<TicketCategory> {
     return this.ticketCategoriesService.createTicketCategory(createTicketCategoryDTO);
@@ -20,19 +20,21 @@ export class TicketCategoriesController {
 
   @AllowAnonymous()
   @Get()
-  async findAll(): Promise<TicketCategory[]> {
+  async getAllTicketCategories(): Promise<TicketCategory[]> {
     return this.ticketCategoriesService.getAllTicketCategories();
   }
 
   @AllowAnonymous()
   @Get(':id')
-  async findOne(@Param('id') id: string): Promise<TicketCategory | null> {
+  async getTicketCategoryById(
+    @Param('id') id: string
+  ): Promise<TicketCategory | null> {
     return this.ticketCategoriesService.getTicketCategoryById(id);
   }
 
   @AllowAnonymous()
   @Patch(':id')
-  async update(
+  async updateTicketCategory(
     @Param('id') id: string,
     @Body() body: Partial<CreateTicketCategoryDTO>
   ): Promise<TicketCategory> {
@@ -41,9 +43,9 @@ export class TicketCategoriesController {
 
   @AllowAnonymous()
   @Delete(':id')
-  async remove(@Param('id') id: string): Promise<TicketCategory> {
+  async deleteTicketCategory(
+    @Param('id') id: string
+  ): Promise<TicketCategory> {
     return this.ticketCategoriesService.deleteTicketCategory(id);
   }
 }
-
-

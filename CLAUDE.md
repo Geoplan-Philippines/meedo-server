@@ -10,8 +10,17 @@ Before making changes, read and follow:
 
 Project-specific skills are located in:
 
-## PR Review Behavior
-
 - `.claude/skills`
 
 Use the relevant skill when the task matches the skill description.
+
+## PR Review Behavior
+
+During PR reviews:
+- focus on correctness
+- detect regressions
+- detect breaking changes
+- identify performance concerns
+- identify security concerns
+- identify maintainability issues
+- suggest concise improvements
