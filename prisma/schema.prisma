@@ -245,6 +245,18 @@ model Lead {
   @@map("leads")
 }
 
+model Team {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
+  name                          String
+  description                   String?
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@map("teams")
+}
+
 enum FaceProfileStatus {
   PENDING
   ACTIVE

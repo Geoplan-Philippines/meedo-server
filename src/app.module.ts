@@ -17,6 +17,7 @@ import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { TimekeepingModule } from './modules/timekeeping/timekeeping.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { PrismaModule } from './core/database/prisma.module';
+import { TicketsModule } from './modules/tickets/tickets.module';
 
 @Module({
   imports: [
@@ -29,7 +30,8 @@ import { PrismaModule } from './core/database/prisma.module';
     RateLimitModule,
     MaintenanceModule,
     TimekeepingModule,
-    CrmModule
+    CrmModule,
+    TicketsModule,
   ],
   controllers: [AppController],
   providers: [
