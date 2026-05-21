@@ -19,5 +19,14 @@ CREATE TABLE "teams" (
     CONSTRAINT "teams_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateIndex
+CREATE INDEX "teams_organization_id_idx" ON "teams"("organization_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "teams_organization_id_name_key" ON "teams"("organization_id", "name");
+
+-- AddForeignKey
+ALTER TABLE "teams" ADD CONSTRAINT "teams_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
 -- RenameIndex
 ALTER INDEX "projects_apptivoId_key" RENAME TO "projects_apptivo_id_key";

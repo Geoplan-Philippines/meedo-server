@@ -14,14 +14,17 @@ export class TeamsController {
 
   @AllowAnonymous()
   @Post()
-  async createTeam(@Body() body: CreateTeamDTO): Promise<Team> {
-    return this.teamsService.createTeam(body);
+  async createTeam(
+    @Query('organizationId') organizationId: string,
+    @Body() body: CreateTeamDTO
+  ): Promise<Team> {
+    return this.teamsService.createTeam( organizationId, body );
   }
 
   @AllowAnonymous()
   @Get()
   async getAllTeams(@Query() query: GetAllTeamsQueryDTO
   ): Promise<PaginatedResponse<Team>>  { 
-    return this.teamsService.getAllTeams(query);
+    return this.teamsService.getAllTeams(query.organizationId, query);
   }
 }

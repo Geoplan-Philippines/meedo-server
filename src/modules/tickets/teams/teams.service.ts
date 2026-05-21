@@ -10,24 +10,29 @@ import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 export class TeamsService {
   constructor(private prisma: PrismaService) {}
 
-  async createTeam(data: CreateTeamDTO): Promise<Team> {
+  async createTeam(organizationId: string, data: CreateTeamDTO): Promise<Team> {
     return this.prisma.team.create({
-      data,
+      data: {
+        ...data,
+        organizationId,
+      },
     });
   }
 
   async getAllTeams(
+    organizationId: string,
     query: GetAllTeamsQueryDTO,
   ): Promise<PaginatedResponse<Team>> {
     const {page, limit} = query;
-
+    const where = { organizationId };
     const [teams, total] = await Promise.all([
       this.prisma.team.findMany({
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
+        where,
       }),
-      this.prisma.team.count(),
+      this.prisma.team.count({ where }),
     ]);
 
     return {
