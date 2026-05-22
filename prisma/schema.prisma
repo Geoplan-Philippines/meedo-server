@@ -100,6 +100,7 @@ model Organization {
   invitations                   Invitation[]
   members                       Member[]
   ticketCategories              TicketCategory[]
+  teams                         Team[]
 
   @@map("organizations")
 }
@@ -243,6 +244,21 @@ model Lead {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
   
   @@map("leads")
+}
+
+model Team {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                          String
+  description                   String?
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@map("teams")
+  @@index([organizationId])
+  @@unique([organizationId, name])
 }
 
 enum FaceProfileStatus {
