@@ -3,6 +3,7 @@ import { VersioningType } from '@nestjs/common';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { env } from './core/config/env.config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -17,12 +18,12 @@ async function bootstrap() {
   app.use(helmet());
 
   app.enableCors({
-    origin: process.env.CORS_ALLOWED_ORIGINS?.split(',') ?? ['http://localhost:4200'],
+    origin: env.CORS_ALLOWED_ORIGINS,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
     credentials: true,
   });
-  
-  await app.listen(process.env.PORT ?? 8000, '0.0.0.0');
+
+  await app.listen(env.PORT, '0.0.0.0');
 }
 bootstrap();

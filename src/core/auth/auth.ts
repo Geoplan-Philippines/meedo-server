@@ -1,19 +1,12 @@
-import "dotenv/config";
-
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { organization } from "better-auth/plugins";
 
+import { env } from "../config/env.config";
 import { prisma } from "../database/prisma.client";
 
-const appUrl = process.env.APP_URL;
-
-if (!appUrl) {
-  throw new Error('APP_URL is fucking required, dipshit');
-}
-
 export const auth = betterAuth({
-  baseURL: appUrl,
+  baseURL: env.APP_URL,
   basePath: "/api/v1/auth",
 
   database: prismaAdapter(prisma, {
