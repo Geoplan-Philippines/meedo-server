@@ -1,6 +1,7 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Project } from '@prisma/client';
+import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
@@ -71,7 +72,7 @@ export class ProjectsService {
   }
 
   private async fetchApptivoWorkOrders(): Promise<WorkOrder[]> {
-    const apptivoApiUrl = `${process.env.APPTIVO_API_RESOURCE}&numRecords=1000&apiKey=${process.env.APPTIVO_API_KEY}&accessKey=${process.env.APPTIVO_API_ACCESS_KEY}`;
+    const apptivoApiUrl = `${env.APPTIVO_API_RESOURCE}&numRecords=1000&apiKey=${env.APPTIVO_API_KEY}&accessKey=${env.APPTIVO_API_ACCESS_KEY}`;
 
     let payload: ApptivoResponse;
     try {
