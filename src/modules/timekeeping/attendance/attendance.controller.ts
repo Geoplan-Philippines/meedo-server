@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, NotImplementedException } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
 
 @Controller('timekeeping/attendance')
@@ -7,6 +7,6 @@ export class AttendanceController {
 
   @Get()
   async recognize() {
-    return 'this.subscribersService.findAll();'
+    throw new NotImplementedException('recognize() is not implemented');
   }
 }

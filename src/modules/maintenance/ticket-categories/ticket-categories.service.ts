@@ -28,12 +28,6 @@ export class TicketCategoriesService {
     return this.prisma.ticketCategory.findMany();
   }
 
-  async getTicketCategoryById(id: string): Promise<TicketCategory | null> {
-    return this.prisma.ticketCategory.findUnique({
-      where: { id },
-    });
-  }
-
   async updateTicketCategory(
     id: string,
     data: Partial<CreateTicketCategoryDTO>
