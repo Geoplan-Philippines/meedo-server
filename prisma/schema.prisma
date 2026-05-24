@@ -204,6 +204,8 @@ model TicketCategory {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@map("ticket_categories")
+  @@index([organizationId])
+  @@unique([organizationId, name])
 }
 
 model NewsletterSubscriber {
