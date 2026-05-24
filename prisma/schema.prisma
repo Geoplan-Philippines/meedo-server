@@ -105,22 +105,47 @@ model Organization {
   @@map("organizations")
 }
 
-model Member {
+model Team {
   id                            String                    @id @default(uuid())
-  role                          String                    @default("member")
+  name                          String
+  description                   String?
+  isArchived                    Boolean                   @default(false) @map("is_archived")
 
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  members                       Member[]
+
+  @@map("teams")
+  @@index([organizationId])
+  @@index([isArchived])
+  @@unique([organizationId, name])
+}
+
+model Member {
+  id                            String                    @id @default(uuid())
+  role                          String                    @default("member")
+  teamRole                      TeamRole                  @default(MEMBER) @map("team_role")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   userId                        String                    @map("user_id")
   user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
+  teamId                        String?                   @map("team_id")
+  team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([organizationId, userId])
   @@index([organizationId])
   @@index([userId])
+  @@index([teamId])
   @@map("members")
 }
 
@@ -238,7 +263,7 @@ model Lead {
   company                       String?
   phoneNumber                   String?                   @map("phone_number")
   status                        LeadStatus                @default(PENDING)
-  message                       String?
+  message                       String
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
@@ -246,19 +271,9 @@ model Lead {
   @@map("leads")
 }
 
-model Team {
-  id                            String                    @id @default(uuid())
-  organizationId                String                    @map("organization_id")
-  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name                          String
-  description                   String?
-
-  createdAt                     DateTime                  @default(now()) @map("created_at")
-  updatedAt                     DateTime                  @updatedAt @map("updated_at")
-
-  @@map("teams")
-  @@index([organizationId])
-  @@unique([organizationId, name])
+enum TeamRole {
+  LEAD
+  MEMBER
 }
 
 enum FaceProfileStatus {

@@ -1,8 +1,8 @@
-import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreateTeamDTO {
-
   @IsString()
+  @IsNotEmpty()
   @MaxLength(100)
   name!: string;
 
