@@ -2,7 +2,7 @@
 
 ## Primary Focus Areas
 
-- AngularJS best practices
+- NestJS best practices
 - Focus on correctness
 - Detect regressions
 - Detect breaking changes

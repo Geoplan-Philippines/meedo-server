@@ -128,7 +128,6 @@ model Team {
 model Member {
   id                            String                    @id @default(uuid())
   role                          String                    @default("member")
-  teamRole                      TeamRole                  @default(MEMBER) @map("team_role")
 
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -269,11 +268,6 @@ model Lead {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
   
   @@map("leads")
-}
-
-enum TeamRole {
-  LEAD
-  MEMBER
 }
 
 enum FaceProfileStatus {

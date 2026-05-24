@@ -41,13 +41,15 @@ export class TeamsService {
 
     try {
       return await this.prisma.team.update({
-        where: { id },
+        where: { id, organizationId },
         data: { ...body },
       });
     } catch (error) {
       if ( error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictException(
-          `Team with name "${body.name}" already exists in this organization`,
+          body.name
+            ? `Team with name "${body.name}" already exists in this organization`
+            : 'Team name conflicts with an existing team in this organization',
         );
       }
       throw error;
@@ -58,7 +60,7 @@ export class TeamsService {
     await this.assertTeamExists(organizationId, id);
 
     return this.prisma.team.update({
-      where: { id },
+      where: { id, organizationId },
       data: { isArchived: true },
     });
   }

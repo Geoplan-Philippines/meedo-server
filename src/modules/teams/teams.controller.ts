@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { Team } from '@prisma/client';
+import { OrgRoles } from '@thallesp/nestjs-better-auth';
 
 import { CurrentOrganizationId } from 'src/common/decorators/current-organization-id.decorator';
 
@@ -11,6 +12,7 @@ import { UpdateTeamDTO } from './dto/update-team.dto';
 export class TeamsController {
   constructor(private readonly teamsService: TeamsService) {}
 
+  @OrgRoles(['owner', 'admin'])
   @Post()
   async createTeam(
     @CurrentOrganizationId() organizationId: string,
@@ -26,6 +28,7 @@ export class TeamsController {
     return this.teamsService.getAllTeams(organizationId);
   }
 
+  @OrgRoles(['owner', 'admin'])
   @Patch(':id')
   async updateTeam(
     @CurrentOrganizationId() organizationId: string,
@@ -35,6 +38,7 @@ export class TeamsController {
     return this.teamsService.updateTeam(organizationId, id, body);
   }
 
+  @OrgRoles(['owner', 'admin'])
   @Delete(':id')
   async archiveTeam(
     @CurrentOrganizationId() organizationId: string,

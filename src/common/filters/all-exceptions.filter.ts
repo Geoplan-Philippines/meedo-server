@@ -2,10 +2,10 @@ import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logge
 import { HttpAdapterHost } from '@nestjs/core';
 import { Prisma } from '@prisma/client';
 
-const PRISMA_ERROR_STATUS: Record<string, HttpStatus> = {
-  P2002: HttpStatus.CONFLICT,
-  P2003: HttpStatus.CONFLICT,
-  P2025: HttpStatus.NOT_FOUND,
+const PRISMA_ERROR_MAP: Record<string, { status: HttpStatus; message: string }> = {
+  P2002: { status: HttpStatus.CONFLICT, message: 'Resource already exists' },
+  P2003: { status: HttpStatus.UNPROCESSABLE_ENTITY, message: 'Invalid reference to a related resource' },
+  P2025: { status: HttpStatus.NOT_FOUND, message: 'Resource not found' },
 };
 
 @Catch()
@@ -57,16 +57,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     if (exception instanceof Prisma.PrismaClientKnownRequestError) {
-      const status =
-        PRISMA_ERROR_STATUS[exception.code] ??
-        HttpStatus.INTERNAL_SERVER_ERROR;
+      const mapped = PRISMA_ERROR_MAP[exception.code];
       return {
-        status,
+        status: mapped?.status ?? HttpStatus.INTERNAL_SERVER_ERROR,
         code: exception.code,
-        message:
-          status === HttpStatus.INTERNAL_SERVER_ERROR
-            ? 'Database error'
-            : exception.message,
+        message: mapped?.message ?? 'Database error',
       };
     }
 

@@ -25,14 +25,6 @@ export class TicketCategoriesController {
   }
 
   @AllowAnonymous()
-  @Get(':id')
-  async getTicketCategoryById(
-    @Param('id') id: string
-  ): Promise<TicketCategory | null> {
-    return this.ticketCategoriesService.getTicketCategoryById(id);
-  }
-
-  @AllowAnonymous()
   @Patch(':id')
   async updateTicketCategory(
     @Param('id') id: string,
