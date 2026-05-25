@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, Team } from '@prisma/client';
 
-import { PrismaService } from 'src/core/database/prisma.service';
+import { PrismaService } from '../../core/database/prisma.service';
 
 import { CreateTeamDTO } from './dto/create-team.dto';
 import { UpdateTeamDTO } from './dto/update-team.dto';
