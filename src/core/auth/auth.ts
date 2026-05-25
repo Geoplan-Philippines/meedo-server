@@ -13,6 +13,12 @@ export const auth = betterAuth({
     provider: 'postgresql',
   }),
 
+  advanced: {
+    database: {
+      generateId: false,
+    },
+  },
+
   emailAndPassword: {
     enabled: true,
   },
@@ -41,7 +47,11 @@ export const auth = betterAuth({
   },
 
   plugins: [
-    organization(),
+    organization({
+      teams: {
+        enabled: true,
+      },
+    }),
   ],
 
   trustedOrigins: env.CORS_ALLOWED_ORIGINS,
