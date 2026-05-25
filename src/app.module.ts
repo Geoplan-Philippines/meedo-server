@@ -17,7 +17,6 @@ import { AppService } from './app.service';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { TimekeepingModule } from './modules/timekeeping/timekeeping.module';
 import { CrmModule } from './modules/crm/crm.module';
-import { TicketsModule } from './modules/tickets/tickets.module';
 import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
@@ -32,7 +31,6 @@ import { AdminModule } from './modules/admin/admin.module';
     MaintenanceModule,
     TimekeepingModule,
     CrmModule,
-    TicketsModule,
     AdminModule,
   ],
   controllers: [AppController],

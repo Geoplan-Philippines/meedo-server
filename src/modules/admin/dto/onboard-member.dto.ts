@@ -17,10 +17,6 @@ export class OnboardMemberDTO {
 
   @IsOptional()
   @IsString()
-  organizationId?: string;
-
-  @IsOptional()
-  @IsString()
   teamId?: string;
 
   @IsOptional()

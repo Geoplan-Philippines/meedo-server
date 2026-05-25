@@ -4,7 +4,7 @@ import { OnboardMemberDTO } from './dto/onboard-member.dto';
 
 @Injectable()
 export class AdminService {
-  async onboardMember(dto: OnboardMemberDTO, callerHeaders: Headers) {
+  async onboardMember(dto: OnboardMemberDTO, organizationId: string) {
     const { user } = await auth.api.signUpEmail({
       body: {
         name: dto.name,
@@ -16,12 +16,11 @@ export class AdminService {
 
     const member = await auth.api.addMember({
       body: {
-        userId: user.id,
+        userId: user.id,  
         role: dto.role ?? 'member',
-        organizationId: dto.organizationId,
+        organizationId,
         teamId: dto.teamId,
       },
-      headers: callerHeaders,
     });
 
     return { user, member };
