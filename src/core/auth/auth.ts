@@ -48,7 +48,5 @@ export const auth = betterAuth({
     }),
   ],
 
-  trustedOrigins: [
-    "http://localhost:4200",
-  ],
+  trustedOrigins: env.CORS_ALLOWED_ORIGINS,
 });
