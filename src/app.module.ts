@@ -18,7 +18,7 @@ import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { TimekeepingModule } from './modules/timekeeping/timekeeping.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { TicketsModule } from './modules/tickets/tickets.module';
-import { TeamsModule } from './modules/teams/teams.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -33,7 +33,7 @@ import { TeamsModule } from './modules/teams/teams.module';
     TimekeepingModule,
     CrmModule,
     TicketsModule,
-    TeamsModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [

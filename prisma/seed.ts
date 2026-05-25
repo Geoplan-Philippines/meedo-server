@@ -1,110 +1,77 @@
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import * as bcrypt from 'bcryptjs';
+import { auth } from '../src/core/auth/auth';
+import { prisma } from '../src/core/database/prisma.client';
 
-import { env } from '../src/core/config/env.config';
+const ORG_NAME = 'Geoplan PH';
+const ORG_SLUG = 'geoplan-ph';
 
-const adapter = new PrismaPg({ connectionString: env.DATABASE_URL });
-const prisma = new PrismaClient({ adapter });
+const ADMIN_NAME = 'Admin';
+const ADMIN_EMAIL = 'admin@geoplan.ph';
+const ADMIN_PASSWORD = 'admin1234';
+
+const CATEGORIES = ['Hardware', 'Support', 'Customer Service'];
+const TEAMS = ['System Developer', 'Marketing', 'Business Development'];
 
 async function main() {
   console.log('Seeding...');
 
-  const hashedPassword = await bcrypt.hash('Admin@1234', 10);
-  const categories = ['Billing', 'Technical Support', 'General Inquiry'];
-  const teams = ['Engineering', 'Technical Support', 'Quality Assurance', 'Marketing', 'Operations'];
-
-  await prisma.$transaction(async (tx) => {
-    const org = await tx.organization.upsert({
-      where: { slug: 'meedo-dev' },
-      update: {},
-      create: {
-        name: 'Meedo Dev',
-        slug: 'meedo-dev',
-      },
-    });
-    console.log('Organization:', org.id);
-
-    const user = await tx.user.upsert({
-      where: { email: 'admin@meedo.dev' },
-      update: {},
-      create: {
-        name: 'Admin User',
-        email: 'admin@meedo.dev',
-        emailVerified: true,
-      },
-    });
-    console.log('User:', user.id);
-
-    const existingAccount = await tx.account.findFirst({
-      where: { userId: user.id, providerId: 'credential' },
-    });
-    if (!existingAccount) {
-      await tx.account.create({
-        data: {
-          accountId: user.id,
-          providerId: 'credential',
-          password: hashedPassword,
-          userId: user.id,
-        },
-      });
-    }
-    console.log('Account seeded');
-
-    await tx.member.upsert({
-      where: {
-        organizationId_userId: {
-          organizationId: org.id,
-          userId: user.id,
-        },
-      },
-      update: {},
-      create: {
-        organizationId: org.id,
-        userId: user.id,
-        role: 'owner',
-      },
-    });
-    console.log('Member linked');
-
-    for (const name of categories) {
-      await tx.ticketCategory.upsert({
-        where: {
-          organizationId_name: {
-            organizationId: org.id,
-            name,
-          },
-        },
-        update: {},
-        create: {
-          name,
-          description: `${name} tickets`,
-          organizationId: org.id,
-        },
-      });
-    }
-    console.log('Ticket categories seeded');
-
-    for (const name of teams) {
-      await tx.team.upsert({
-        where: {
-          organizationId_name: {
-            organizationId: org.id,
-            name,
-          },
-        },
-        update: {},
-        create: {
-          name,
-          description: `${name} team`,
-          organizationId: org.id,
-        },
-      });
-    }
-    console.log('Teams seeded');
+  const org = await prisma.organization.upsert({
+    where: { slug: ORG_SLUG },
+    update: { name: ORG_NAME },
+    create: { name: ORG_NAME, slug: ORG_SLUG },
   });
+  console.log('Organization:', org.id);
+
+  let user = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } });
+  if (!user) {
+    await auth.api.signUpEmail({
+      body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD, name: ADMIN_NAME },
+    });
+    user = await prisma.user.findUniqueOrThrow({ where: { email: ADMIN_EMAIL } });
+  }
+
+  user = await prisma.user.update({
+    where: { id: user.id },
+    data: { emailVerified: true },
+  });
+  console.log('User:', user.id);
+
+  await prisma.member.upsert({
+    where: { organizationId_userId: { organizationId: org.id, userId: user.id } },
+    update: { role: 'owner' },
+    create: { organizationId: org.id, userId: user.id, role: 'owner' },
+  });
+  console.log('Member linked');
+
+  for (const name of CATEGORIES) {
+    await prisma.ticketCategory.upsert({
+      where: { organizationId_name: { organizationId: org.id, name } },
+      update: {},
+      create: {
+        name,
+        description: `${name} tickets`,
+        organizationId: org.id,
+      },
+    });
+  }
+  console.log('Ticket categories seeded');
+
+  for (const name of TEAMS) {
+    const team = await prisma.team.upsert({
+      where: { organizationId_name: { organizationId: org.id, name } },
+      update: {},
+      create: { name, organizationId: org.id },
+    });
+
+    await prisma.teamMember.upsert({
+      where: { teamId_userId: { teamId: team.id, userId: user.id } },
+      update: {},
+      create: { teamId: team.id, userId: user.id },
+    });
+  }
+  console.log('Teams seeded');
 
   console.log('Done.');
+  console.log(`Login -> ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
 }
 
 main()

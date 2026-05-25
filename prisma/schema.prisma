@@ -27,6 +27,7 @@ model User {
   invitations                   Invitation[]
   members                       Member[]
   sessions                      Session[]
+  teamMembers                   TeamMember[]
 
   @@map("users")
 }
@@ -38,10 +39,11 @@ model Session {
   ipAddress                     String?                   @map("ip_address")
   userAgent                     String?                   @map("user_agent")
   activeOrganizationId          String?                   @map("active_organization_id")
-  
+  activeTeamId                  String?                   @map("active_team_id")
+
   userId                        String                    @map("user_id")
   user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -108,8 +110,6 @@ model Organization {
 model Team {
   id                            String                    @id @default(uuid())
   name                          String
-  description                   String?
-  isArchived                    Boolean                   @default(false) @map("is_archived")
 
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -117,12 +117,30 @@ model Team {
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
-  members                       Member[]
+  teamMembers                   TeamMember[]
+  invitations                   Invitation[]
 
   @@map("teams")
   @@index([organizationId])
-  @@index([isArchived])
   @@unique([organizationId, name])
+}
+
+model TeamMember {
+  id                            String                    @id @default(uuid())
+
+  teamId                        String                    @map("team_id")
+  team                          Team                      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  userId                        String                    @map("user_id")
+  user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([teamId, userId])
+  @@index([teamId])
+  @@index([userId])
+  @@map("team_members")
 }
 
 model Member {
@@ -135,16 +153,12 @@ model Member {
   userId                        String                    @map("user_id")
   user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  teamId                        String?                   @map("team_id")
-  team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
-
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([organizationId, userId])
   @@index([organizationId])
   @@index([userId])
-  @@index([teamId])
   @@map("members")
 }
 
@@ -157,15 +171,19 @@ model Invitation {
 
   inviterId                     String                    @map("inviter_id")
   user                          User                      @relation(fields: [inviterId], references: [id], onDelete: Cascade)
-  
+
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  teamId                        String?                   @map("team_id")
+  team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
-  
+
   @@index([organizationId])
   @@index([email])
+  @@index([teamId])
   @@map("invitations")
 }
 

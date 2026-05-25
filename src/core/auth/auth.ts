@@ -41,7 +41,11 @@ export const auth = betterAuth({
   },
 
   plugins: [
-    organization(),
+    organization({
+      teams: {
+        enabled: true,
+      },
+    }),
   ],
 
   trustedOrigins: [
