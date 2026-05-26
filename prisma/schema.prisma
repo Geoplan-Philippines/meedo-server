@@ -66,7 +66,7 @@ model Account {
 
   userId                        String                    @map("user_id")
   user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -79,7 +79,7 @@ model Verification {
   identifier                    String
   value                         String
   expiresAt                     DateTime                  @map("expires_at")
-  
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -96,7 +96,7 @@ model Organization {
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
-  
+
   faceEmbeddings                FaceEmbedding[]
   faceProfiles                  FaceProfile[]
   invitations                   Invitation[]
@@ -220,10 +220,10 @@ model FaceEmbedding {
 
   faceProfileId                 String                    @map("face_profile_id")
   faceProfile                   FaceProfile               @relation(fields: [faceProfileId], references: [id], onDelete: Cascade)
-  
+
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -241,7 +241,7 @@ model TicketCategory {
 
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -257,13 +257,14 @@ model NewsletterSubscriber {
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
-  
+
   @@map("newsletter_subscribers")
 }
 
 model Project {
   id                            String                    @id @default(uuid())
   apptivoId                     String                    @unique @map("apptivo_id")
+  workOrderNumber              String                     @map("work_order_number")
   customerName                  String                    @map("customer_name")
   status                        String
   total                         Float
@@ -286,7 +287,7 @@ model Lead {
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
-  
+
   @@map("leads")
 }
 
