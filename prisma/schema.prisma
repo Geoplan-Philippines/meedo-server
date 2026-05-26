@@ -264,7 +264,7 @@ model NewsletterSubscriber {
 model Project {
   id                            String                    @id @default(uuid())
   apptivoId                     String                    @unique @map("apptivo_id")
-  workOrderNumber              String                     @map("work_order_number")
+  workOrderNumber               String                    @map("work_order_number")
   customerName                  String                    @map("customer_name")
   status                        String
   total                         Float

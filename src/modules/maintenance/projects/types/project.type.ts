@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-export interface WorkOrders {
+export interface WorkOrder {
   id: string | number;
   workOrderNumber?: string;
   customerName?: string;
@@ -13,6 +13,6 @@ export type ProjectInput = Prisma.ProjectCreateInput;
 
 export type ApptivoResponse = {
   data?: {
-    data?: WorkOrders[];
-  } | WorkOrders[];
+    data?: WorkOrder[];
+  } | WorkOrder[];
 };

@@ -4,7 +4,7 @@ import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
-import { WorkOrders, ProjectInput, ApptivoResponse } from './types/project.type';
+import { WorkOrder, ProjectInput, ApptivoResponse } from './types/project.type';
 
 @Injectable()
 export class ProjectsService {
@@ -23,7 +23,7 @@ export class ProjectsService {
     ]);
 
     return {
-      data : projects,
+      data: projects,
       meta: {
         total,
         limit,
@@ -55,7 +55,7 @@ export class ProjectsService {
     return { synced: projects.length, deleted };
   }
 
-  private async fetchApptivoWorkOrders(): Promise<WorkOrders[]> {
+  private async fetchApptivoWorkOrders(): Promise<WorkOrder[]> {
     const apptivoApiUrl = `${env.APPTIVO_API_RESOURCE}&numRecords=1000&apiKey=${env.APPTIVO_API_KEY}&accessKey=${env.APPTIVO_API_ACCESS_KEY}`;
 
     let payload: ApptivoResponse;
@@ -83,11 +83,11 @@ export class ProjectsService {
       throw new HttpException('Unexpected Apptivo response structure', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    return items as WorkOrders[];
+    return items as WorkOrder[];
   }
 };
 
-function normalize(wo: WorkOrders): ProjectInput {
+function normalize(wo: WorkOrder): ProjectInput {
   const total = Number(wo.total);
   const date = wo.reportedDate ? new Date(wo.reportedDate) : null;
 
