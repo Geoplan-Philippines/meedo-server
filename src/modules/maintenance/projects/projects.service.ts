@@ -1,26 +1,10 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import type { Project } from '@prisma/client';
 import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
-
-interface WorkOrder {
-  id: string | number;
-  customerName?: string;
-  statusName?: string;
-  total?: string | number;
-  reportedDate?: string;
-}
-
-type ProjectInput = Prisma.ProjectCreateInput;
-
-type ApptivoResponse = {
-  data?: {
-    data?: WorkOrder[];
-  } | WorkOrder[];
-};
+import { WorkOrder, ProjectInput, ApptivoResponse } from './types/project.type';
 
 @Injectable()
 export class ProjectsService {
@@ -28,7 +12,7 @@ export class ProjectsService {
 
   async getAllProjects(query: GetAllProjectsQueryDTO): Promise<PaginatedResponse<Project>> {
     const { page, limit } = query;
-    
+
     const [projects, total] = await Promise.all([
       this.prisma.project.findMany({
         skip: (page - 1) * limit,
@@ -38,8 +22,8 @@ export class ProjectsService {
       this.prisma.project.count(),
     ]);
 
-    return { 
-      data : projects,
+    return {
+      data: projects,
       meta: {
         total,
         limit,
@@ -76,7 +60,7 @@ export class ProjectsService {
 
     let payload: ApptivoResponse;
     try {
-      const response = await fetch(apptivoApiUrl, 
+      const response = await fetch(apptivoApiUrl,
         { headers: { Accept: 'application/json' } }
       );
 
@@ -90,7 +74,7 @@ export class ProjectsService {
       throw new HttpException('Network error while fetching Apptivo data', HttpStatus.BAD_GATEWAY);
     }
 
-    const items = 
+    const items =
     payload?.data && 'data' in payload.data
       ? payload.data.data
       : payload?.data ?? payload;
@@ -98,7 +82,7 @@ export class ProjectsService {
     if (!Array.isArray(items)) {
       throw new HttpException('Unexpected Apptivo response structure', HttpStatus.INTERNAL_SERVER_ERROR);
     }
-    
+
     return items as WorkOrder[];
   }
 };
@@ -109,6 +93,7 @@ function normalize(wo: WorkOrder): ProjectInput {
 
   return {
     apptivoId: String(wo.id),
+    workOrderNumber: wo.workOrderNumber || '',
     customerName: wo.customerName || '',
     status: wo.statusName || 'Unknown',
     total: Number.isFinite(total) ? total : 0,
