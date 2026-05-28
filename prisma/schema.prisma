@@ -101,6 +101,7 @@ model Organization {
   faceProfiles                  FaceProfile[]
   invitations                   Invitation[]
   members                       Member[]
+  statuses                      Status[]
   ticketCategories              TicketCategory[]
   teams                         Team[]
 
@@ -289,6 +290,23 @@ model Lead {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@map("leads")
+}
+
+model Status {
+  id                            String                    @id @default(uuid())
+  name                          String
+  color                         String?                   @default("#6B7280")
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("statuses")
 }
 
 enum FaceProfileStatus {

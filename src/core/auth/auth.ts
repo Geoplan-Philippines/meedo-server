@@ -4,6 +4,10 @@ import { organization } from "better-auth/plugins";
 
 import { env } from "../config/env.config";
 import { prisma } from "../database/prisma.client";
+import { PrismaService } from "../database/prisma.service";
+import { StatusesService } from "../../modules/settings/statuses/statuses.service";
+
+const statusesService = new StatusesService(prisma as PrismaService);
 
 export const auth = betterAuth({
   baseURL: env.APP_URL,
@@ -50,6 +54,11 @@ export const auth = betterAuth({
     organization({
       teams: {
         enabled: true,
+      },
+      organizationHooks: {
+        afterCreateOrganization: async ({ organization }) => {
+          await statusesService.autoCreateDefaultStatuses(organization.id);
+        },
       },
     }),
   ],
