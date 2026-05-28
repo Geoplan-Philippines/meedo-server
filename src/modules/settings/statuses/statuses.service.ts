@@ -5,12 +5,6 @@ import { PrismaService } from '../../../core/database/prisma.service';
 import { CreateStatusDTO } from './dto/create-status.dto';
 import { UpdateStatusDTO } from './dto/update-status.dto';
 
-const DEFAULT_STATUSES = [
-  { name: 'Open', color: '#FF0000' },
-  { name: 'In Progress', color: '#FFA500' },
-  { name: 'Done', color: '#008000' },
-  { name: 'Cancelled', color: '#808080' },
-] as const;
 
 @Injectable()
 export class StatusesService {
@@ -43,20 +37,10 @@ export class StatusesService {
     });
   }
 
-  async deleteStatus(id: string, organizationId: string): Promise<Status> {
-    return this.prisma.status.delete({
+  async archiveStatus(id: string, organizationId: string): Promise<Status> {
+    return this.prisma.status.update({
       where: { id, organizationId },
-    });
-  }
-
-  async autoCreateDefaultStatuses(organizationId: string): Promise<void> {
-    await this.prisma.status.createMany({
-      data: DEFAULT_STATUSES.map((status) => ({
-        name: status.name,
-        color: status.color,
-        organizationId,
-      })),
-      skipDuplicates: true,
+      data: { isArchived: true },
     });
   }
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { StatusesService } from './statuses.service';
 import { CurrentOrganizationId } from '../../../common/decorators/current-organization-id.decorator';
 import { CreateStatusDTO } from './dto/create-status.dto';
@@ -29,12 +29,12 @@ export class StatusesController {
   }
 
   @AllowAnonymous()
-  @Delete(':id')
-  async deleteStatus(
+  @Patch(':id/archive')
+  async archiveStatus(
     @Param('id') id: string,
     @CurrentOrganizationId() organizationId: string,
   ) {
-    return this.statusesService.deleteStatus(id, organizationId);
+    return this.statusesService.archiveStatus(id, organizationId);
   }
 
   @AllowAnonymous()
