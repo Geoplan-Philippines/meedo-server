@@ -24,40 +24,39 @@ export class StatusesService {
     });
   }
 
-  async createStatus(createStatusDTO: CreateStatusDTO): Promise<Status> {
+  async createStatus(data: CreateStatusDTO, organizationId: string): Promise<Status> {
     return this.prisma.status.create({
       data: {
-        name: createStatusDTO.name,
-        color: createStatusDTO.color,
+        name: data.name,
+        color: data.color,
         organization: {
-          connect: {
-            id: createStatusDTO.organizationId,
-          },
+          connect: { id: organizationId },
         },
       },
     });
   }
 
-  async updateStatus(id: string, data: UpdateStatusDTO): Promise<Status> {
+  async updateStatus(id: string, data: UpdateStatusDTO, organizationId: string): Promise<Status> {
     return this.prisma.status.update({
-      where: { id },
+      where: { id, organizationId },
       data,
     });
   }
 
-  async deleteStatus(id: string): Promise<Status> {
+  async deleteStatus(id: string, organizationId: string): Promise<Status> {
     return this.prisma.status.delete({
-      where: { id },
+      where: { id, organizationId },
     });
   }
 
   async autoCreateDefaultStatuses(organizationId: string): Promise<void> {
-    for (const status of DEFAULT_STATUSES) {
-      await this.createStatus({
+    await this.prisma.status.createMany({
+      data: DEFAULT_STATUSES.map((status) => ({
         name: status.name,
         color: status.color,
         organizationId,
-      });
-    }
+      })),
+      skipDuplicates: true,
+    });
   }
 }

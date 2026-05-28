@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsHexColor, IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsHexColor } from 'class-validator';
 
 export class CreateStatusDTO {
   @IsString()
@@ -8,7 +8,4 @@ export class CreateStatusDTO {
   @IsOptional()
   @IsHexColor()
   color?: string;
-
-  @IsUUID()
-  organizationId!: string;
 }

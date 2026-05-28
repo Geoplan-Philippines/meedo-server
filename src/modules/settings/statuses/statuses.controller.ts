@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
 import { StatusesService } from './statuses.service';
-import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
+import { CurrentOrganizationId } from '../../../common/decorators/current-organization-id.decorator';
 import { CreateStatusDTO } from './dto/create-status.dto';
 import { UpdateStatusDTO } from './dto/update-status.dto';
+import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 @Controller('settings/statuses')
 export class StatusesController {
@@ -10,26 +11,35 @@ export class StatusesController {
 
   @AllowAnonymous()
   @Post()
-  async createStatus(@Body() body: CreateStatusDTO) {
-    return this.statusesService.createStatus(body);
+  async createStatus(
+    @Body() body: CreateStatusDTO,
+    @CurrentOrganizationId() organizationId: string,
+  ) {
+    return this.statusesService.createStatus(body, organizationId);
   }
-
 
   @AllowAnonymous()
   @Patch(':id')
-  async updateStatus(@Param('id') id: string, @Body() data: UpdateStatusDTO) {
-    return this.statusesService.updateStatus(id, data);
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() data: UpdateStatusDTO,
+    @CurrentOrganizationId() organizationId: string,
+  ) {
+    return this.statusesService.updateStatus(id, data, organizationId);
   }
 
   @AllowAnonymous()
   @Delete(':id')
-  async deleteStatus(@Param('id') id: string) {
-    return this.statusesService.deleteStatus(id);
+  async deleteStatus(
+    @Param('id') id: string,
+    @CurrentOrganizationId() organizationId: string,
+  ) {
+    return this.statusesService.deleteStatus(id, organizationId);
   }
 
   @AllowAnonymous()
   @Get()
-  async getStatusesByOrganization(@Query('organizationId') organizationId: string) {
+  async getStatusesByOrganization(@CurrentOrganizationId() organizationId: string) {
     return this.statusesService.getStatusesByOrganization(organizationId);
   }
 }
