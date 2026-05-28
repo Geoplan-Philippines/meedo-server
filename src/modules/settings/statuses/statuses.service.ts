@@ -43,4 +43,11 @@ export class StatusesService {
       data: { isArchived: true },
     });
   }
+
+  async restoreStatus(id: string, organizationId: string): Promise<Status> {
+    return this.prisma.status.update({
+      where: { id, organizationId },
+      data: { isArchived: false },
+    });
+  }
 }

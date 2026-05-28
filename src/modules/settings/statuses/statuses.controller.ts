@@ -38,6 +38,15 @@ export class StatusesController {
   }
 
   @AllowAnonymous()
+  @Patch(':id/restore')
+  async restoreStatus(
+    @Param('id') id: string,
+    @CurrentOrganizationId() organizationId: string,
+  ) {
+    return this.statusesService.restoreStatus(id, organizationId);
+  }
+
+  @AllowAnonymous()
   @Get()
   async getStatusesByOrganization(@CurrentOrganizationId() organizationId: string) {
     return this.statusesService.getStatusesByOrganization(organizationId);
