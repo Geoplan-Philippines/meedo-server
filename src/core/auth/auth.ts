@@ -4,53 +4,26 @@ import { organization } from "better-auth/plugins";
 
 import { env } from "../config/env.config";
 import { prisma } from "../database/prisma.client";
+import { sessionHooks, organizationHooks } from "./auth.hooks";
 
 export const auth = betterAuth({
   baseURL: env.APP_URL,
   basePath: "/api/v1/auth",
 
-  database: prismaAdapter(prisma, {
-    provider: 'postgresql',
-  }),
+  database: prismaAdapter(prisma, { provider: 'postgresql' }),
 
-  advanced: {
-    database: {
-      generateId: false,
-    },
-  },
+  advanced: { database: { generateId: false } },
 
-  emailAndPassword: {
-    enabled: true,
-  },
+  emailAndPassword: { enabled: true },
 
   databaseHooks: {
-    session: {
-      create: {
-        before: async (session) => {
-          const member = await prisma.member.findFirst({
-            where: { userId: session.userId },
-            orderBy: { createdAt: 'asc' },
-            select: { organizationId: true },
-          });
-
-          if (session.activeOrganizationId) return { data: session };
-
-          return {
-            data: {
-              ...session,
-              activeOrganizationId: member?.organizationId ?? null,
-            },
-          };
-        },
-      },
-    },
+    session: sessionHooks,
   },
 
   plugins: [
     organization({
-      teams: {
-        enabled: true,
-      },
+      teams: { enabled: true },
+      organizationHooks,
     }),
   ],
 
