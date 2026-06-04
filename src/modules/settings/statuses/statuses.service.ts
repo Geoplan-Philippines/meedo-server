@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Status } from '@prisma/client';
+import { TicketStatus } from '@prisma/client';
 
 import { PrismaService } from '../../../core/database/prisma.service';
 import { CreateStatusDTO } from './dto/create-status.dto';
@@ -10,16 +10,16 @@ import { UpdateStatusDTO } from './dto/update-status.dto';
 export class StatusesService {
   constructor(private prisma: PrismaService) {}
 
-  async getStatusesByOrganization(organizationId: string): Promise<Status[]> {
-    return this.prisma.status.findMany({
+  async getStatusesByOrganization(organizationId: string): Promise<TicketStatus[]> {
+    return this.prisma.ticketStatus.findMany({
       where: {
         organizationId,
       },
     });
   }
 
-  async createStatus(data: CreateStatusDTO, organizationId: string): Promise<Status> {
-    return this.prisma.status.create({
+  async createStatus(data: CreateStatusDTO, organizationId: string): Promise<TicketStatus> {
+    return this.prisma.ticketStatus.create({
       data: {
         name: data.name,
         color: data.color,
@@ -30,22 +30,22 @@ export class StatusesService {
     });
   }
 
-  async updateStatus(id: string, data: UpdateStatusDTO, organizationId: string): Promise<Status> {
-    return this.prisma.status.update({
+  async updateStatus(id: string, data: UpdateStatusDTO, organizationId: string): Promise<TicketStatus> {
+    return this.prisma.ticketStatus.update({
       where: { id, organizationId },
       data,
     });
   }
 
-  async archiveStatus(id: string, organizationId: string): Promise<Status> {
-    return this.prisma.status.update({
+  async archiveStatus(id: string, organizationId: string): Promise<TicketStatus> {
+    return this.prisma.ticketStatus.update({
       where: { id, organizationId },
       data: { isArchived: true },
     });
   }
 
-  async restoreStatus(id: string, organizationId: string): Promise<Status> {
-    return this.prisma.status.update({
+  async restoreStatus(id: string, organizationId: string): Promise<TicketStatus> {
+    return this.prisma.ticketStatus.update({
       where: { id, organizationId },
       data: { isArchived: false },
     });

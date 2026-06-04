@@ -25,7 +25,7 @@ export const sessionHooks = {
 
 export const organizationHooks = {
   afterCreateOrganization: async ({ organization }: { organization: { id: string } }) => {
-    await prisma.status.createMany({
+    await prisma.ticketStatus.createMany({
       data: DEFAULT_STATUSES.map((status) => ({
         ...status,
         organizationId: organization.id,

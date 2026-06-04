@@ -1,0 +1,3 @@
+export const TICKET_NUMBER_MIN = 100000;
+export const TICKET_NUMBER_MAX = 999999;
+export const MAX_TICKET_NUMBER_RETRIES = 5;

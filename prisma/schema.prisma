@@ -101,9 +101,10 @@ model Organization {
   faceProfiles                  FaceProfile[]
   invitations                   Invitation[]
   members                       Member[]
-  statuses                      Status[]
+  ticketStatuses                TicketStatus[]
   ticketCategories              TicketCategory[]
   teams                         Team[]
+  tickets                      Tickets[]
 
   @@map("organizations")
 }
@@ -120,6 +121,7 @@ model Team {
 
   teamMembers                   TeamMember[]
   invitations                   Invitation[]
+  tickets                       Tickets[]
 
   @@map("teams")
   @@index([organizationId])
@@ -137,6 +139,8 @@ model TeamMember {
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  assignedTickets               Tickets[]
 
   @@unique([teamId, userId])
   @@index([teamId])
@@ -243,6 +247,8 @@ model TicketCategory {
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  tickets                      Tickets[]
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -271,6 +277,8 @@ model Project {
   total                         Float
   reportedDate                  DateTime?                 @map("reported_date")
 
+  Tickets                      Tickets[]
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
   @@map("projects")
@@ -292,7 +300,7 @@ model Lead {
   @@map("leads")
 }
 
-model Status {
+model TicketStatus {
   id                            String                    @id @default(uuid())
   name                          String
   color                         String?                   @default("#6B7280")
@@ -301,12 +309,55 @@ model Status {
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  tickets                       Tickets[]
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([organizationId, name])
   @@index([organizationId])
-  @@map("statuses")
+  @@map("ticket_status")
+}
+
+model Tickets {
+  id                            String                    @id @default(uuid())
+  ticketNumber                  Int                       @map("ticket_number")
+  title                         String
+  description                   String?
+  priority                      TicketPriority            @default(MEDIUM)
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+
+  organizationId                String                    @map("organization_id")
+  teamId                        String?                   @map("team_id")
+  assigneeId                    String?                   @map("assignee_id")
+  projectId                     String?                   @map("project_id")
+  categoryId                    String?                   @map("category_id")
+  ticketStatusId                String                    @map("ticket_status_id")
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project                       Project?                  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  assignee                      TeamMember?               @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  ticketStatus                  TicketStatus              @relation(fields: [ticketStatusId], references: [id], onDelete: Cascade)
+  category                      TicketCategory?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  firstRespondedAt              DateTime?                 @map("first_responded_at")
+  resolvedAt                    DateTime?                 @map("resolved_at")
+  dueDate                       DateTime?                 @map("due_date")
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([ticketStatusId])
+  @@index([categoryId])
+  @@index([projectId])
+  @@index([teamId])
+  @@index([assigneeId])
+  @@index([isArchived])
+  @@unique([organizationId, ticketNumber])
+  @@map("tickets")
 }
 
 enum FaceProfileStatus {
@@ -332,4 +383,11 @@ enum LeadStatus {
   CONTACTED
   QUALIFIED
   LOST
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
 }
