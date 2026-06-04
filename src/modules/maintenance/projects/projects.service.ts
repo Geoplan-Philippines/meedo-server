@@ -10,16 +10,17 @@ import { WorkOrder, ProjectInput, ApptivoResponse } from './types/project.type';
 export class ProjectsService {
   constructor(private prisma: PrismaService) {}
 
-  async getAllProjects(query: GetAllProjectsQueryDTO): Promise<PaginatedResponse<Project>> {
+  async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string): Promise<PaginatedResponse<Project>> {
     const { page, limit } = query;
 
     const [projects, total] = await Promise.all([
       this.prisma.project.findMany({
+        where: { organizationId },
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.project.count(),
+      this.prisma.project.count({ where: { organizationId } }),
     ]);
 
     return {
@@ -33,7 +34,7 @@ export class ProjectsService {
     };
   }
 
-  async syncWorkOrdersFromApptivo() {
+  async syncWorkOrdersFromApptivo(organizationId: string) {
     const projects = (await this.fetchApptivoWorkOrders()).map(normalize);
     const apptivoIds = projects.map((p) => p.apptivoId);
 
@@ -41,12 +42,12 @@ export class ProjectsService {
       this.prisma.project.upsert({
         where: { apptivoId },
         update: data,
-        create: { apptivoId, ...data },
+        create: { apptivoId, ...data, organization: { connect: { id: organizationId } } },
       }),
     );
 
     const purge = this.prisma.project.deleteMany({
-      where: { apptivoId: { notIn: apptivoIds } },
+      where: { organizationId, apptivoId: { notIn: apptivoIds } },
     });
 
     const results = await this.prisma.$transaction([...upserts, purge]);

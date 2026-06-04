@@ -7,17 +7,7 @@ import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { CreateTicketDTO } from './dto/create-ticket.dto';
 import { UpdateTicketDTO } from './dto/update-ticket.dto';
 import { GetAllTicketsQueryDTO } from './dto/get-all-tickets-query.dto';
-import { MAX_TICKET_NUMBER_RETRIES, TICKET_NUMBER_MAX, TICKET_NUMBER_MIN } from './constants/ticket-number.constants';
-
-const TICKET_INCLUDE = {
-  ticketStatus: true,
-  category: true,
-  project: true,
-  team: true,
-  assignee: { include: { user: true } },
-} satisfies Prisma.TicketsInclude;
-
-type TicketWithRelations = Prisma.TicketsGetPayload<{ include: typeof TICKET_INCLUDE }>;
+import { MAX_TICKET_NUMBER_RETRIES, TICKET_INCLUDE, TICKET_NUMBER_MAX, TICKET_NUMBER_MIN, TicketWithRelations } from './constants/ticket.constants';
 
 @Injectable()
 export class TicketsService {
@@ -135,12 +125,12 @@ export class TicketsService {
     }
 
     if (data.projectId) {
-      const project = await this.prisma.project.findUnique({
-        where: { id: data.projectId },
+      const project = await this.prisma.project.findFirst({
+        where: { id: data.projectId, organizationId },
         select: { id: true },
       });
       if (!project) {
-        throw new NotFoundException('Project not found.');
+        throw new NotFoundException('Project not found in this organization.');
       }
     }
   }

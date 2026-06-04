@@ -106,6 +106,7 @@ model Organization {
   ticketCategories              TicketCategory[]
   teams                         Team[]
   tickets                      Tickets[]
+  projects                      Project[]
 
   @@map("organizations")
 }
@@ -271,17 +272,23 @@ model NewsletterSubscriber {
 
 model Project {
   id                            String                    @id @default(uuid())
-  apptivoId                     String                    @unique @map("apptivo_id")
   workOrderNumber               String                    @map("work_order_number")
   customerName                  String                    @map("customer_name")
   status                        String
   total                         Float
   reportedDate                  DateTime?                 @map("reported_date")
 
-  Tickets                      Tickets[]
+  apptivoId                     String                    @unique @map("apptivo_id")
+  organizationId                String                    @map("organization_id")
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  tickets                      Tickets[]
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId])
   @@map("projects")
 }
 
