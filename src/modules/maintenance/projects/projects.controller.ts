@@ -1,24 +1,25 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
 import { ProjectsService } from './projects.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { Project } from '@prisma/client';
+import { CurrentOrganizationId } from '../../../common/decorators/current-organization-id.decorator';
 
 @Controller('maintenance/projects')
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
-  @AllowAnonymous()
   @Get()
-  getAllProjects(@Query() query: GetAllProjectsQueryDTO): Promise<PaginatedResponse<Project>> {
-    return this.projectsService.getAllProjects(query);
+  getAllProjects(
+    @Query() query: GetAllProjectsQueryDTO,
+    @CurrentOrganizationId() organizationId: string,
+  ): Promise<PaginatedResponse<Project>> {
+    return this.projectsService.getAllProjects(query, organizationId);
   }
 
-  @AllowAnonymous()
   @Get('sync')
-  async syncWorkOrders() {
-    const { synced, deleted } = await this.projectsService.syncWorkOrdersFromApptivo();
+  async syncWorkOrders(@CurrentOrganizationId() organizationId: string) {
+    const { synced, deleted } = await this.projectsService.syncWorkOrdersFromApptivo(organizationId);
     return { message: 'Sync complete', synced, deleted };
   }
 }

@@ -9,7 +9,7 @@ export interface WorkOrder {
   reportedDate?: string;
 }
 
-export type ProjectInput = Prisma.ProjectCreateInput;
+export type ProjectInput = Omit<Prisma.ProjectCreateInput, 'organization' | 'Tickets'>;
 
 export type ApptivoResponse = {
   data?: {

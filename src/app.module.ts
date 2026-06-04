@@ -19,6 +19,7 @@ import { TimekeepingModule } from './modules/timekeeping/timekeeping.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { StatusesModule } from './modules/settings/statuses/statuses.module';
+import { TicketsModule } from './modules/tickets/tickets.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { StatusesModule } from './modules/settings/statuses/statuses.module';
     CrmModule,
     AdminModule,
     StatusesModule,
+    TicketsModule,
   ],
   controllers: [AppController],
   providers: [
