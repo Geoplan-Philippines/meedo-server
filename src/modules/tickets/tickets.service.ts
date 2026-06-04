@@ -86,17 +86,7 @@ export class TicketsService {
 
     return this.prisma.tickets.update({
       where: { id, organizationId },
-      data: {
-        title: data.title,
-        description: data.description,
-        priority: data.priority,
-        dueDate: data.dueDate,
-        ticketStatusId: data.ticketStatusId,
-        categoryId: data.categoryId,
-        projectId: data.projectId,
-        teamId: data.teamId,
-        assigneeId: data.assigneeId,
-      },
+      data
     });
   }
 
