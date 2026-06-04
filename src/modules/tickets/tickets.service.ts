@@ -125,8 +125,8 @@ export class TicketsService {
     }
 
     if (data.assigneeId) {
-      const assignee = await this.prisma.teamMember.findFirst({
-        where: { id: data.assigneeId, team: { organizationId } },
+      const assignee = await this.prisma.member.findFirst({
+        where: { id: data.assigneeId, organizationId },
         select: { id: true },
       });
       if (!assignee) {
