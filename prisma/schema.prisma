@@ -27,6 +27,7 @@ model User {
   invitations                   Invitation[]
   members                       Member[]
   sessions                      Session[]
+  teamMembers                   TeamMember[]
 
   @@map("users")
 }
@@ -38,10 +39,11 @@ model Session {
   ipAddress                     String?                   @map("ip_address")
   userAgent                     String?                   @map("user_agent")
   activeOrganizationId          String?                   @map("active_organization_id")
-  
+  activeTeamId                  String?                   @map("active_team_id")
+
   userId                        String                    @map("user_id")
   user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -64,7 +66,7 @@ model Account {
 
   userId                        String                    @map("user_id")
   user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -77,7 +79,7 @@ model Verification {
   identifier                    String
   value                         String
   expiresAt                     DateTime                  @map("expires_at")
-  
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -94,11 +96,12 @@ model Organization {
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
-  
+
   faceEmbeddings                FaceEmbedding[]
   faceProfiles                  FaceProfile[]
   invitations                   Invitation[]
   members                       Member[]
+  statuses                      Status[]
   ticketCategories              TicketCategory[]
   teams                         Team[]
 
@@ -108,8 +111,6 @@ model Organization {
 model Team {
   id                            String                    @id @default(uuid())
   name                          String
-  description                   String?
-  isArchived                    Boolean                   @default(false) @map("is_archived")
 
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -117,12 +118,30 @@ model Team {
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
-  members                       Member[]
+  teamMembers                   TeamMember[]
+  invitations                   Invitation[]
 
   @@map("teams")
   @@index([organizationId])
-  @@index([isArchived])
   @@unique([organizationId, name])
+}
+
+model TeamMember {
+  id                            String                    @id @default(uuid())
+
+  teamId                        String                    @map("team_id")
+  team                          Team                      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  userId                        String                    @map("user_id")
+  user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([teamId, userId])
+  @@index([teamId])
+  @@index([userId])
+  @@map("team_members")
 }
 
 model Member {
@@ -135,16 +154,12 @@ model Member {
   userId                        String                    @map("user_id")
   user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  teamId                        String?                   @map("team_id")
-  team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
-
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([organizationId, userId])
   @@index([organizationId])
   @@index([userId])
-  @@index([teamId])
   @@map("members")
 }
 
@@ -157,15 +172,19 @@ model Invitation {
 
   inviterId                     String                    @map("inviter_id")
   user                          User                      @relation(fields: [inviterId], references: [id], onDelete: Cascade)
-  
+
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  teamId                        String?                   @map("team_id")
+  team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
-  
+
   @@index([organizationId])
   @@index([email])
+  @@index([teamId])
   @@map("invitations")
 }
 
@@ -202,10 +221,10 @@ model FaceEmbedding {
 
   faceProfileId                 String                    @map("face_profile_id")
   faceProfile                   FaceProfile               @relation(fields: [faceProfileId], references: [id], onDelete: Cascade)
-  
+
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -223,7 +242,7 @@ model TicketCategory {
 
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
+
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
@@ -239,13 +258,14 @@ model NewsletterSubscriber {
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
-  
+
   @@map("newsletter_subscribers")
 }
 
 model Project {
   id                            String                    @id @default(uuid())
   apptivoId                     String                    @unique @map("apptivo_id")
+  workOrderNumber               String                    @map("work_order_number")
   customerName                  String                    @map("customer_name")
   status                        String
   total                         Float
@@ -268,8 +288,25 @@ model Lead {
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
-  
+
   @@map("leads")
+}
+
+model Status {
+  id                            String                    @id @default(uuid())
+  name                          String
+  color                         String?                   @default("#6B7280")
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("statuses")
 }
 
 enum FaceProfileStatus {
