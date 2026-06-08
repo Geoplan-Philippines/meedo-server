@@ -10,7 +10,13 @@ export const TICKET_INCLUDE = {
   category: true,
   project: true,
   team: true,
-  assignee: { include: { user: true } },
+  assignees: {
+    include: {
+      member: {
+        include: { user: { select: { id: true, name: true, email: true, image: true } } },
+      },
+    },
+  },
 } satisfies Prisma.TicketsInclude;
 
 export type TicketWithRelations = Prisma.TicketsGetPayload<{ include: typeof TICKET_INCLUDE }>;

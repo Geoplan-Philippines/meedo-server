@@ -161,7 +161,7 @@ model Member {
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
-  assignedTickets               Tickets[]
+  ticketAssignees               TicketAssignee[]
 
   @@unique([organizationId, userId])
   @@index([organizationId])
@@ -337,17 +337,16 @@ model Tickets {
 
   organizationId                String                    @map("organization_id")
   teamId                        String?                   @map("team_id")
-  assigneeId                    String?                   @map("assignee_id")
   projectId                     String?                   @map("project_id")
   categoryId                    String?                   @map("category_id")
-  ticketStatusId                String                    @map("ticket_status_id")
+  ticketStatusId                String?                   @map("ticket_status_id")
 
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   project                       Project?                  @relation(fields: [projectId], references: [id], onDelete: SetNull)
   team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  assignee                      Member?                   @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  assignees                     TicketAssignee[]
 
-  ticketStatus                  TicketStatus              @relation(fields: [ticketStatusId], references: [id], onDelete: Cascade)
+  ticketStatus                  TicketStatus?             @relation(fields: [ticketStatusId], references: [id], onDelete: SetNull)
   category                      TicketCategory?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
   firstRespondedAt              DateTime?                 @map("first_responded_at")
@@ -362,10 +361,24 @@ model Tickets {
   @@index([categoryId])
   @@index([projectId])
   @@index([teamId])
-  @@index([assigneeId])
   @@index([isArchived])
   @@unique([organizationId, ticketNumber])
   @@map("tickets")
+}
+
+model TicketAssignee {
+  id        String  @id @default(uuid())
+
+  ticketId  String  @map("ticket_id")
+  ticket    Tickets @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  memberId  String  @map("member_id")
+  member    Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([ticketId, memberId])
+  @@index([ticketId])
+  @@index([memberId])
+  @@map("ticket_assignees")
 }
 
 enum FaceProfileStatus {

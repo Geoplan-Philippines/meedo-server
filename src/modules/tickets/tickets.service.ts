@@ -38,7 +38,7 @@ export class TicketsService {
     };
   }
 
-  async createTicket(data: CreateTicketDTO, organizationId: string): Promise<Tickets> {
+  async createTicket(data: CreateTicketDTO, organizationId: string): Promise<TicketWithRelations> {
     await this.validateReferences(data, organizationId);
 
     for (let attempt = 0; attempt < MAX_TICKET_NUMBER_RETRIES; attempt++) {
@@ -51,12 +51,15 @@ export class TicketsService {
             priority: data.priority,
             dueDate: data.dueDate,
             organization: { connect: { id: organizationId } },
-            ticketStatus: { connect: { id: data.ticketStatusId } },
+            ticketStatus: data.ticketStatusId ? { connect: { id: data.ticketStatusId } } : undefined,
             category: data.categoryId ? { connect: { id: data.categoryId } } : undefined,
             project: data.projectId ? { connect: { id: data.projectId } } : undefined,
             team: data.teamId ? { connect: { id: data.teamId } } : undefined,
-            assignee: data.assigneeId ? { connect: { id: data.assigneeId } } : undefined,
+            assignees: data.assigneeIds?.length
+              ? { createMany: { data: data.assigneeIds.map(memberId => ({ memberId })) } }
+              : undefined,
           },
+          include: TICKET_INCLUDE,
         });
       } catch (error) {
         if (this.isTicketNumberCollision(error)) {
@@ -114,13 +117,12 @@ export class TicketsService {
       }
     }
 
-    if (data.assigneeId) {
-      const assignee = await this.prisma.member.findFirst({
-        where: { id: data.assigneeId, organizationId },
-        select: { id: true },
+    if (data.assigneeIds?.length) {
+      const count = await this.prisma.member.count({
+        where: { id: { in: data.assigneeIds }, organizationId },
       });
-      if (!assignee) {
-        throw new NotFoundException('Assignee not found in this organization.');
+      if (count !== data.assigneeIds.length) {
+        throw new NotFoundException('One or more assignees not found in this organization.');
       }
     }
 
