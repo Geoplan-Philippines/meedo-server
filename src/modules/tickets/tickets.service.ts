@@ -41,6 +41,8 @@ export class TicketsService {
   async createTicket(data: CreateTicketDTO, organizationId: string): Promise<TicketWithRelations> {
     await this.validateReferences(data, organizationId);
 
+    const uniqueAssigneeIds = data.assigneeIds ? [...new Set(data.assigneeIds)] : [];
+
     for (let attempt = 0; attempt < MAX_TICKET_NUMBER_RETRIES; attempt++) {
       try {
         return await this.prisma.tickets.create({
@@ -55,8 +57,8 @@ export class TicketsService {
             category: data.categoryId ? { connect: { id: data.categoryId } } : undefined,
             project: data.projectId ? { connect: { id: data.projectId } } : undefined,
             team: data.teamId ? { connect: { id: data.teamId } } : undefined,
-            assignees: data.assigneeIds?.length
-              ? { createMany: { data: data.assigneeIds.map(memberId => ({ memberId })) } }
+            assignees: uniqueAssigneeIds.length
+              ? { createMany: { data: uniqueAssigneeIds.map((memberId) => ({ memberId })) } }
               : undefined,
           },
           include: TICKET_INCLUDE,
@@ -74,12 +76,35 @@ export class TicketsService {
     );
   }
 
-  async updateTicket(id: string, data: UpdateTicketDTO, organizationId: string): Promise<Tickets> {
+  async updateTicket(
+    id: string,
+    data: UpdateTicketDTO,
+    organizationId: string,
+  ): Promise<TicketWithRelations> {
     await this.validateReferences(data, organizationId);
 
-    return this.prisma.tickets.update({
-      where: { id, organizationId },
-      data
+    const { assigneeIds, ...ticketData } = data;
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.tickets.update({
+        where: { id, organizationId },
+        data: ticketData,
+      });
+
+      if (assigneeIds !== undefined) {
+        await tx.ticketAssignee.deleteMany({ where: { ticketId: id } });
+
+        const uniqueIds = [...new Set(assigneeIds)];
+        if (uniqueIds.length > 0) {
+          await tx.ticketAssignee.createMany({
+            data: uniqueIds.map((memberId) => ({ ticketId: id, memberId })),
+          });
+        }
+      }
+      return tx.tickets.findUniqueOrThrow({
+        where: { id },
+        include: TICKET_INCLUDE,
+      });
     });
   }
 
@@ -118,10 +143,11 @@ export class TicketsService {
     }
 
     if (data.assigneeIds?.length) {
+      const uniqueIds = [...new Set(data.assigneeIds)];
       const count = await this.prisma.member.count({
-        where: { id: { in: data.assigneeIds }, organizationId },
+        where: { id: { in: uniqueIds }, organizationId },
       });
-      if (count !== data.assigneeIds.length) {
+      if (count !== uniqueIds.length) {
         throw new NotFoundException('One or more assignees not found in this organization.');
       }
     }
