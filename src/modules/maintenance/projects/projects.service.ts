@@ -76,9 +76,9 @@ export class ProjectsService {
     }
 
     const items =
-    payload?.data && 'data' in payload.data
-      ? payload.data.data
-      : payload?.data ?? payload;
+      payload?.data && typeof payload.data === 'object' && 'data' in payload.data
+        ? payload.data.data
+        : payload?.data ?? payload;
 
     if (!Array.isArray(items)) {
       throw new HttpException('Unexpected Apptivo response structure', HttpStatus.INTERNAL_SERVER_ERROR);
