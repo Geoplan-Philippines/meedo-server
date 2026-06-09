@@ -22,15 +22,11 @@ export class CloudinaryService {
           if (error) return reject(error);
           if (!result) return reject(new Error('Cloudinary upload failed: No result returned'));
 
-          const url = result.secure_url;
-          const uploadToken = '/upload/';
-          const uploadIndex = url.indexOf(uploadToken);
-
-          if (uploadIndex !== -1) {
-            const before = url.substring(0, uploadIndex + uploadToken.length);
-            const after = url.substring(uploadIndex + uploadToken.length);
-            result.secure_url = `${before}f_auto,q_auto/${after}`;
-          }
+          result.secure_url = cloudinary.url(result.public_id, {
+            fetch_format: 'auto',
+            quality: 'auto',
+            secure: true,
+          });
 
           resolve(result);
         }
@@ -44,7 +40,8 @@ export class CloudinaryService {
     return new Promise((resolve, reject) => {
       cloudinary.uploader.destroy(publicId, (error, result) => {
         if (error) return reject(error);
-        resolve({result: 'Image deleted successfully'});
+        if (result?.result !== 'ok') return reject(new Error(`Cloudinary deletion failed: ${result?.result}`));
+        resolve({ result: 'ok' });
       });
     });
   }
