@@ -88,6 +88,40 @@ describe('ProjectsService', () => {
       },
     ];
 
+    it('normalizes work order data correctly', async () => {
+      const rawWorkOrders = [
+        {
+          id: 'app-123',
+          workOrderNumber: 'IO-2026-1111',
+          customerName: 'Clark PH',
+          statusName: 'active',
+          total: '1000',
+          reportedDate: '2026-01-01',
+        },
+      ];
+
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ data: rawWorkOrders }),
+      });
+
+      mockPrismaService.$transaction.mockResolvedValue([mockProject, { count: 0 }]);
+
+      await service.syncWorkOrdersFromApptivo('org-geo');
+
+      expect(mockPrismaService.project.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            workOrderNumber: 'IO-2026-1111',
+            customerName: 'Clark PH',
+            status: 'active',
+            total: 1000,
+            reportedDate: new Date('2026-01-01'),
+          }),
+        }),
+      );
+    });
+
     it('syncs work orders and returns synced and deleted counts', async () => {
       (global.fetch as jest.Mock).mockResolvedValue({
         ok: true,

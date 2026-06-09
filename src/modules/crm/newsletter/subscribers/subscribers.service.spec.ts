@@ -39,6 +39,15 @@ describe('SubscribersService', () => {
       name: 'Juan Dela Cruz',
     };
 
+    it('propagates error when create fails', async () => {
+      mockPrismaService.newsletterSubscriber.create.mockRejectedValue(new Error('Unique constraint failed'));
+
+      await expect(service.createSubscriber({
+        email: 'juan@example.com',
+        name: 'Juan Dela Cruz',
+      })).rejects.toThrow('Unique constraint failed');
+    });
+
     it('creates and returns a subscriber', async () => {
       mockPrismaService.newsletterSubscriber.create.mockResolvedValue(mockSubscriber);
 

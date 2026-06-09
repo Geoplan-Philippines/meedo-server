@@ -76,6 +76,15 @@ describe('StatusesService', () => {
   });
 
   describe('updateStatus', () => {
+
+    it('propagates error when status belongs to a different org', async () => {
+      mockPrismaService.ticketStatus.update.mockRejectedValue(new Error('Record not found'));
+
+      await expect(
+        service.updateStatus('status-uuid-1', { name: 'Closed' }, 'different-org'),
+      ).rejects.toThrow('Record not found');
+    });
+
     it('updates and returns the status', async () => {
       const updated = { ...mockStatus, name: 'Closed' };
       mockPrismaService.ticketStatus.update.mockResolvedValue(updated);

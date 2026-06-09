@@ -93,6 +93,13 @@ describe('TicketCategoriesService', () => {
   });
 
   describe('deleteTicketCategory', () => {
+
+    it('propagates error when category does not exist', async () => {
+      mockPrismaService.ticketCategory.delete.mockRejectedValue(new Error('Record not found'));
+
+      await expect(service.deleteTicketCategory('nonexistent-id')).rejects.toThrow('Record not found');
+    });
+
     it('deletes and returns the ticket category', async () => {
       mockPrismaService.ticketCategory.delete.mockResolvedValue(mockTicketCategory);
 

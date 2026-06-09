@@ -46,6 +46,17 @@ describe('LeadsService', () => {
       message: 'I am interested',
     };
 
+    it('propagates error when create fails', async () => {
+      mockPrismaService.lead.create.mockRejectedValue(new Error('Unique constraint failed'));
+
+      await expect(service.createLead({
+        firstName: 'Juan',
+        lastName: 'Dela Cruz',
+        email: 'juan@example.com',
+        message: 'I am interested',
+      })).rejects.toThrow('Unique constraint failed');
+    });
+
     it('creates and returns a lead', async () => {
       mockPrismaService.lead.create.mockResolvedValue(mockLead);
 

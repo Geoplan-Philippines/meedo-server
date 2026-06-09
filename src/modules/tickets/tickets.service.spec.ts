@@ -109,7 +109,15 @@ describe('TicketsService', () => {
 
       const result = await service.createTicket(dto, 'org-uuid-1');
 
-      expect(mockPrismaService.tickets.create).toHaveBeenCalled();
+      expect(mockPrismaService.tickets.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            title: dto.title,
+            priority: dto.priority,
+            organization: { connect: { id: 'org-uuid-1' } },
+          }),
+        }),
+      );
       expect(result).toEqual(mockTicket);
     });
 
@@ -204,17 +212,16 @@ describe('TicketsService', () => {
   describe('updateTicket', () => {
     it('updates ticket and syncs assignees in a transaction', async () => {
       mockPrismaService.member.count.mockResolvedValue(1);
-      
+
       mockPrismaService.$transaction.mockImplementation(async (fn: Function) => {
         return fn({
-          tickets: { update: jest.fn() },
-          ticketAssignee: {
-            deleteMany: jest.fn(),
-            createMany: jest.fn(),
-          },
           tickets: {
             update: jest.fn(),
             findUniqueOrThrow: jest.fn().mockResolvedValue(mockTicket),
+          },
+          ticketAssignee: {
+            deleteMany: jest.fn(),
+            createMany: jest.fn(),
           },
         });
       });
