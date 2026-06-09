@@ -21,6 +21,11 @@ const schema = z.object({
   APPTIVO_API_RESOURCE: z.string().default('https://api.apptivo.com/v1/'),
   APPTIVO_API_KEY: z.string().min(1),
   APPTIVO_API_ACCESS_KEY: z.string().min(1),
+  CLOUDINARY_API_KEY_SECRET: z.string().min(1),
+  CLOUDINARY_API_KEY:z.string().min(1),
+  CLOUD_NAME: z.string().min(1),
+  PRESET_NAME: z.string().min(1),
+  CLOUDINARY_BASE_URL: z.string().min(1)
 });
 
 const parsed = schema.safeParse(process.env);
