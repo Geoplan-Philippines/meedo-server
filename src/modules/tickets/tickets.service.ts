@@ -38,8 +38,10 @@ export class TicketsService {
     };
   }
 
-  async createTicket(data: CreateTicketDTO, organizationId: string): Promise<Tickets> {
+  async createTicket(data: CreateTicketDTO, organizationId: string): Promise<TicketWithRelations> {
     await this.validateReferences(data, organizationId);
+
+    const uniqueAssigneeIds = data.assigneeIds ? [...new Set(data.assigneeIds)] : [];
 
     for (let attempt = 0; attempt < MAX_TICKET_NUMBER_RETRIES; attempt++) {
       try {
@@ -51,12 +53,15 @@ export class TicketsService {
             priority: data.priority,
             dueDate: data.dueDate,
             organization: { connect: { id: organizationId } },
-            ticketStatus: { connect: { id: data.ticketStatusId } },
+            ticketStatus: data.ticketStatusId ? { connect: { id: data.ticketStatusId } } : undefined,
             category: data.categoryId ? { connect: { id: data.categoryId } } : undefined,
             project: data.projectId ? { connect: { id: data.projectId } } : undefined,
             team: data.teamId ? { connect: { id: data.teamId } } : undefined,
-            assignee: data.assigneeId ? { connect: { id: data.assigneeId } } : undefined,
+            assignees: uniqueAssigneeIds.length
+              ? { createMany: { data: uniqueAssigneeIds.map((memberId) => ({ memberId })) } }
+              : undefined,
           },
+          include: TICKET_INCLUDE,
         });
       } catch (error) {
         if (this.isTicketNumberCollision(error)) {
@@ -71,12 +76,35 @@ export class TicketsService {
     );
   }
 
-  async updateTicket(id: string, data: UpdateTicketDTO, organizationId: string): Promise<Tickets> {
+  async updateTicket(
+    id: string,
+    data: UpdateTicketDTO,
+    organizationId: string,
+  ): Promise<TicketWithRelations> {
     await this.validateReferences(data, organizationId);
 
-    return this.prisma.tickets.update({
-      where: { id, organizationId },
-      data
+    const { assigneeIds, ...ticketData } = data;
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.tickets.update({
+        where: { id, organizationId },
+        data: ticketData,
+      });
+
+      if (assigneeIds !== undefined) {
+        await tx.ticketAssignee.deleteMany({ where: { ticketId: id } });
+
+        const uniqueIds = [...new Set(assigneeIds)];
+        if (uniqueIds.length > 0) {
+          await tx.ticketAssignee.createMany({
+            data: uniqueIds.map((memberId) => ({ ticketId: id, memberId })),
+          });
+        }
+      }
+      return tx.tickets.findUniqueOrThrow({
+        where: { id },
+        include: TICKET_INCLUDE,
+      });
     });
   }
 
@@ -114,13 +142,13 @@ export class TicketsService {
       }
     }
 
-    if (data.assigneeId) {
-      const assignee = await this.prisma.member.findFirst({
-        where: { id: data.assigneeId, organizationId },
-        select: { id: true },
+    if (data.assigneeIds?.length) {
+      const uniqueIds = [...new Set(data.assigneeIds)];
+      const count = await this.prisma.member.count({
+        where: { id: { in: uniqueIds }, organizationId },
       });
-      if (!assignee) {
-        throw new NotFoundException('Assignee not found in this organization.');
+      if (count !== uniqueIds.length) {
+        throw new NotFoundException('One or more assignees not found in this organization.');
       }
     }
 

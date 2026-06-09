@@ -5,6 +5,7 @@ import {
   IsUUID,
   IsEnum,
   IsDateString,
+  IsArray,
 } from 'class-validator';
 import { TicketPriority } from '@prisma/client';
 
@@ -25,9 +26,9 @@ export class CreateTicketDTO {
   @IsDateString()
   dueDate?: string;
 
+  @IsOptional()
   @IsUUID()
-  @IsNotEmpty()
-  ticketStatusId!: string;
+  ticketStatusId?: string;
 
   @IsOptional()
   @IsUUID()
@@ -42,6 +43,7 @@ export class CreateTicketDTO {
   teamId?: string;
 
   @IsOptional()
-  @IsUUID()
-  assigneeId?: string;
+  @IsArray()
+  @IsUUID('4', { each: true })
+  assigneeIds?: string[];
 }
