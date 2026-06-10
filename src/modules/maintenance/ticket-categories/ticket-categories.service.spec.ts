@@ -33,6 +33,29 @@ describe('TicketCategoriesService', () => {
     jest.resetAllMocks();
   });
 
+  describe('createTicketCategory', () => {
+    const dto = {
+      name: 'Hardware',
+      description: 'Hardware tickets',
+      organizationId: 'org-geo',
+    };
+
+    it('creates and returns a ticket category', async () => {
+      mockPrismaService.ticketCategory.create.mockResolvedValue(mockTicketCategory);
+
+      const result = await service.createTicketCategory(dto);
+
+      expect(mockPrismaService.ticketCategory.create).toHaveBeenCalledWith({
+        data: {
+          name: dto.name,
+          description: dto.description,
+          organization: { connect: { id: dto.organizationId } },
+        },
+      });
+      expect(result).toEqual(mockTicketCategory);
+    });
+  });
+
   describe('deleteTicketCategory', () => {
 
     it('propagates error when category does not exist', async () => {

@@ -186,6 +186,40 @@ describe('TicketsService', () => {
     });
   });
 
+  describe('getAllTickets', () => {
+    it('returns paginated tickets', async () => {
+      mockPrismaService.tickets.findMany.mockResolvedValue([mockTicket]);
+      mockPrismaService.tickets.count.mockResolvedValue(1);
+
+      const result = await service.getAllTickets({ page: 1, limit: 10 }, 'org-uuid-1');
+
+      expect(result.data).toEqual([mockTicket]);
+      expect(result.meta.total).toBe(1);
+      expect(result.meta.page).toBe(1);
+      expect(result.meta.lastPage).toBe(1);
+    });
+
+    it('calculates lastPage correctly', async () => {
+      mockPrismaService.tickets.findMany.mockResolvedValue([]);
+      mockPrismaService.tickets.count.mockResolvedValue(25);
+
+      const result = await service.getAllTickets({ page: 1, limit: 10 }, 'org-uuid-1');
+
+      expect(result.meta.lastPage).toBe(3);
+    });
+
+    it('skips correct number of records based on page', async () => {
+      mockPrismaService.tickets.findMany.mockResolvedValue([]);
+      mockPrismaService.tickets.count.mockResolvedValue(0);
+
+      await service.getAllTickets({ page: 3, limit: 10 }, 'org-uuid-1');
+
+      expect(mockPrismaService.tickets.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 20, take: 10 }),
+      );
+    });
+  });
+
   describe('updateTicket', () => {
     it('updates ticket and syncs assignees in a transaction', async () => {
       mockPrismaService.member.count.mockResolvedValue(1);
