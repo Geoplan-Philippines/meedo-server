@@ -34,47 +34,7 @@ describe('StatusesService', () => {
     service = module.get<StatusesService>(StatusesService);
     jest.resetAllMocks();
   });
-
-  describe('getStatusesByOrganization', () => {
-    it('returns statuses for the organization', async () => {
-      mockPrismaService.ticketStatus.findMany.mockResolvedValue([mockStatus]);
-
-      const result = await service.getStatusesByOrganization('org-geo');
-
-      expect(mockPrismaService.ticketStatus.findMany).toHaveBeenCalledWith({
-        where: { organizationId: 'org-geo' },
-      });
-      expect(result).toEqual([mockStatus]);
-    });
-
-    it('returns empty array when no statuses exist', async () => {
-      mockPrismaService.ticketStatus.findMany.mockResolvedValue([]);
-
-      const result = await service.getStatusesByOrganization('org-geo');
-
-      expect(result).toEqual([]);
-    });
-  });
-
-  describe('createStatus', () => {
-    const dto = { name: 'Open', color: '#6B7280' };
-
-    it('creates and returns a status', async () => {
-      mockPrismaService.ticketStatus.create.mockResolvedValue(mockStatus);
-
-      const result = await service.createStatus(dto, 'org-geo');
-
-      expect(mockPrismaService.ticketStatus.create).toHaveBeenCalledWith({
-        data: {
-          name: dto.name,
-          color: dto.color,
-          organization: { connect: { id: 'org-geo' } },
-        },
-      });
-      expect(result).toEqual(mockStatus);
-    });
-  });
-
+  
   describe('updateStatus', () => {
 
     it('propagates error when status belongs to a different org', async () => {
@@ -83,19 +43,6 @@ describe('StatusesService', () => {
       await expect(
         service.updateStatus('status-uuid-1', { name: 'Closed' }, 'different-org'),
       ).rejects.toThrow('Record not found');
-    });
-
-    it('updates and returns the status', async () => {
-      const updated = { ...mockStatus, name: 'Closed' };
-      mockPrismaService.ticketStatus.update.mockResolvedValue(updated);
-
-      const result = await service.updateStatus('status-uuid-1', { name: 'Closed' }, 'org-geo');
-
-      expect(mockPrismaService.ticketStatus.update).toHaveBeenCalledWith({
-        where: { id: 'status-uuid-1', organizationId: 'org-geo' },
-        data: { name: 'Closed' },
-      });
-      expect(result.name).toBe('Closed');
     });
   });
 

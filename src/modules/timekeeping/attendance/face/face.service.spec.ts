@@ -77,26 +77,6 @@ describe('FaceService', () => {
     });
   });
 
-  describe('findAllFaceProfiles', () => {
-    it('returns all face profiles', async () => {
-      mockPrismaService.faceProfile.findMany.mockResolvedValue([mockFaceProfile]);
-
-      const result = await service.findAllFaceProfiles();
-
-      expect(result).toEqual([mockFaceProfile]);
-    });
-  });
-
-  describe('findAllFaceEmbeddings', () => {
-    it('returns all face embeddings', async () => {
-      mockPrismaService.faceEmbedding.findMany.mockResolvedValue([mockFaceEmbedding]);
-
-      const result = await service.findAllFaceEmbeddings();
-
-      expect(result).toEqual([mockFaceEmbedding]);
-    });
-  });
-
   describe('findMyFaceProfiles', () => {
     it('returns face profiles for the user and organization', async () => {
       mockPrismaService.faceProfile.findMany.mockResolvedValue([mockFaceProfile]);

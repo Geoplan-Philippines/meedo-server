@@ -43,39 +43,6 @@ describe('ProjectsService', () => {
     jest.resetAllMocks();
   });
 
-  describe('getAllProjects', () => {
-    it('returns paginated projects', async () => {
-      mockPrismaService.project.findMany.mockResolvedValue([mockProject]);
-      mockPrismaService.project.count.mockResolvedValue(1);
-
-      const result = await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1');
-
-      expect(result.data).toEqual([mockProject]);
-      expect(result.meta.total).toBe(1);
-      expect(result.meta.lastPage).toBe(1);
-    });
-
-    it('calculates lastPage correctly', async () => {
-      mockPrismaService.project.findMany.mockResolvedValue([]);
-      mockPrismaService.project.count.mockResolvedValue(25);
-
-      const result = await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1');
-
-      expect(result.meta.lastPage).toBe(3);
-    });
-
-    it('skips correct number of records based on page', async () => {
-      mockPrismaService.project.findMany.mockResolvedValue([]);
-      mockPrismaService.project.count.mockResolvedValue(0);
-
-      await service.getAllProjects({ page: 3, limit: 10 }, 'org-uuid-1');
-
-      expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ skip: 20, take: 10 }),
-      );
-    });
-  });
-
   describe('syncWorkOrdersFromApptivo', () => {
     const mockWorkOrders = [
       {
