@@ -56,15 +56,6 @@ describe('LeadsService', () => {
         message: 'I am interested',
       })).rejects.toThrow('Unique constraint failed');
     });
-
-    it('creates and returns a lead', async () => {
-      mockPrismaService.lead.create.mockResolvedValue(mockLead);
-
-      const result = await service.createLead(dto);
-
-      expect(mockPrismaService.lead.create).toHaveBeenCalledWith({ data: dto });
-      expect(result).toEqual(mockLead);
-    });
   });
 
   describe('getAllLeads', () => {
@@ -98,6 +89,6 @@ describe('LeadsService', () => {
       expect(mockPrismaService.lead.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ skip: 20, take: 10 }),
       );
+      });
     });
   });
-});

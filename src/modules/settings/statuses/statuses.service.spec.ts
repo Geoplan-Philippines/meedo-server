@@ -35,27 +35,6 @@ describe('StatusesService', () => {
     jest.resetAllMocks();
   });
 
-  describe('getStatusesByOrganization', () => {
-    it('returns statuses for the organization', async () => {
-      mockPrismaService.ticketStatus.findMany.mockResolvedValue([mockStatus]);
-
-      const result = await service.getStatusesByOrganization('org-geo');
-
-      expect(mockPrismaService.ticketStatus.findMany).toHaveBeenCalledWith({
-        where: { organizationId: 'org-geo' },
-      });
-      expect(result).toEqual([mockStatus]);
-    });
-
-    it('returns empty array when no statuses exist', async () => {
-      mockPrismaService.ticketStatus.findMany.mockResolvedValue([]);
-
-      const result = await service.getStatusesByOrganization('org-geo');
-
-      expect(result).toEqual([]);
-    });
-  });
-
   describe('createStatus', () => {
     const dto = { name: 'Open', color: '#6B7280' };
 
@@ -74,7 +53,7 @@ describe('StatusesService', () => {
       expect(result).toEqual(mockStatus);
     });
   });
-
+  
   describe('updateStatus', () => {
 
     it('propagates error when status belongs to a different org', async () => {

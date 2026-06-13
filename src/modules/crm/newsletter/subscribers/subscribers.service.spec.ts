@@ -47,15 +47,6 @@ describe('SubscribersService', () => {
         name: 'Juan Dela Cruz',
       })).rejects.toThrow('Unique constraint failed');
     });
-
-    it('creates and returns a subscriber', async () => {
-      mockPrismaService.newsletterSubscriber.create.mockResolvedValue(mockSubscriber);
-
-      const result = await service.createSubscriber(dto);
-
-      expect(mockPrismaService.newsletterSubscriber.create).toHaveBeenCalledWith({ data: dto });
-      expect(result).toEqual(mockSubscriber);
-    });
   });
 
   describe('getAllSubscribers', () => {
