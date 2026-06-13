@@ -20,6 +20,7 @@ import { CrmModule } from './modules/crm/crm.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { StatusesModule } from './modules/settings/statuses/statuses.module';
 import { TicketsModule } from './modules/tickets/tickets.module';
+import { SlaPoliciesModule } from './modules/sla/sla-policies.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { TicketsModule } from './modules/tickets/tickets.module';
     AdminModule,
     StatusesModule,
     TicketsModule,
+    SlaPoliciesModule,
   ],
   controllers: [AppController],
   providers: [
