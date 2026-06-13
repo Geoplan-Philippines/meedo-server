@@ -3,8 +3,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 
 import { TicketsService } from './tickets.service';
-import { PrismaService } from '../../core/database/prisma.service';
-import { TICKET_NUMBER_MAX, TICKET_NUMBER_MIN, MAX_TICKET_NUMBER_RETRIES } from './constants/ticket.constants';
+import { PrismaService } from '../../../core/database/prisma.service';
+import { TicketActivityService } from './ticket-activity.service';
+import { TICKET_NUMBER_MAX, TICKET_NUMBER_MIN, MAX_TICKET_NUMBER_RETRIES } from '../constants/ticket.constants';
 
 const mockTicket = {
   id: '111222333',
@@ -33,6 +34,7 @@ const mockTicket = {
 const mockPrismaService = {
   tickets: {
     findMany: jest.fn(),
+    findFirst: jest.fn(),
     count: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
@@ -60,6 +62,11 @@ const mockPrismaService = {
   $transaction: jest.fn(),
 };
 
+const mockActivityService = {
+  resolveMemberId: jest.fn(),
+  record: jest.fn(),
+};
+
 describe('TicketsService', () => {
   let service: TicketsService;
 
@@ -68,6 +75,7 @@ describe('TicketsService', () => {
       providers: [
         TicketsService,
         { provide: PrismaService, useValue: mockPrismaService },
+        { provide: TicketActivityService, useValue: mockActivityService },
       ],
     }).compile();
 
@@ -221,7 +229,25 @@ describe('TicketsService', () => {
   });
 
   describe('updateTicket', () => {
+    const existingTicket = {
+      id: 'ticket-uuid-1',
+      ticketStatusId: null,
+      priority: 'MEDIUM' as const,
+      assignees: [],
+    };
+
+    it('throws NotFoundException when the ticket is missing or in another org', async () => {
+      mockPrismaService.tickets.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.updateTicket('missing-id', { title: 'Updated' }, 'org-uuid-1'),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
+    });
+
     it('updates ticket and syncs assignees in a transaction', async () => {
+      mockPrismaService.tickets.findFirst.mockResolvedValue(existingTicket);
       mockPrismaService.member.count.mockResolvedValue(1);
 
       mockPrismaService.$transaction.mockImplementation(async (fn: Function) => {
@@ -248,6 +274,7 @@ describe('TicketsService', () => {
     });
 
     it('does not touch assignees when assigneeIds is undefined', async () => {
+      mockPrismaService.tickets.findFirst.mockResolvedValue(existingTicket);
       const deleteMany = jest.fn();
       mockPrismaService.$transaction.mockImplementation(async (fn: Function) => {
         return fn({
