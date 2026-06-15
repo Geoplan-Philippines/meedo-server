@@ -59,7 +59,7 @@ export class SlaPoliciesService {
         total,
         limit,
         page,
-        lastPage: Math.ceil(total / limit),
+        lastPage: Math.max(1, Math.ceil(total / limit)),
       },
     };
   }

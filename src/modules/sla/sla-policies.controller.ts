@@ -13,21 +13,13 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
-import { IsNotEmpty, IsString, IsUrl, MaxLength } from 'class-validator';
 
 import { CurrentOrganizationId } from '../../common/decorators/current-organization-id.decorator';
 import { SlaPoliciesService } from './sla-policies.service';
 import { CreateSlaPolicyDTO } from './dto/create-sla-policy.dto';
 import { UpdateSlaPolicyDTO } from './dto/update-sla-policy.dto';
+import { UpdateDocumentDTO } from './dto/update-document.dto';
 import { GetAllSlaPoliciesQueryDTO } from './dto/get-all-sla-policies-query.dto';
-
-class UpdateDocumentDTO {
-  @IsString()
-  @IsNotEmpty()
-  @IsUrl()
-  @MaxLength(500)
-  documentUrl!: string;
-}
 
 @ApiTags('SLA Policies')
 @ApiSecurity('x-org-id')
