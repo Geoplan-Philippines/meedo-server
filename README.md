@@ -55,6 +55,20 @@ This project uses **Bun** as the primary package manager. Run the following comm
 bun install
 ```
 
+For users without Bun installed, execute the following command:
+
+```bash
+Windows:
+powershell -c "irm bun.sh/install.ps1|iex"
+```
+Note: Bun requires Windows 10 version 1809 or later.
+
+```bash
+macOS & Linux:
+curl -fsSL https://bun.com/install | bash
+```
+Note: Linux users. The unzip package is required to install Bun. Use sudo apt install unzip to install the unzip package. Kernel version 5.6 or higher is recommended; Bun runs on kernels as old as 3.10 (RHEL 7) with graceful degradation of newer syscalls. Use uname -r to check your kernel version.
+
 ### 3. Configure Environment Variables
 Copy the env template file to create your local environment file:
 ```bash
@@ -86,22 +100,42 @@ FACE_API_TIMEOUT_MS=8000
 
 ## 🗄️ Database Setup
 
-Configure Prisma and initialize the database schema with the following commands:
+### 1. Install PostgreSQL if not yet already:
+ - Download PostgreSQL from the official website: https://www.pgadmin.org/
+ - Run the installer.
+ - During installation:
+    - Keep the default components selected.
+    - Set a password for the postgres user.
+    - Keep the default port 5432.
+ - Complete the installation.
 
-### 1. Generate Prisma Client
+
+### 2. Install the pgvector Extension:
+ - Download the latest pgvector here: https://drive.google.com/file/d/1QQc5sj_bJbt92AIrmXzcvqqVVWM6XghV/view
+ - Move or Copy the files inside the **pgvector** to C:\Program Files\PostgreSQL\18\
+    ```bash
+    Example: 
+    Copy the vector.dll From C:\Users\<your pc>\Downloads\vector.v0.8.2-pg18\vector.v0.8.2-pg18\lib and move to C:\Program Files\PostgreSQL\18\lib\
+
+    Copy everything from C:\Users\<your pc>\Downloads\vector.v0.8.2-pg18\vector.v0.8.2-pg18\share\extension and move to C:\Program Files\PostgreSQL\18\share\extension
+
+    Copy the Vector folder from C:\Users\<your pc>\Downloads\vector.v0.8.2-pg18\vector.v0.8.2-pg18\include\server\extension and move to C:\Program Files\PostgreSQL\18\include\server\extension
+    ```
+
+### 3. Restart PostgreSQL
+ - Press Win + R
+    - Type: services.msc
+ - Find: postgresql-x64-18
+ - Right Click postgresql-x64-18 then press Restart
+
+### 6. Generate Prisma Client
 ```bash
 bunx prisma generate
 ```
 
-### 2. Run Database Migrations
+### 7. Run Database Migrations
 ```bash
 bunx prisma migrate dev
-```
-
-### 3. Enable pgvector Extension
-Run the following SQL query inside your PostgreSQL database (using **pgAdmin Query Tool**, **psql**, or your favorite database manager) to enable vector support:
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
 > [!NOTE]
@@ -109,24 +143,6 @@ CREATE EXTENSION IF NOT EXISTS vector;
 > ```bash
 > bunx prisma migrate reset
 > ```
-
----
-
-## 📦 pgvector Setup (Windows Installation Guide)
-
-If the `pgvector` extension is not automatically available via PostgreSQL StackBuilder, you can install it manually by following these steps:
-
-1. **Obtain the Binary:** Download the appropriate pre-compiled `pgvector` zip file matching your PostgreSQL version (e.g., `vector.v0.8.2-pg18.zip`). *Contact the team for the correct binary if needed.*
-2. **Extract Files:** Extract the contents of the zip file.
-3. **Deploy to Postgres Directory:** Copy the extracted folders and merge them directly into your local PostgreSQL installation directory (typically `C:\Program Files\PostgreSQL\<version>\`):
-    *   `bin/` ➔ `C:\Program Files\PostgreSQL\<version>\bin\`
-    *   `lib/` ➔ `C:\Program Files\PostgreSQL\<version>\lib\`
-    *   `share/` ➔ `C:\Program Files\PostgreSQL\<version>\share\`
-4. **Restart PostgreSQL:** Open the Windows **Services** manager (`services.msc`), locate **postgresql-x64-<version>**, and click **Restart**.
-5. **Activate the Extension:** Connect to your database and run:
-    ```sql
-    CREATE EXTENSION IF NOT EXISTS vector;
-    ```
 
 ---
 
@@ -158,6 +174,8 @@ You can verify the status of the server by hitting the built-in health check end
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | **GET** | `/api/v1/health` | Performs health checks on database connectivity and critical services. |
+
+
 
 ---
 
