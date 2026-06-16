@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Post, Patch, Delete, Param } from '@nestjs/common';
+import { Body, Controller, Get, Post, Patch, Delete, Param, ParseUUIDPipe } from '@nestjs/common';
 
 import { TicketCategory } from '@prisma/client';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
-import { TicketCategoriesService } from './ticket-categories.service';
+import { TicketCategoriesService } from './services/ticket-categories.service';
 import { CreateTicketCategoryDTO } from './dto/create-ticket-category.dto';
+import { UpdateTicketCategoryDTO } from './dto/update-ticket-category.dto';
+import { CurrentOrganizationId } from '../../../common/decorators/current-organization-id.decorator';
 
 @Controller('maintenance/ticket-categories')
 export class TicketCategoriesController {
@@ -13,31 +15,36 @@ export class TicketCategoriesController {
   @AllowAnonymous()
   @Post()
   async createTicketCategory(
-    @Body() createTicketCategoryDTO: CreateTicketCategoryDTO
+    @Body() body: CreateTicketCategoryDTO,
+    @CurrentOrganizationId() organizationId: string,
   ): Promise<TicketCategory> {
-    return this.ticketCategoriesService.createTicketCategory(createTicketCategoryDTO);
+    return this.ticketCategoriesService.createTicketCategory(body, organizationId);
   }
 
   @AllowAnonymous()
   @Get()
-  async getAllTicketCategories(): Promise<TicketCategory[]> {
-    return this.ticketCategoriesService.getAllTicketCategories();
+  async getAllTicketCategories(
+    @CurrentOrganizationId() organizationId: string,
+  ): Promise<TicketCategory[]> {
+    return this.ticketCategoriesService.getAllTicketCategories(organizationId);
   }
 
   @AllowAnonymous()
   @Patch(':id')
   async updateTicketCategory(
-    @Param('id') id: string,
-    @Body() body: Partial<CreateTicketCategoryDTO>
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: UpdateTicketCategoryDTO,
+    @CurrentOrganizationId() organizationId: string,
   ): Promise<TicketCategory> {
-    return this.ticketCategoriesService.updateTicketCategory(id, body);
+    return this.ticketCategoriesService.updateTicketCategory(id, body, organizationId);
   }
 
   @AllowAnonymous()
   @Delete(':id')
   async deleteTicketCategory(
-    @Param('id') id: string
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentOrganizationId() organizationId: string,
   ): Promise<TicketCategory> {
-    return this.ticketCategoriesService.deleteTicketCategory(id);
+    return this.ticketCategoriesService.deleteTicketCategory(id, organizationId);
   }
 }

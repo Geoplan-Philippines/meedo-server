@@ -1,15 +1,13 @@
-import { IsString, IsOptional, MaxLength, IsUUID } from 'class-validator';
+import { IsString, IsOptional, IsNotEmpty, MaxLength } from 'class-validator';
 
 export class CreateTicketCategoryDTO {
   @IsString()
+  @IsNotEmpty()
   @MaxLength(100)
   name!: string;
-
-  @IsString()
-  organizationId!: string;
 
   @IsOptional()
   @IsString()
   @MaxLength(255)
-  description!: string;
+  description?: string;
 }

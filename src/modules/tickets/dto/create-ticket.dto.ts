@@ -6,16 +6,21 @@ import {
   IsEnum,
   IsDateString,
   IsArray,
+  MaxLength,
 } from 'class-validator';
 import { TicketPriority } from '@prisma/client';
+
+import { TICKET_DESCRIPTION_MAX_LENGTH, TICKET_TITLE_MAX_LENGTH } from '../constants/ticket.constants';
 
 export class CreateTicketDTO {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(TICKET_TITLE_MAX_LENGTH)
   title!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(TICKET_DESCRIPTION_MAX_LENGTH)
   description?: string;
 
   @IsOptional()

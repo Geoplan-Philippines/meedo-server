@@ -163,6 +163,8 @@ model Member {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   ticketAssignees               TicketAssignee[]
+  ticketComments                TicketComment[]
+  ticketActivities              TicketActivity[]
 
   @@unique([organizationId, userId])
   @@index([organizationId])
@@ -348,6 +350,8 @@ model Tickets {
   project                       Project?                  @relation(fields: [projectId], references: [id], onDelete: SetNull)
   team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
   assignees                     TicketAssignee[]
+  comments                      TicketComment[]
+  activities                    TicketActivity[]
 
   ticketStatus                  TicketStatus?             @relation(fields: [ticketStatusId], references: [id], onDelete: SetNull)
   category                      TicketCategory?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -411,6 +415,55 @@ model SlaPolicy {
   @@index([isActive])
   @@index([isArchived])
   @@map("sla_policies")
+}
+
+enum TicketActivityType {
+  CREATED
+  STATUS_CHANGED
+  ASSIGNEE_CHANGED
+  PRIORITY_CHANGED
+  COMMENTED
+  ARCHIVED
+  RESTORED
+}
+
+model TicketComment {
+  id                            String                    @id @default(uuid())
+
+  ticketId                      String                    @map("ticket_id")
+  ticket                        Tickets                   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  authorMemberId                String?                   @map("author_member_id")
+  author                        Member?                   @relation(fields: [authorMemberId], references: [id], onDelete: SetNull)
+
+  body                          String
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([ticketId])
+  @@index([authorMemberId])
+  @@map("ticket_comments")
+}
+
+model TicketActivity {
+  id                            String                    @id @default(uuid())
+
+  ticketId                      String                    @map("ticket_id")
+  ticket                        Tickets                   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  actorMemberId                 String?                   @map("actor_member_id")
+  actor                         Member?                   @relation(fields: [actorMemberId], references: [id], onDelete: SetNull)
+
+  type                          TicketActivityType
+  meta                          Json?
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([ticketId])
+  @@index([actorMemberId])
+  @@map("ticket_activities")
 }
 
 enum FaceProfileStatus {
