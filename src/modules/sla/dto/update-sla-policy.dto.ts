@@ -8,9 +8,4 @@ export class UpdateSlaPolicyDTO extends PartialType(CreateSlaPolicyDTO) {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
-
-  @ApiPropertyOptional({ example: false })
-  @IsOptional()
-  @IsBoolean()
-  isArchived?: boolean;
 }
