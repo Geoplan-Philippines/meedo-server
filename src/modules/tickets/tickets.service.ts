@@ -2,12 +2,12 @@ import { BadRequestException, Injectable, InternalServerErrorException, NotFound
 import { Prisma, TicketActivityType, TicketPriority } from '@prisma/client';
 import { randomInt } from 'node:crypto';
 
-import { PrismaService } from '../../../core/database/prisma.service';
+import { PrismaService } from '../../core/database/prisma.service';
 import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/paginated-api.response';
-import { CreateTicketDTO } from '../dto/create-ticket.dto';
-import { UpdateTicketDTO } from '../dto/update-ticket.dto';
-import { GetAllTicketsQueryDTO } from '../dto/get-all-tickets-query.dto';
-import { TicketActivityService } from './ticket-activity.service';
+import { CreateTicketDTO } from './dto/create-ticket.dto';
+import { UpdateTicketDTO } from './dto/update-ticket.dto';
+import { GetAllTicketsQueryDTO } from './dto/get-all-tickets-query.dto';
+import { TicketActivityService } from './activity/ticket-activity.service';
 import {
   MAX_TICKET_NUMBER_RETRIES,
   TICKET_INCLUDE,
@@ -17,7 +17,7 @@ import {
   TicketSortField,
   TicketStats,
   TicketWithRelations,
-} from '../constants/ticket.constants';
+} from './constants/ticket.constants';
 
 @Injectable()
 export class TicketsService {
@@ -94,23 +94,36 @@ export class TicketsService {
     let ticket: TicketWithRelations | null = null;
     for (let attempt = 0; attempt < MAX_TICKET_NUMBER_RETRIES; attempt++) {
       try {
-        ticket = await this.prisma.tickets.create({
-          data: {
-            ticketNumber: this.generateTicketNumber(),
-            title: data.title,
-            description: data.description,
-            priority: data.priority,
-            dueDate: data.dueDate,
-            organization: { connect: { id: organizationId } },
-            ticketStatus: data.ticketStatusId ? { connect: { id: data.ticketStatusId } } : undefined,
-            category: data.categoryId ? { connect: { id: data.categoryId } } : undefined,
-            project: data.projectId ? { connect: { id: data.projectId } } : undefined,
-            team: data.teamId ? { connect: { id: data.teamId } } : undefined,
-            assignees: uniqueAssigneeIds.length
-              ? { createMany: { data: uniqueAssigneeIds.map((memberId) => ({ memberId })) } }
-              : undefined,
-          },
-          include: TICKET_INCLUDE,
+        // Create the ticket and its CREATED activity atomically so the audit
+        // trail can never start without the opening event (and a failed activity
+        // insert rolls back the orphan ticket instead of leaving it behind).
+        ticket = await this.prisma.$transaction(async (tx) => {
+          const created = await tx.tickets.create({
+            data: {
+              ticketNumber: this.generateTicketNumber(),
+              title: data.title,
+              description: data.description,
+              priority: data.priority,
+              dueDate: data.dueDate,
+              organization: { connect: { id: organizationId } },
+              ticketStatus: data.ticketStatusId ? { connect: { id: data.ticketStatusId } } : undefined,
+              category: data.categoryId ? { connect: { id: data.categoryId } } : undefined,
+              project: data.projectId ? { connect: { id: data.projectId } } : undefined,
+              team: data.teamId ? { connect: { id: data.teamId } } : undefined,
+              assignees: uniqueAssigneeIds.length
+                ? { createMany: { data: uniqueAssigneeIds.map((memberId) => ({ memberId })) } }
+                : undefined,
+            },
+            include: TICKET_INCLUDE,
+          });
+
+          await this.activity.record(tx, {
+            ticketId: created.id,
+            actorMemberId,
+            type: TicketActivityType.CREATED,
+          });
+
+          return created;
         });
         break;
       } catch (error) {
@@ -126,12 +139,6 @@ export class TicketsService {
         'Failed to generate a unique ticket number. Please try again.',
       );
     }
-
-    await this.activity.record(this.prisma, {
-      ticketId: ticket.id,
-      actorMemberId,
-      type: TicketActivityType.CREATED,
-    });
 
     return ticket;
   }

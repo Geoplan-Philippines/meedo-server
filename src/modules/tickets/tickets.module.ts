@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
-import { TicketsService } from './services/tickets.service';
+import { TicketsService } from './tickets.service';
 import { TicketsController } from './tickets.controller';
-import { TicketCommentsController } from './ticket-comments.controller';
-import { TicketCommentsService } from './services/ticket-comments.service';
-import { TicketActivityService } from './services/ticket-activity.service';
+import { TicketCommentsController } from './comments/ticket-comments.controller';
+import { TicketCommentsService } from './comments/ticket-comments.service';
+import { TicketActivityService } from './activity/ticket-activity.service';
 
 @Module({
   controllers: [TicketsController, TicketCommentsController],

@@ -1,6 +1,6 @@
 import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
-import { TICKET_COMMENT_MAX_LENGTH } from '../constants/ticket.constants';
+import { TICKET_COMMENT_MAX_LENGTH } from '../../constants/ticket.constants';
 
 export class CreateTicketCommentDTO {
   @IsString()

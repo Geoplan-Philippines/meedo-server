@@ -3,9 +3,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 
 import { TicketsService } from './tickets.service';
-import { PrismaService } from '../../../core/database/prisma.service';
-import { TicketActivityService } from './ticket-activity.service';
-import { TICKET_NUMBER_MAX, TICKET_NUMBER_MIN, MAX_TICKET_NUMBER_RETRIES } from '../constants/ticket.constants';
+import { PrismaService } from '../../core/database/prisma.service';
+import { TicketActivityService } from './activity/ticket-activity.service';
+import { TICKET_NUMBER_MAX, TICKET_NUMBER_MIN, MAX_TICKET_NUMBER_RETRIES } from './constants/ticket.constants';
 
 const mockTicket = {
   id: '111222333',

@@ -3,6 +3,7 @@ import { IsBoolean, IsEnum, IsIn, IsOptional, IsString, IsUUID } from 'class-val
 import { TicketPriority } from '@prisma/client';
 
 import { PaginationQueryDTO } from 'src/common/dto/pagination-query.dto';
+import { TICKET_SORTABLE_FIELDS, type TicketSortField } from '../constants/ticket.constants';
 
 export class GetAllTicketsQueryDTO extends PaginationQueryDTO {
   @IsOptional()
@@ -31,8 +32,8 @@ export class GetAllTicketsQueryDTO extends PaginationQueryDTO {
   includeArchived?: boolean;
 
   @IsOptional()
-  @IsString()
-  sortField?: string;
+  @IsIn(TICKET_SORTABLE_FIELDS)
+  sortField?: TicketSortField;
 
   @IsOptional()
   @IsIn(['asc', 'desc'])

@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from 
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
-import { TicketsService } from './services/tickets.service';
+import { TicketsService } from './tickets.service';
 import { CreateTicketDTO } from './dto/create-ticket.dto';
 import { UpdateTicketDTO } from './dto/update-ticket.dto';
 import { GetAllTicketsQueryDTO } from './dto/get-all-tickets-query.dto';

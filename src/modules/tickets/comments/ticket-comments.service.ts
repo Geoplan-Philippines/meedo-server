@@ -5,15 +5,10 @@ import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/paginated-api.response';
 import { PaginationQueryDTO } from 'src/common/dto/pagination-query.dto';
 import { isOrgAdminRole } from 'src/common/constants/org-roles.constants';
-import { CreateTicketCommentDTO } from '../dto/create-ticket-comment.dto';
-import { UpdateTicketCommentDTO } from '../dto/update-ticket-comment.dto';
-import { TicketActivityService } from './ticket-activity.service';
-import {
-  ACTIVITY_INCLUDE,
-  ActivityWithActor,
-  COMMENT_INCLUDE,
-  CommentWithAuthor,
-} from '../constants/ticket.constants';
+import { CreateTicketCommentDTO } from './dto/create-ticket-comment.dto';
+import { UpdateTicketCommentDTO } from './dto/update-ticket-comment.dto';
+import { TicketActivityService } from '../activity/ticket-activity.service';
+import { COMMENT_INCLUDE, CommentWithAuthor } from '../constants/ticket.constants';
 
 export type CommentWithPermissions = CommentWithAuthor & { canModify: boolean };
 
@@ -121,28 +116,6 @@ export class TicketCommentsService {
       }),
       this.prisma.ticketComment.delete({ where: { id: commentId } }),
     ]);
-  }
-
-  async getActivity(
-    ticketId: string,
-    organizationId: string,
-    query: PaginationQueryDTO,
-  ): Promise<PaginatedResponse<ActivityWithActor>> {
-    await this.ensureTicketInOrg(ticketId, organizationId);
-    const { page, limit } = query;
-
-    const [activities, total] = await Promise.all([
-      this.prisma.ticketActivity.findMany({
-        where: { ticketId },
-        include: ACTIVITY_INCLUDE,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.ticketActivity.count({ where: { ticketId } }),
-    ]);
-
-    return { data: activities, meta: buildPaginationMeta(total, page, limit) };
   }
 
   private async ensureTicketInOrg(ticketId: string, organizationId: string): Promise<void> {

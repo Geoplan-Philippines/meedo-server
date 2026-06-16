@@ -437,7 +437,6 @@ model TicketComment {
   author                        Member?                   @relation(fields: [authorMemberId], references: [id], onDelete: SetNull)
 
   body                          String
-  isInternal                    Boolean                   @default(false) @map("is_internal")
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
@@ -460,8 +459,10 @@ model TicketActivity {
   meta                          Json?
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@index([ticketId])
+  @@index([actorMemberId])
   @@map("ticket_activities")
 }
 
