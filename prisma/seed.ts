@@ -1,15 +1,15 @@
 import { auth } from '../src/core/auth/auth';
 import { prisma } from '../src/core/database/prisma.client';
 
-const ORG_NAME = 'Geoplan PH';
-const ORG_SLUG = 'geoplan-ph';
+const ORG_NAME = 'Geoplan Philippines Inc.';
+const ORG_SLUG = 'geoplan-philippines-inc';
 
 const ADMIN_NAME = 'Admin';
-const ADMIN_EMAIL = 'admin@geoplan.ph';
-const ADMIN_PASSWORD = 'admin1234';
+const ADMIN_EMAIL = 'admin@geoplanph.com';
+const ADMIN_PASSWORD = 'admin123';
 
 const CATEGORIES = ['Hardware', 'Support', 'Customer Service'];
-const TEAMS = ['System Developer', 'Marketing', 'Business Development'];
+const TEAMS = ['IT / System Developer', 'Business Development Group'];
 
 async function main() {
   console.log('Seeding...');
