@@ -18,6 +18,7 @@ model User {
   email                         String                    @unique
   emailVerified                 Boolean                   @default(false) @map("is_email_verified")
   image                         String?                   @map("image_url")
+  employeeCode                  String?                   @unique @map("employee_code")
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")

@@ -7,7 +7,7 @@ import { AttendanceService } from './attendance.service';
 const mockAttendanceService = {
   recordAttendanceEvent: jest.fn(),
   getMyAttendanceEvents: jest.fn(),
-  getMyDailyAttendance: jest.fn(),
+  getDailyAttendance: jest.fn(),
   getMyAttendanceHistory: jest.fn(),
 };
 
@@ -37,11 +37,11 @@ describe('AttendanceController', () => {
 
   it('scopes the daily summary to the current employee', async () => {
     const summary = { date: new Date(), firstIn: null, lastOut: null, billableHours: null, events: [] };
-    mockAttendanceService.getMyDailyAttendance.mockResolvedValue(summary);
+    mockAttendanceService.getDailyAttendance.mockResolvedValue(summary);
 
     const result = await controller.getMyDailyAttendance('employee-1', '2026-06-25');
 
-    expect(mockAttendanceService.getMyDailyAttendance).toHaveBeenCalledWith('employee-1', '2026-06-25');
+    expect(mockAttendanceService.getDailyAttendance).toHaveBeenCalledWith('employee-1', '2026-06-25');
     expect(result).toBe(summary);
   });
 });

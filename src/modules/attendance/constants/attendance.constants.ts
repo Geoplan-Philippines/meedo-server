@@ -34,13 +34,6 @@ export const EVENT_TYPE_SOURCE: Record<AttendanceEventType, AttendanceSource> = 
   [AttendanceEventType.WFH_OUT]: AttendanceSource.WFH,
 };
 
-export const ATTENDANCE_EVENT_USER_SELECT = {
-  id: true,
-  name: true,
-  email: true,
-  image: true,
-} satisfies Prisma.UserSelect;
-
 export type AttendanceRecord = Prisma.AttendanceGetPayload<object>;
 export type AttendanceEventRecord = Prisma.AttendanceEventGetPayload<object>;
 
@@ -51,4 +44,19 @@ export interface DailyAttendanceSummary {
   lastOut: Date | null;
   billableHours: number | null;
   events: AttendanceEventRecord[];
+}
+
+/** Organization roles that may view every employee's attendance, not just their own. */
+export const ORG_MANAGER_ROLES = ['owner', 'admin'] as const;
+
+/** One employee's computed attendance for a day, as shown on the org roster. */
+export interface RosterEntry {
+  employeeId: string;
+  name: string | null;
+  email: string;
+  employeeCode: string | null;
+  department: string | null;
+  firstIn: Date | null;
+  lastOut: Date | null;
+  clockedHours: number | null;
 }

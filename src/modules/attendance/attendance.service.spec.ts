@@ -150,7 +150,7 @@ describe('AttendanceService', () => {
     });
   });
 
-  describe('getMyDailyAttendance', () => {
+  describe('getDailyAttendance', () => {
     it('merges the computed record with its ordered timeline', async () => {
       const events = [{ id: 'e1' }, { id: 'e2' }];
       mockPrismaService.attendance.findUnique.mockResolvedValue({
@@ -160,7 +160,7 @@ describe('AttendanceService', () => {
       });
       mockPrismaService.attendanceEvent.findMany.mockResolvedValue(events);
 
-      const result = await service.getMyDailyAttendance(EMPLOYEE_ID, '2026-06-25');
+      const result = await service.getDailyAttendance(EMPLOYEE_ID, '2026-06-25');
 
       expect(result).toEqual({
         date: new Date(DAY_KEY_ISO),
@@ -175,7 +175,7 @@ describe('AttendanceService', () => {
       mockPrismaService.attendance.findUnique.mockResolvedValue(null);
       mockPrismaService.attendanceEvent.findMany.mockResolvedValue([]);
 
-      const result = await service.getMyDailyAttendance(EMPLOYEE_ID, '2026-06-25');
+      const result = await service.getDailyAttendance(EMPLOYEE_ID, '2026-06-25');
 
       expect(result.firstIn).toBeNull();
       expect(result.lastOut).toBeNull();

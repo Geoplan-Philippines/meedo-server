@@ -17,6 +17,16 @@ export class AdminService {
     });
 
     try {
+      // better-auth's sign-up only accepts name/email/password, so persist the
+      // employee code separately. A unique-constraint clash here rolls back the
+      // freshly created user via the catch below.
+      if (dto.employeeCode) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { employeeCode: dto.employeeCode },
+        });
+      }
+
       const member = await auth.api.addMember({
         body: {
           userId: user.id,
@@ -26,7 +36,7 @@ export class AdminService {
         },
       });
 
-      return { user, member };
+      return { user: { ...user, employeeCode: dto.employeeCode ?? null }, member };
     } catch (error) {
       // Roll back the orphaned user, but never let a cleanup failure mask the
       // original addMember error the caller actually needs to see.

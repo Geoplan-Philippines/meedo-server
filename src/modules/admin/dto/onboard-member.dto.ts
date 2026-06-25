@@ -17,6 +17,11 @@ export class OnboardMemberDTO {
 
   @IsOptional()
   @IsString()
+  @MaxLength(50)
+  employeeCode?: string;
+
+  @IsOptional()
+  @IsString()
   teamId?: string;
 
   @IsOptional()

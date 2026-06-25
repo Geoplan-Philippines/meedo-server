@@ -1,15 +1,18 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AttendanceOrigin, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../core/database/prisma.service';
 import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/paginated-api.response';
 import { CreateAttendanceEventDTO } from './dto/create-attendance-event.dto';
 import { GetAttendanceHistoryQueryDTO } from './dto/get-attendance-history-query.dto';
+import { GetRosterQueryDTO } from './dto/get-roster-query.dto';
 import {
   AttendanceEventRecord,
   AttendanceRecord,
   DailyAttendanceSummary,
   EVENT_TYPE_SOURCE,
+  ORG_MANAGER_ROLES,
+  RosterEntry,
 } from './constants/attendance.constants';
 import {
   computeBillableHours,
@@ -108,7 +111,7 @@ export class AttendanceService {
    * underlying ordered timeline so the client can show how first-in/last-out
    * were derived.
    */
-  async getMyDailyAttendance(employeeId: string, date?: string): Promise<DailyAttendanceSummary> {
+  async getDailyAttendance(employeeId: string, date?: string): Promise<DailyAttendanceSummary> {
     const dayKey = date ? parseAttendanceDate(date) : getAttendanceDayKey(new Date());
     const { start, end } = getAttendanceDayRange(dayKey);
 
@@ -129,6 +132,133 @@ export class AttendanceService {
       billableHours: attendance?.billableHours ?? null,
       events,
     };
+  }
+
+  /**
+   * Roster of first-in / last-out / clocked hours for a day. Org managers see
+   * every employee; everyone else sees only their own row.
+   */
+  async getOrganizationRoster(
+    organizationId: string,
+    callerId: string,
+    query: GetRosterQueryDTO,
+  ): Promise<PaginatedResponse<RosterEntry>> {
+    const { page, limit, date, search } = query;
+    const dayKey = date ? parseAttendanceDate(date) : getAttendanceDayKey(new Date());
+    const manager = await this.isOrgManager(callerId, organizationId);
+
+    const where: Prisma.MemberWhereInput = manager
+      ? {
+          organizationId,
+          ...(search
+            ? {
+                user: {
+                  OR: [
+                    { name: { contains: search, mode: 'insensitive' } },
+                    { email: { contains: search, mode: 'insensitive' } },
+                    { employeeCode: { contains: search, mode: 'insensitive' } },
+                  ],
+                },
+              }
+            : {}),
+        }
+      : { organizationId, userId: callerId };
+
+    const [members, total] = await Promise.all([
+      this.prisma.member.findMany({
+        where,
+        select: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              employeeCode: true,
+              teamMembers: {
+                where: { team: { organizationId } },
+                select: { team: { select: { name: true } } },
+                take: 1,
+              },
+            },
+          },
+        },
+        orderBy: { user: { name: 'asc' } },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.member.count({ where }),
+    ]);
+
+    const employeeIds = members.map((member) => member.user.id);
+    const attendances = await this.prisma.attendance.findMany({
+      where: { employeeId: { in: employeeIds }, date: dayKey },
+    });
+    const byEmployee = new Map(attendances.map((record) => [record.employeeId, record]));
+
+    const data: RosterEntry[] = members.map((member) => {
+      const attendance = byEmployee.get(member.user.id);
+      return {
+        employeeId: member.user.id,
+        name: member.user.name,
+        email: member.user.email,
+        employeeCode: member.user.employeeCode,
+        department: member.user.teamMembers[0]?.team.name ?? null,
+        firstIn: attendance?.firstIn ?? null,
+        lastOut: attendance?.lastOut ?? null,
+        clockedHours: attendance?.billableHours ?? null,
+      };
+    });
+
+    return { data, meta: buildPaginationMeta(total, page, limit) };
+  }
+
+  /** A single employee's day timeline for the roster drill-down. */
+  async getEmployeeDayAttendance(
+    organizationId: string,
+    callerId: string,
+    employeeId: string,
+    date?: string,
+  ): Promise<DailyAttendanceSummary> {
+    await this.assertCanViewEmployee(organizationId, callerId, employeeId);
+    return this.getDailyAttendance(employeeId, date);
+  }
+
+  /** A single employee's paginated daily history for the roster drill-down. */
+  async getEmployeeHistory(
+    organizationId: string,
+    callerId: string,
+    employeeId: string,
+    query: GetAttendanceHistoryQueryDTO,
+  ): Promise<PaginatedResponse<AttendanceRecord>> {
+    await this.assertCanViewEmployee(organizationId, callerId, employeeId);
+    return this.getMyAttendanceHistory(employeeId, query);
+  }
+
+  /** Managers may view anyone in the org; everyone else only themselves. */
+  private async assertCanViewEmployee(
+    organizationId: string,
+    callerId: string,
+    employeeId: string,
+  ): Promise<void> {
+    if (employeeId !== callerId && !(await this.isOrgManager(callerId, organizationId))) {
+      throw new ForbiddenException('You may only view your own attendance.');
+    }
+
+    const member = await this.prisma.member.findFirst({
+      where: { userId: employeeId, organizationId },
+      select: { id: true },
+    });
+    if (!member) {
+      throw new NotFoundException('Employee not found in this organization.');
+    }
+  }
+
+  private async isOrgManager(userId: string, organizationId: string): Promise<boolean> {
+    const member = await this.prisma.member.findFirst({
+      where: { userId, organizationId },
+      select: { role: true },
+    });
+    return !!member && (ORG_MANAGER_ROLES as readonly string[]).includes(member.role);
   }
 
   /**
