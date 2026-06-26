@@ -45,6 +45,8 @@ export class AttendanceService {
           source,
           origin: AttendanceOrigin.MANUAL,
           timestamp,
+          latitude: body.latitude,
+          longitude: body.longitude,
         },
       });
 

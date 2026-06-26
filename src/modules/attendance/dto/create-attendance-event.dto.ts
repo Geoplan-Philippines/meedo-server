@@ -1,4 +1,4 @@
-import { IsDateString, IsIn, IsOptional } from 'class-validator';
+import { IsDateString, IsIn, IsLatitude, IsLongitude, IsOptional } from 'class-validator';
 
 import { MANUAL_EVENT_TYPES, type ManualEventType } from '../constants/attendance.constants';
 
@@ -15,4 +15,13 @@ export class CreateAttendanceEventDTO {
   @IsOptional()
   @IsDateString()
   timestamp?: string;
+
+  /** Where the punch happened, captured from the browser's geolocation. */
+  @IsOptional()
+  @IsLatitude()
+  latitude?: number;
+
+  @IsOptional()
+  @IsLongitude()
+  longitude?: number;
 }
