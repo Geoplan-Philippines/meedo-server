@@ -20,6 +20,7 @@ import {
   ORG_MANAGER_ROLES,
   OUT_EVENT_TYPES,
   RosterEntry,
+  RosterResult,
   SOURCE_AUTO_OUT_EVENT,
 } from './constants/attendance.constants';
 import {
@@ -217,40 +218,45 @@ export class AttendanceService {
   }
 
   /**
-   * Roster of first-in / last-out / clocked hours for a day. Org managers see
-   * every employee; everyone else sees only their own row.
+   * Roster of first-in / last-out / clocked hours for a day. Only employees who
+   * actually have attendance for the day appear — days with none come back empty
+   * so the client can show its "no data yet" state instead of dashed rows. Org
+   * managers see everyone; everyone else sees only their own row.
    */
   async getOrganizationRoster(
     organizationId: string,
     callerId: string,
     query: GetRosterQueryDTO,
-  ): Promise<PaginatedResponse<RosterEntry>> {
+  ): Promise<RosterResult> {
     const { page, limit, date, search } = query;
     const dayKey = date ? parseAttendanceDate(date) : getAttendanceDayKey(new Date());
     const manager = await this.isOrgManager(callerId, organizationId);
 
-    const where: Prisma.MemberWhereInput = manager
+    const employee: Prisma.UserWhereInput = manager
       ? {
-          organizationId,
+          members: { some: { organizationId } },
           ...(search
             ? {
-                user: {
-                  OR: [
-                    { name: { contains: search, mode: 'insensitive' } },
-                    { email: { contains: search, mode: 'insensitive' } },
-                    { employeeCode: { contains: search, mode: 'insensitive' } },
-                  ],
-                },
+                OR: [
+                  { name: { contains: search, mode: 'insensitive' } },
+                  { email: { contains: search, mode: 'insensitive' } },
+                  { employeeCode: { contains: search, mode: 'insensitive' } },
+                ],
               }
             : {}),
         }
-      : { organizationId, userId: callerId };
+      : { id: callerId, members: { some: { organizationId } } };
 
-    const [members, total] = await Promise.all([
-      this.prisma.member.findMany({
+    const where: Prisma.AttendanceWhereInput = { date: dayKey, employee };
+
+    const [records, total] = await Promise.all([
+      this.prisma.attendance.findMany({
         where,
         select: {
-          user: {
+          firstIn: true,
+          lastOut: true,
+          billableHours: true,
+          employee: {
             select: {
               id: true,
               name: true,
@@ -264,34 +270,28 @@ export class AttendanceService {
             },
           },
         },
-        orderBy: { user: { name: 'asc' } },
+        orderBy: { employee: { name: 'asc' } },
         skip: (page - 1) * limit,
         take: limit,
       }),
-      this.prisma.member.count({ where }),
+      this.prisma.attendance.count({ where }),
     ]);
 
-    const employeeIds = members.map((member) => member.user.id);
-    const attendances = await this.prisma.attendance.findMany({
-      where: { employeeId: { in: employeeIds }, date: dayKey },
-    });
-    const byEmployee = new Map(attendances.map((record) => [record.employeeId, record]));
+    const data: RosterEntry[] = records.map((record) => ({
+      employeeId: record.employee.id,
+      name: record.employee.name,
+      email: record.employee.email,
+      employeeCode: record.employee.employeeCode,
+      department: record.employee.teamMembers[0]?.team.name ?? null,
+      firstIn: record.firstIn,
+      lastOut: record.lastOut,
+      clockedHours: record.billableHours,
+    }));
 
-    const data: RosterEntry[] = members.map((member) => {
-      const attendance = byEmployee.get(member.user.id);
-      return {
-        employeeId: member.user.id,
-        name: member.user.name,
-        email: member.user.email,
-        employeeCode: member.user.employeeCode,
-        department: member.user.teamMembers[0]?.team.name ?? null,
-        firstIn: attendance?.firstIn ?? null,
-        lastOut: attendance?.lastOut ?? null,
-        clockedHours: attendance?.billableHours ?? null,
-      };
-    });
-
-    return { data, meta: buildPaginationMeta(total, page, limit) };
+    return {
+      data,
+      meta: { ...buildPaginationMeta(total, page, limit), viewerIsManager: manager },
+    };
   }
 
   /** A single employee's day timeline for the roster drill-down. */

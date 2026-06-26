@@ -11,7 +11,7 @@ import {
   AttendanceEventRecord,
   AttendanceRecord,
   DailyAttendanceSummary,
-  RosterEntry,
+  RosterResult,
 } from './constants/attendance.constants';
 
 @Controller('attendance')
@@ -47,7 +47,7 @@ export class AttendanceController {
     @Query() query: GetRosterQueryDTO,
     @CurrentOrganizationId() organizationId: string,
     @CurrentUser('id') callerId: string,
-  ): Promise<PaginatedResponse<RosterEntry>> {
+  ): Promise<RosterResult> {
     return this.attendanceService.getOrganizationRoster(organizationId, callerId, query);
   }
 

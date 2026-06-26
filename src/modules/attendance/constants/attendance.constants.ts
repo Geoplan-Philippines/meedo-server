@@ -1,5 +1,7 @@
 import { AttendanceEventType, AttendanceSource, Prisma } from '@prisma/client';
 
+import { PaginationMeta } from 'src/common/responses/paginated-api.response';
+
 /**
  * Company timezone offset in minutes (Asia/Manila, UTC+8, no DST). Attendance
  * days are anchored to this offset so the "first in / last out" policy is
@@ -81,4 +83,18 @@ export interface RosterEntry {
   firstIn: Date | null;
   lastOut: Date | null;
   clockedHours: number | null;
+}
+
+/**
+ * Roster pagination meta plus `viewerIsManager`, so the client can tell whether
+ * the caller sees the whole org (and therefore needs the employee search) or
+ * only their own row.
+ */
+export interface RosterMeta extends PaginationMeta {
+  viewerIsManager: boolean;
+}
+
+export interface RosterResult {
+  data: RosterEntry[];
+  meta: RosterMeta;
 }
