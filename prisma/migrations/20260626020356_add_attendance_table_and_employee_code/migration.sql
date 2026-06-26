@@ -1,3 +1,9 @@
+/*
+  Warnings:
+
+  - A unique constraint covering the columns `[employee_code]` on the table `users` will be added. If there are existing duplicate values, this will fail.
+
+*/
 -- CreateEnum
 CREATE TYPE "AttendanceSource" AS ENUM ('OFFICE', 'FIELD', 'WFH');
 
@@ -5,7 +11,10 @@ CREATE TYPE "AttendanceSource" AS ENUM ('OFFICE', 'FIELD', 'WFH');
 CREATE TYPE "AttendanceEventType" AS ENUM ('OFFICE_ACCESS', 'OFFICE_IN', 'OFFICE_OUT', 'FIELD_IN', 'FIELD_OUT', 'WFH_IN', 'WFH_OUT');
 
 -- CreateEnum
-CREATE TYPE "AttendanceOrigin" AS ENUM ('BIOMETRICS', 'MANUAL');
+CREATE TYPE "AttendanceOrigin" AS ENUM ('BIOMETRICS', 'MANUAL', 'AUTO');
+
+-- AlterTable
+ALTER TABLE "users" ADD COLUMN     "employee_code" TEXT;
 
 -- CreateTable
 CREATE TABLE "AttendanceEvent" (
@@ -15,6 +24,8 @@ CREATE TABLE "AttendanceEvent" (
     "event_type" "AttendanceEventType" NOT NULL,
     "origin" "AttendanceOrigin" NOT NULL,
     "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "latitude" DOUBLE PRECISION,
+    "longitude" DOUBLE PRECISION,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
@@ -49,6 +60,9 @@ CREATE INDEX "Attendance_employee_id_idx" ON "Attendance"("employee_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Attendance_employee_id_date_key" ON "Attendance"("employee_id", "date");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_employee_code_key" ON "users"("employee_code");
 
 -- AddForeignKey
 ALTER TABLE "AttendanceEvent" ADD CONSTRAINT "AttendanceEvent_employee_id_fkey" FOREIGN KEY ("employee_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

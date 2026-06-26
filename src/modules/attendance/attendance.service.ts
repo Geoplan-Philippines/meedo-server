@@ -1,5 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AttendanceOrigin, Prisma } from '@prisma/client';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { AttendanceEventType, AttendanceOrigin, AttendanceSource, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../core/database/prisma.service';
 import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/paginated-api.response';
@@ -12,17 +18,22 @@ import {
   DailyAttendanceSummary,
   EVENT_TYPE_SOURCE,
   ORG_MANAGER_ROLES,
+  OUT_EVENT_TYPES,
   RosterEntry,
+  SOURCE_AUTO_OUT_EVENT,
 } from './constants/attendance.constants';
 import {
   computeBillableHours,
   getAttendanceDayKey,
   getAttendanceDayRange,
+  getAutoClockOutInstant,
   parseAttendanceDate,
 } from './utils/attendance-day.util';
 
 @Injectable()
 export class AttendanceService {
+  private readonly logger = new Logger(AttendanceService.name);
+
   constructor(private prisma: PrismaService) {}
 
   /**
@@ -53,6 +64,75 @@ export class AttendanceService {
       await this.recomputeAttendanceDay(tx, employeeId, getAttendanceDayKey(timestamp));
 
       return event;
+    });
+  }
+
+  /**
+   * Close out every employee still clocked in for the current local day by
+   * stamping a system OUT at the auto-clock-out cutoff (18:00 Asia/Manila).
+   *
+   * Only sessions whose latest event is still an "in" and falls before the
+   * cutoff are closed; anyone who already clocked out — or who later punches out
+   * past 18:00 — keeps their real `lastOut`, since it is the day's maximum event
+   * timestamp. Re-running is safe: an auto-closed day's latest event is now an
+   * OUT, so it is skipped. Returns the number of sessions closed.
+   */
+  async runAutoClockOut(now: Date = new Date()): Promise<number> {
+    const dayKey = getAttendanceDayKey(now);
+    const { start, end } = getAttendanceDayRange(dayKey);
+    const cutoff = getAutoClockOutInstant(now);
+
+    const events = await this.prisma.attendanceEvent.findMany({
+      where: { timestamp: { gte: start, lt: end } },
+      orderBy: { timestamp: 'asc' },
+      select: { employeeId: true, eventType: true, source: true, timestamp: true },
+    });
+
+    // Events are ordered ascending, so the last write per employee is their
+    // latest event of the day.
+    const latestByEmployee = new Map<string, (typeof events)[number]>();
+    for (const event of events) {
+      latestByEmployee.set(event.employeeId, event);
+    }
+
+    let closed = 0;
+    for (const [employeeId, latest] of latestByEmployee) {
+      if (!this.isOpenSession(latest.eventType, latest.timestamp, cutoff)) {
+        continue;
+      }
+      await this.createAutoClockOut(employeeId, latest.source, cutoff, dayKey);
+      closed += 1;
+    }
+
+    if (closed > 0) {
+      this.logger.log(`Auto-clocked out ${closed} open session(s) at ${cutoff.toISOString()}.`);
+    }
+    return closed;
+  }
+
+  /** A session is still open when its latest event is an "in" before the cutoff. */
+  private isOpenSession(eventType: AttendanceEventType, timestamp: Date, cutoff: Date): boolean {
+    return !OUT_EVENT_TYPES.has(eventType) && timestamp < cutoff;
+  }
+
+  /** Persist the system OUT and recompute the day atomically. */
+  private async createAutoClockOut(
+    employeeId: string,
+    source: AttendanceSource,
+    cutoff: Date,
+    dayKey: Date,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.attendanceEvent.create({
+        data: {
+          employeeId,
+          eventType: SOURCE_AUTO_OUT_EVENT[source],
+          source,
+          origin: AttendanceOrigin.AUTO,
+          timestamp: cutoff,
+        },
+      });
+      await this.recomputeAttendanceDay(tx, employeeId, dayKey);
     });
   }
 

@@ -1,7 +1,11 @@
-import { ATTENDANCE_TIMEZONE_OFFSET_MINUTES } from '../constants/attendance.constants';
+import {
+  ATTENDANCE_TIMEZONE_OFFSET_MINUTES,
+  AUTO_CLOCK_OUT_HOUR,
+} from '../constants/attendance.constants';
 
 const OFFSET_MS = ATTENDANCE_TIMEZONE_OFFSET_MINUTES * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 
 /**
  * The attendance "day" is anchored to the company's local timezone (no DST),
@@ -37,6 +41,14 @@ export function parseAttendanceDate(date: string): Date {
   const [year, month, day] = date.split('-').map(Number);
   const localMidnight = Date.UTC(year, month - 1, day);
   return new Date(localMidnight - OFFSET_MS);
+}
+
+/**
+ * UTC instant of the auto-clock-out cutoff (local `AUTO_CLOCK_OUT_HOUR`) for the
+ * calendar day that contains `instant`.
+ */
+export function getAutoClockOutInstant(instant: Date): Date {
+  return new Date(getAttendanceDayKey(instant).getTime() + AUTO_CLOCK_OUT_HOUR * HOUR_MS);
 }
 
 /** Whole-hour-aware billable hours between two instants, rounded to 2 decimals. */

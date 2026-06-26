@@ -1,6 +1,7 @@
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard } from '@nestjs/throttler';
 
 import { AuthModule } from '@thallesp/nestjs-better-auth';
@@ -28,6 +29,7 @@ import { AttendanceModule } from './modules/attendance/attendance.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ScheduleModule.forRoot(),
     AuthModule.forRoot({ auth }),
     PrismaModule,
     HealthModule,

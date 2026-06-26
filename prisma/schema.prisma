@@ -563,4 +563,5 @@ enum AttendanceEventType {
 enum AttendanceOrigin {
   BIOMETRICS
   MANUAL
+  AUTO
 }

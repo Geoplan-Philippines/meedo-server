@@ -34,6 +34,28 @@ export const EVENT_TYPE_SOURCE: Record<AttendanceEventType, AttendanceSource> = 
   [AttendanceEventType.WFH_OUT]: AttendanceSource.WFH,
 };
 
+/** Event types that close a session. A day whose latest event is one of these is
+ * already clocked out and must never be auto-closed. */
+export const OUT_EVENT_TYPES: ReadonlySet<AttendanceEventType> = new Set([
+  AttendanceEventType.OFFICE_OUT,
+  AttendanceEventType.FIELD_OUT,
+  AttendanceEventType.WFH_OUT,
+]);
+
+/** The OUT event a system auto-clock-out emits for each open session's source. */
+export const SOURCE_AUTO_OUT_EVENT: Record<AttendanceSource, AttendanceEventType> = {
+  [AttendanceSource.OFFICE]: AttendanceEventType.OFFICE_OUT,
+  [AttendanceSource.FIELD]: AttendanceEventType.FIELD_OUT,
+  [AttendanceSource.WFH]: AttendanceEventType.WFH_OUT,
+};
+
+/**
+ * Local hour (Asia/Manila) at which an employee still clocked in is automatically
+ * clocked out. A real punch after this time still wins, because `lastOut` is the
+ * day's maximum event timestamp.
+ */
+export const AUTO_CLOCK_OUT_HOUR = 18;
+
 export type AttendanceRecord = Prisma.AttendanceGetPayload<object>;
 export type AttendanceEventRecord = Prisma.AttendanceEventGetPayload<object>;
 
