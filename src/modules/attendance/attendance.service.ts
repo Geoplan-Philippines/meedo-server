@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { AttendanceEventType, AttendanceOrigin, AttendanceSource, Prisma } from '@prisma/client';
 
-import { PrismaService } from 'src/core/database/prisma.service';
+import { PrismaService } from '../../core/database/prisma.service';
 import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/paginated-api.response';
 import { BiometricTap, OFFICE_LOCATION } from './biometrics/biometrics.constants';
 import { CreateAttendanceEventDTO } from './dto/create-attendance-event.dto';

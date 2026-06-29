@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AttendanceOrigin } from '@prisma/client';
 
-import { PrismaService } from 'src/core/database/prisma.service';
+import { PrismaService } from '../../../core/database/prisma.service';
 import { AttendanceService } from '../attendance.service';
 import { HikvisionClient } from './hikvision.client';
 import { SYNC_MAX_LOOKBACK_MS, SYNC_OVERLAP_MS } from './biometrics.constants';
