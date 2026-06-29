@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { AttendanceEventType, AttendanceOrigin, AttendanceSource, Prisma } from '@prisma/client';
 
-import { PrismaService } from '../../core/database/prisma.service';
+import { PrismaService } from 'src/core/database/prisma.service';
 import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/paginated-api.response';
 import { BiometricTap, OFFICE_LOCATION } from './biometrics/biometrics.constants';
 import { CreateAttendanceEventDTO } from './dto/create-attendance-event.dto';
@@ -177,8 +177,9 @@ export class AttendanceService {
       if (!this.isOpenSession(latest.eventType, latest.timestamp, cutoff)) {
         continue;
       }
-      await this.createAutoClockOut(employeeId, latest.source, cutoff, dayKey);
-      closed += 1;
+      if (await this.createAutoClockOut(employeeId, latest.source, cutoff, dayKey)) {
+        closed += 1;
+      }
     }
 
     if (closed > 0) {
@@ -198,14 +199,31 @@ export class AttendanceService {
     return !OUT_EVENT_TYPES.has(eventType) && timestamp < cutoff;
   }
 
-  /** Persist the system OUT and recompute the day atomically. */
+  /**
+   * Persist the system OUT and recompute the day atomically. Returns whether an
+   * OUT was actually written: the bulk read in `runAutoClockOut` can go stale if
+   * the employee punches out between that read and here, so the latest event is
+   * re-checked inside the transaction and the AUTO OUT is skipped if the session
+   * is no longer open — avoiding a phantom AUTO entry next to a real punch-out.
+   */
   private async createAutoClockOut(
     employeeId: string,
     source: AttendanceSource,
     cutoff: Date,
     dayKey: Date,
-  ): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+  ): Promise<boolean> {
+    const { start, end } = getAttendanceDayRange(dayKey);
+
+    return this.prisma.$transaction(async (tx) => {
+      const latest = await tx.attendanceEvent.findFirst({
+        where: { employeeId, timestamp: { gte: start, lt: end } },
+        orderBy: { timestamp: 'desc' },
+        select: { eventType: true, timestamp: true },
+      });
+      if (!latest || !this.isOpenSession(latest.eventType, latest.timestamp, cutoff)) {
+        return false;
+      }
+
       await tx.attendanceEvent.create({
         data: {
           employeeId,
@@ -216,6 +234,7 @@ export class AttendanceService {
         },
       });
       await this.recomputeAttendanceDay(tx, employeeId, dayKey);
+      return true;
     });
   }
 

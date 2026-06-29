@@ -3,9 +3,15 @@ import { AttendanceEventType, AttendanceSource, Prisma } from '@prisma/client';
 import { PaginationMeta } from 'src/common/responses/paginated-api.response';
 
 /**
- * Company timezone offset in minutes (Asia/Manila, UTC+8, no DST). Attendance
- * days are anchored to this offset so the "first in / last out" policy is
- * evaluated against the employee's local calendar day.
+ * Company timezone (IANA). Single source of truth for the cron schedule and the
+ * offset below — both describe the same zone, so keep them in sync here.
+ */
+export const COMPANY_TIMEZONE = 'Asia/Manila';
+
+/**
+ * Company timezone offset in minutes (`COMPANY_TIMEZONE`, UTC+8, no DST).
+ * Attendance days are anchored to this offset so the "first in / last out"
+ * policy is evaluated against the employee's local calendar day.
  */
 export const ATTENDANCE_TIMEZONE_OFFSET_MINUTES = 8 * 60;
 

@@ -2,9 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 
 import { AttendanceService } from './attendance.service';
-import { AUTO_CLOCK_OUT_HOUR } from './constants/attendance.constants';
-
-const COMPANY_TIMEZONE = 'Asia/Manila';
+import { AUTO_CLOCK_OUT_HOUR, COMPANY_TIMEZONE } from './constants/attendance.constants';
 
 @Injectable()
 export class AttendanceScheduler {
