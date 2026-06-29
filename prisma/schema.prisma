@@ -18,11 +18,15 @@ model User {
   email                         String                    @unique
   emailVerified                 Boolean                   @default(false) @map("is_email_verified")
   image                         String?                   @map("image_url")
+  employeeCode                  String?                   @unique @map("employee_code")
+  biometricsId                  String?                   @unique @map("biometrics_id")
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   accounts                      Account[]
+  attendanceEvents              AttendanceEvent[]
+  attendances                   Attendance[]
   faceProfiles                  FaceProfile[]
   invitations                   Invitation[]
   members                       Member[]
@@ -294,7 +298,7 @@ model Project {
 
   @@index([organizationId])
   @@map("projects")
-  
+
 }
 
 model Lead {
@@ -466,6 +470,53 @@ model TicketActivity {
   @@map("ticket_activities")
 }
 
+model AttendanceEvent {
+  id                            String                    @id @default(uuid())
+
+  employeeId                    String                    @map("employee_id")
+  employee                      User                      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  source                        AttendanceSource
+  eventType                     AttendanceEventType       @map("event_type")
+  origin                        AttendanceOrigin
+
+  externalId                    String?                   @unique @map("external_id")
+
+  timestamp                     DateTime                  @default(now())
+
+  latitude                      Float?                    @map("latitude")
+  longitude                     Float?                    @map("longitude")
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([employeeId])
+  @@index([timestamp])
+  @@index([employeeId, timestamp])
+  @@map("attendance_events")
+}
+
+model Attendance {
+  id                            String                    @id @default(uuid())
+
+  employeeId                    String                    @map("employee_id")
+  employee                      User                      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  date                          DateTime                  @map("date")
+
+  firstIn                       DateTime?                 @map("first_in")
+  lastOut                       DateTime?                 @map("last_out")
+
+  billableHours                 Float?                    @map("billable_hours")
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([employeeId, date])
+  @@index([employeeId])
+  @@map("attendances")
+}
+
 enum FaceProfileStatus {
   PENDING
   ACTIVE
@@ -496,4 +547,26 @@ enum TicketPriority {
   MEDIUM
   HIGH
   URGENT
+}
+
+enum AttendanceSource {
+  OFFICE
+  FIELD
+  WFH
+}
+
+enum AttendanceEventType {
+  OFFICE_ACCESS
+  OFFICE_IN
+  OFFICE_OUT
+  FIELD_IN
+  FIELD_OUT
+  WFH_IN
+  WFH_OUT
+}
+
+enum AttendanceOrigin {
+  BIOMETRICS
+  MANUAL
+  AUTO
 }

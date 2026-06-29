@@ -1,6 +1,7 @@
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard } from '@nestjs/throttler';
 
 import { AuthModule } from '@thallesp/nestjs-better-auth';
@@ -21,12 +22,14 @@ import { AdminModule } from './modules/admin/admin.module';
 import { StatusesModule } from './modules/settings/statuses/statuses.module';
 import { TicketsModule } from './modules/tickets/tickets.module';
 import { SlaPoliciesModule } from './modules/sla/sla-policies.module';
+import { AttendanceModule } from './modules/attendance/attendance.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ScheduleModule.forRoot(),
     AuthModule.forRoot({ auth }),
     PrismaModule,
     HealthModule,
@@ -38,6 +41,7 @@ import { SlaPoliciesModule } from './modules/sla/sla-policies.module';
     StatusesModule,
     TicketsModule,
     SlaPoliciesModule,
+    AttendanceModule,
   ],
   controllers: [AppController],
   providers: [
