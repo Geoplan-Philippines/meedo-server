@@ -1,0 +1,24 @@
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+    image: meedo-postgres:17-alpine-pgvector
+    container_name: meedo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: meedo
+    ports:
+      - "54321:5432"
+    volumes:
+      - meedo-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d meedo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  meedo-postgres-data:
