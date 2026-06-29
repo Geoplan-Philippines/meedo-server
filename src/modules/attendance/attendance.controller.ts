@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Header, MessageEvent, Param, ParseUUIDPipe, Post, Query, Sse } from '@nestjs/common';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
+import { Observable } from 'rxjs';
 
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -10,6 +11,7 @@ import { CreateAttendanceEventDTO } from './dto/create-attendance-event.dto';
 import { GetAttendanceHistoryQueryDTO } from './dto/get-attendance-history-query.dto';
 import { GetRosterQueryDTO } from './dto/get-roster-query.dto';
 import { IngestBiometricEventDTO } from './dto/ingest-biometric-event.dto';
+import { AttendanceUpdatesService } from './attendance-updates.service';
 import {
   AttendanceEventRecord,
   AttendanceRecord,
@@ -22,6 +24,7 @@ export class AttendanceController {
   constructor(
     private readonly attendanceService: AttendanceService,
     private readonly biometricSync: BiometricSyncService,
+    private readonly attendanceUpdates: AttendanceUpdatesService,
   ) {}
 
   /** Manager-only: pull the latest biometric taps now instead of waiting for the cron. */
@@ -40,7 +43,9 @@ export class AttendanceController {
     @Body() body: CreateAttendanceEventDTO,
     @CurrentUser('id') employeeId: string,
   ): Promise<AttendanceEventRecord> {
-    return this.attendanceService.recordAttendanceEvent(employeeId, body);
+    const event = await this.attendanceService.recordAttendanceEvent(employeeId, body);
+    this.attendanceUpdates.notify('manual');
+    return event;
   }
 
   /** Machine-to-machine receiver used by the on-premise Hikvision sync agent. */
@@ -52,7 +57,14 @@ export class AttendanceController {
       biometricsId: body.biometricsId,
       timestamp: new Date(body.timestamp),
     }]);
+    if (ingested > 0) this.attendanceUpdates.notify('biometric');
     return { ingested };
+  }
+
+  @Header('X-Accel-Buffering', 'no')
+  @Sse('updates')
+  attendanceUpdateStream(): Observable<MessageEvent> {
+    return this.attendanceUpdates.stream();
   }
 
   /** Device identifiers currently mapped to users; consumed by the on-premise sync agent. */

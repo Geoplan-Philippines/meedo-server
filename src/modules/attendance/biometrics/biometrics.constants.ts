@@ -28,12 +28,6 @@ export const ACS_EVENT_PAGE_SIZE = 30;
 export const ACS_EVENT_MAX_PAGES = 100;
 
 /**
- * How often the device is polled for new taps. At 3 minutes the server/device
- * load is negligible; a tap surfaces within a few minutes rather than seconds.
- */
-export const SYNC_INTERVAL_MS = 3 * 60 * 1000;
-
-/**
  * Overlap re-scanned on every poll. The window starts slightly before where the
  * last poll ended so events landing right on the boundary are never missed;
  * `externalId` dedupe makes the re-scan harmless.
