@@ -4,6 +4,7 @@ import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentOrganizationId } from '../../common/decorators/current-organization-id.decorator';
 import { AttendanceService } from './attendance.service';
+import { BiometricSyncService } from './biometrics/biometric-sync.service';
 import { CreateAttendanceEventDTO } from './dto/create-attendance-event.dto';
 import { GetAttendanceHistoryQueryDTO } from './dto/get-attendance-history-query.dto';
 import { GetRosterQueryDTO } from './dto/get-roster-query.dto';
@@ -16,7 +17,21 @@ import {
 
 @Controller('attendance')
 export class AttendanceController {
-  constructor(private readonly attendanceService: AttendanceService) {}
+  constructor(
+    private readonly attendanceService: AttendanceService,
+    private readonly biometricSync: BiometricSyncService,
+  ) {}
+
+  /** Manager-only: pull the latest biometric taps now instead of waiting for the cron. */
+  @Post('biometrics/sync')
+  async syncBiometrics(
+    @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') callerId: string,
+  ): Promise<{ ingested: number }> {
+    await this.attendanceService.assertOrgManager(callerId, organizationId);
+    const ingested = await this.biometricSync.sync();
+    return { ingested };
+  }
 
   @Post('events')
   async recordAttendanceEvent(

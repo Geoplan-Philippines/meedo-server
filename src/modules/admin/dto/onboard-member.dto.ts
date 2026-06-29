@@ -20,6 +20,12 @@ export class OnboardMemberDTO {
   @MaxLength(50)
   employeeCode?: string;
 
+  /** Hikvision device employee number, used to match biometric taps to this user. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  biometricsId?: string;
+
   @IsOptional()
   @IsString()
   teamId?: string;

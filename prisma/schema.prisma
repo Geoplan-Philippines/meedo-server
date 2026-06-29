@@ -19,6 +19,7 @@ model User {
   emailVerified                 Boolean                   @default(false) @map("is_email_verified")
   image                         String?                   @map("image_url")
   employeeCode                  String?                   @unique @map("employee_code")
+  biometricsId                  String?                   @unique @map("biometrics_id")
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
@@ -479,6 +480,8 @@ model AttendanceEvent {
   eventType                     AttendanceEventType       @map("event_type")
   origin                        AttendanceOrigin
 
+  externalId                    String?                   @unique @map("external_id")
+
   timestamp                     DateTime                  @default(now())
 
   latitude                      Float?                    @map("latitude")
@@ -490,6 +493,7 @@ model AttendanceEvent {
   @@index([employeeId])
   @@index([timestamp])
   @@index([employeeId, timestamp])
+  @@map("attendance_events")
 }
 
 model Attendance {
@@ -510,6 +514,7 @@ model Attendance {
 
   @@unique([employeeId, date])
   @@index([employeeId])
+  @@map("attendances")
 }
 
 enum FaceProfileStatus {

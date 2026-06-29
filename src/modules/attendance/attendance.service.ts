@@ -9,6 +9,7 @@ import { AttendanceEventType, AttendanceOrigin, AttendanceSource, Prisma } from 
 
 import { PrismaService } from '../../core/database/prisma.service';
 import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/paginated-api.response';
+import { BiometricTap, OFFICE_LOCATION } from './biometrics/biometrics.constants';
 import { CreateAttendanceEventDTO } from './dto/create-attendance-event.dto';
 import { GetAttendanceHistoryQueryDTO } from './dto/get-attendance-history-query.dto';
 import { GetRosterQueryDTO } from './dto/get-roster-query.dto';
@@ -69,6 +70,81 @@ export class AttendanceService {
   }
 
   /**
+   * Idempotently ingest raw biometric door taps as `OFFICE_ACCESS` events and
+   * recompute every affected day. Taps whose `externalId` already exists are
+   * skipped, so overlapping poll windows never double-count; taps for unknown
+   * biometric IDs are ignored. Returns the number of new events stored.
+   *
+   * A tap is just a presence mark: the day's first tap becomes `firstIn` and its
+   * last becomes `lastOut` via the usual MIN/MAX recompute. A lone tap with no
+   * closing punch stays "open" and is auto-clocked-out at the cutoff hour.
+   */
+  async ingestBiometricAccess(taps: BiometricTap[]): Promise<number> {
+    if (taps.length === 0) {
+      return 0;
+    }
+
+    // Drop taps already stored before doing any heavier work, so a frequent poll
+    // whose overlap window only re-covers ingested taps costs one cheap lookup
+    // and nothing else.
+    const fresh = await this.filterNewTaps(taps);
+    if (fresh.length === 0) {
+      return 0;
+    }
+
+    const biometricIds = [...new Set(fresh.map((tap) => tap.biometricsId))];
+    const users = await this.prisma.user.findMany({
+      where: { biometricsId: { in: biometricIds } },
+      select: { id: true, biometricsId: true },
+    });
+    const employeeIdByBiometricId = new Map(users.map((user) => [user.biometricsId, user.id]));
+
+    const known = fresh.flatMap((tap) => {
+      const employeeId = employeeIdByBiometricId.get(tap.biometricsId);
+      return employeeId ? [{ tap, employeeId }] : [];
+    });
+    if (known.length === 0) {
+      return 0;
+    }
+
+    const { count } = await this.prisma.attendanceEvent.createMany({
+      data: known.map(({ tap, employeeId }) => ({
+        employeeId,
+        eventType: AttendanceEventType.OFFICE_ACCESS,
+        source: AttendanceSource.OFFICE,
+        origin: AttendanceOrigin.BIOMETRICS,
+        timestamp: tap.timestamp,
+        externalId: tap.externalId,
+        latitude: OFFICE_LOCATION.latitude,
+        longitude: OFFICE_LOCATION.longitude,
+      })),
+      skipDuplicates: true,
+    });
+
+    // Recompute only the days that actually gained a tap this run.
+    const affected = new Map<string, { employeeId: string; dayKey: Date }>();
+    for (const { tap, employeeId } of known) {
+      const dayKey = getAttendanceDayKey(tap.timestamp);
+      affected.set(`${employeeId}:${dayKey.getTime()}`, { employeeId, dayKey });
+    }
+    for (const { employeeId, dayKey } of affected.values()) {
+      await this.prisma.$transaction((tx) => this.recomputeAttendanceDay(tx, employeeId, dayKey));
+    }
+
+    return count;
+  }
+
+  /** Keep only taps whose `externalId` is not already stored. */
+  private async filterNewTaps(taps: BiometricTap[]): Promise<BiometricTap[]> {
+    const existing = await this.prisma.attendanceEvent.findMany({
+      where: { externalId: { in: taps.map((tap) => tap.externalId) } },
+      select: { externalId: true },
+    });
+    const seen = new Set(existing.map((event) => event.externalId));
+    return taps.filter((tap) => !seen.has(tap.externalId));
+  }
+
+  /**
    * Close out every employee still clocked in for the current local day by
    * stamping a system OUT at the auto-clock-out cutoff (18:00 Asia/Manila).
    *
@@ -111,7 +187,13 @@ export class AttendanceService {
     return closed;
   }
 
-  /** A session is still open when its latest event is an "in" before the cutoff. */
+  /**
+   * A session is still open when its latest event is not an OUT and falls before
+   * the cutoff. A bare `OFFICE_ACCESS` biometric tap is intentionally "open": a
+   * door tap marks presence but never closes the day, so someone who tapped in
+   * and forgot to clock out is auto-closed at the cutoff hour rather than left
+   * dangling. Only the explicit OUT types in `OUT_EVENT_TYPES` end a session.
+   */
   private isOpenSession(eventType: AttendanceEventType, timestamp: Date, cutoff: Date): boolean {
     return !OUT_EVENT_TYPES.has(eventType) && timestamp < cutoff;
   }
@@ -332,6 +414,13 @@ export class AttendanceService {
     });
     if (!member) {
       throw new NotFoundException('Employee not found in this organization.');
+    }
+  }
+
+  /** Guard for manager-only actions (e.g. triggering a biometric sync by hand). */
+  async assertOrgManager(callerId: string, organizationId: string): Promise<void> {
+    if (!(await this.isOrgManager(callerId, organizationId))) {
+      throw new ForbiddenException('Only organization managers may perform this action.');
     }
   }
 
