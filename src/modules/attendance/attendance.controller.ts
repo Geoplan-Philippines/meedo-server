@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -8,6 +9,7 @@ import { BiometricSyncService } from './biometrics/biometric-sync.service';
 import { CreateAttendanceEventDTO } from './dto/create-attendance-event.dto';
 import { GetAttendanceHistoryQueryDTO } from './dto/get-attendance-history-query.dto';
 import { GetRosterQueryDTO } from './dto/get-roster-query.dto';
+import { IngestBiometricEventDTO } from './dto/ingest-biometric-event.dto';
 import {
   AttendanceEventRecord,
   AttendanceRecord,
@@ -39,6 +41,25 @@ export class AttendanceController {
     @CurrentUser('id') employeeId: string,
   ): Promise<AttendanceEventRecord> {
     return this.attendanceService.recordAttendanceEvent(employeeId, body);
+  }
+
+  /** Machine-to-machine receiver used by the on-premise Hikvision sync agent. */
+  @AllowAnonymous()
+  @Post('event')
+  async ingestBiometricEvent(@Body() body: IngestBiometricEventDTO): Promise<{ ingested: number }> {
+    const ingested = await this.attendanceService.ingestBiometricAccess([{
+      externalId: body.externalId,
+      biometricsId: body.biometricsId,
+      timestamp: new Date(body.timestamp),
+    }]);
+    return { ingested };
+  }
+
+  /** Device identifiers currently mapped to users; consumed by the on-premise sync agent. */
+  @AllowAnonymous()
+  @Get('biometrics/ids')
+  async getRegisteredBiometricIds(): Promise<{ biometricsIds: string[] }> {
+    return { biometricsIds: await this.attendanceService.getRegisteredBiometricIds() };
   }
 
   @Get('events')

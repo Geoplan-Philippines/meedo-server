@@ -38,6 +38,16 @@ export class AttendanceService {
 
   constructor(private prisma: PrismaService) {}
 
+  async getRegisteredBiometricIds(): Promise<string[]> {
+    const users = await this.prisma.user.findMany({
+      where: { biometricsId: { not: null } },
+      select: { biometricsId: true },
+    });
+    return users
+      .map((user) => user.biometricsId)
+      .filter((biometricsId): biometricsId is string => Boolean(biometricsId));
+  }
+
   /**
    * Record a manual field/WFH event for the employee and recompute the affected
    * day so `firstIn` / `lastOut` / `billableHours` stay materialized. The event
