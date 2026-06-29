@@ -28,6 +28,8 @@ model User {
   members                       Member[]
   sessions                      Session[]
   teamMembers                   TeamMember[]
+  timesheetEntries              TimesheetEntry[]
+  timesheetAuditTargets         TimesheetAuditLog[]       @relation("TimesheetAuditTargetUser")
 
   @@map("users")
 }
@@ -108,6 +110,9 @@ model Organization {
   tickets                       Tickets[]
   projects                      Project[]
   slaPolicies                   SlaPolicy[]
+  timesheetEntries              TimesheetEntry[]
+  timesheetPeriodLocks          TimesheetPeriodLock[]
+  timesheetAuditLogs            TimesheetAuditLog[]
 
   @@map("organizations")
 }
@@ -165,6 +170,11 @@ model Member {
   ticketAssignees               TicketAssignee[]
   ticketComments                TicketComment[]
   ticketActivities              TicketActivity[]
+  approvedTimesheetEntries      TimesheetEntry[]          @relation("TimesheetEntryApprovedBy")
+  rejectedTimesheetEntries      TimesheetEntry[]          @relation("TimesheetEntryRejectedBy")
+  lockedTimesheetPeriods        TimesheetPeriodLock[]     @relation("TimesheetPeriodLockedBy")
+  unlockedTimesheetPeriods      TimesheetPeriodLock[]     @relation("TimesheetPeriodUnlockedBy")
+  timesheetAuditLogs            TimesheetAuditLog[]       @relation("TimesheetAuditActor")
 
   @@unique([organizationId, userId])
   @@index([organizationId])
@@ -288,6 +298,7 @@ model Project {
 
   tickets                       Tickets[]
   slaPolicies                   SlaPolicy[]
+  timesheetEntries              TimesheetEntry[]
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
@@ -466,6 +477,109 @@ model TicketActivity {
   @@map("ticket_activities")
 }
 
+model TimesheetEntry {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId                        String                    @map("user_id")
+  user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  projectId                     String                    @map("project_id")
+  project                       Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  workDate                      DateTime                  @map("work_date")
+  hours                         Float
+  location                      String                    @default("OFC - DW")
+  workType                      TimesheetWorkType         @default(OFFICE_DIRECT_WORK) @map("work_type")
+  task                          String
+  projectDescription            String?                   @map("project_description")
+  isOvertime                    Boolean                   @default(false) @map("is_overtime")
+  isNightDifferential           Boolean                   @default(false) @map("is_night_differential")
+  status                        TimesheetEntryStatus      @default(DRAFT)
+  submittedAt                   DateTime?                 @map("submitted_at")
+  approvedAt                    DateTime?                 @map("approved_at")
+  approvedByMemberId            String?                   @map("approved_by_member_id")
+  approvedBy                    Member?                   @relation("TimesheetEntryApprovedBy", fields: [approvedByMemberId], references: [id], onDelete: SetNull)
+  rejectedAt                    DateTime?                 @map("rejected_at")
+  rejectedByMemberId            String?                   @map("rejected_by_member_id")
+  rejectedBy                    Member?                   @relation("TimesheetEntryRejectedBy", fields: [rejectedByMemberId], references: [id], onDelete: SetNull)
+  rejectionReason               String?                   @map("rejection_reason")
+
+  auditLogs                     TimesheetAuditLog[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([projectId])
+  @@index([organizationId, userId, workDate])
+  @@index([organizationId, workDate])
+  @@index([organizationId, workDate, status])
+  @@index([organizationId, projectId, workDate])
+  @@index([organizationId, status, workDate])
+  @@index([status])
+  @@map("timesheet_entries")
+}
+
+model TimesheetPeriodLock {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  periodStart                   DateTime                  @map("period_start")
+  periodEnd                     DateTime                  @map("period_end")
+  isLocked                      Boolean                   @default(false) @map("is_locked")
+  lockedAt                      DateTime?                 @map("locked_at")
+  lockedByMemberId              String?                   @map("locked_by_member_id")
+  lockedBy                      Member?                   @relation("TimesheetPeriodLockedBy", fields: [lockedByMemberId], references: [id], onDelete: SetNull)
+  unlockedAt                    DateTime?                 @map("unlocked_at")
+  unlockedByMemberId            String?                   @map("unlocked_by_member_id")
+  unlockedBy                    Member?                   @relation("TimesheetPeriodUnlockedBy", fields: [unlockedByMemberId], references: [id], onDelete: SetNull)
+  unlockReason                  String?                   @map("unlock_reason")
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, periodStart, periodEnd])
+  @@index([organizationId])
+  @@index([isLocked])
+  @@map("timesheet_period_locks")
+}
+
+model TimesheetAuditLog {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  actorMemberId                 String?                   @map("actor_member_id")
+  actor                         Member?                   @relation("TimesheetAuditActor", fields: [actorMemberId], references: [id], onDelete: SetNull)
+
+  targetUserId                  String?                   @map("target_user_id")
+  targetUser                    User?                     @relation("TimesheetAuditTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  timesheetEntryId              String?                   @map("timesheet_entry_id")
+  timesheetEntry                TimesheetEntry?           @relation(fields: [timesheetEntryId], references: [id], onDelete: SetNull)
+
+  action                        TimesheetAuditAction
+  before                        Json?
+  after                         Json?
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+
+  @@index([organizationId])
+  @@index([organizationId, createdAt])
+  @@index([actorMemberId])
+  @@index([targetUserId])
+  @@index([timesheetEntryId])
+  @@index([action])
+  @@map("timesheet_audit_logs")
+}
+
 enum FaceProfileStatus {
   PENDING
   ACTIVE
@@ -496,4 +610,33 @@ enum TicketPriority {
   MEDIUM
   HIGH
   URGENT
+}
+
+enum TimesheetEntryStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum TimesheetWorkType {
+  OFFICE
+  OFFICE_DIRECT_WORK
+  FIELD
+  WFH
+  LEAVE
+  OFFSET
+  HOLIDAY
+}
+
+enum TimesheetAuditAction {
+  CREATED
+  UPDATED
+  DELETED
+  SUBMITTED
+  APPROVED
+  REJECTED
+  LOCKED_PERIOD
+  UNLOCKED_PERIOD
+  EXPORTED
 }
