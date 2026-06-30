@@ -1,7 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
+
 import { auth } from '../../core/auth/auth';
 import { prisma } from '../../core/database/prisma.client';
 import { OnboardMemberDTO } from './dto/onboard-member.dto';
+import { UpdateMemberDTO } from './dto/update-member.dto';
 
 @Injectable()
 export class AdminService {
@@ -58,5 +66,131 @@ export class AdminService {
       });
       throw error;
     }
+  }
+
+  async getMember(memberId: string, organizationId: string) {
+    const member = await prisma.member.findFirst({
+      where: { id: memberId, organizationId },
+      select: {
+        id: true,
+        organizationId: true,
+        userId: true,
+        role: true,
+        createdAt: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            employeeCode: true,
+            biometricsId: true,
+          },
+        },
+      },
+    });
+
+    if (!member) {
+      throw new NotFoundException('Organization member not found');
+    }
+
+    const teamMember = await prisma.teamMember.findFirst({
+      where: {
+        userId: member.userId,
+        team: { organizationId },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { teamId: true },
+    });
+
+    return {
+      ...member,
+      teamId: teamMember?.teamId ?? null,
+    };
+  }
+
+  async updateMember(
+    memberId: string,
+    dto: UpdateMemberDTO,
+    organizationId: string,
+  ) {
+    const member = await prisma.member.findFirst({
+      where: { id: memberId, organizationId },
+      select: {
+        id: true,
+        userId: true,
+        role: true,
+        user: { select: { email: true } },
+      },
+    });
+
+    if (!member) {
+      throw new NotFoundException('Organization member not found');
+    }
+
+    const name = dto.name?.trim();
+    if (dto.name !== undefined && !name) {
+      throw new BadRequestException('Name cannot be empty');
+    }
+
+    if (dto.teamId) {
+      const team = await prisma.team.findFirst({
+        where: { id: dto.teamId, organizationId },
+        select: { id: true },
+      });
+      if (!team) {
+        throw new BadRequestException('Team does not belong to the active organization');
+      }
+    }
+
+    const userData: Prisma.UserUpdateInput = {
+      ...(dto.name !== undefined ? { name } : {}),
+      ...(dto.email !== undefined
+        ? {
+            email: dto.email.trim().toLowerCase(),
+            ...(dto.email.trim().toLowerCase() !== member.user.email.toLowerCase()
+              ? { emailVerified: false }
+              : {}),
+          }
+        : {}),
+      ...(dto.employeeCode !== undefined
+        ? { employeeCode: this.normalizeOptionalValue(dto.employeeCode) }
+        : {}),
+      ...(dto.biometricsId !== undefined
+        ? { biometricsId: this.normalizeOptionalValue(dto.biometricsId) }
+        : {}),
+    };
+
+    await prisma.$transaction(async (transaction) => {
+      if (Object.keys(userData).length > 0) {
+        await transaction.user.update({
+          where: { id: member.userId },
+          data: userData,
+        });
+      }
+
+      if (dto.teamId !== undefined) {
+        await transaction.teamMember.deleteMany({
+          where: {
+            userId: member.userId,
+            team: { organizationId },
+          },
+        });
+
+        if (dto.teamId) {
+          await transaction.teamMember.create({
+            data: {
+              userId: member.userId,
+              teamId: dto.teamId,
+            },
+          });
+        }
+      }
+    });
+
+    return this.getMember(memberId, organizationId);
+  }
+
+  private normalizeOptionalValue(value: string | null): string | null {
+    return value?.trim() || null;
   }
 }

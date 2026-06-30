@@ -43,6 +43,16 @@ export class AttendanceController {
     return { ingested };
   }
 
+  /** Manager-only: list people enrolled on the configured Hikvision device. */
+  @Get('biometrics/users')
+  async getBiometricDeviceUsers(
+    @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') callerId: string,
+  ) {
+    await this.attendanceService.assertOrgManager(callerId, organizationId);
+    return { users: await this.biometricSync.listDeviceUsers() };
+  }
+  
   @Post('events')
   async recordAttendanceEvent(
     @Body() body: CreateAttendanceEventDTO,
