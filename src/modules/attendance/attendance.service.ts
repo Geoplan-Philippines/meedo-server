@@ -9,7 +9,11 @@ import { AttendanceEventType, AttendanceOrigin, AttendanceSource, Prisma } from 
 
 import { PrismaService } from '../../core/database/prisma.service';
 import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/paginated-api.response';
-import { BiometricTap, OFFICE_LOCATION } from './biometrics/biometrics.constants';
+import {
+  BiometricIngestResult,
+  BiometricTap,
+  OFFICE_LOCATION,
+} from './biometrics/biometrics.constants';
 import { CreateAttendanceEventDTO } from './dto/create-attendance-event.dto';
 import { GetAttendanceHistoryQueryDTO } from './dto/get-attendance-history-query.dto';
 import { GetRosterQueryDTO } from './dto/get-roster-query.dto';
@@ -30,6 +34,7 @@ import {
   getAttendanceDayRange,
   getAutoClockOutInstant,
   parseAttendanceDate,
+  toCompanyOffsetIso,
 } from './utils/attendance-day.util';
 
 @Injectable()
@@ -90,16 +95,30 @@ export class AttendanceService {
    * closing punch stays "open" and is auto-clocked-out at the cutoff hour.
    */
   async ingestBiometricAccess(taps: BiometricTap[]): Promise<number> {
+    return (await this.ingestBiometricAccessDetailed(taps)).ingested;
+  }
+
+  /** Ingest a batch and report an explicit outcome for every unique device event. */
+  async ingestBiometricAccessDetailed(taps: BiometricTap[]): Promise<BiometricIngestResult> {
     if (taps.length === 0) {
-      return 0;
+      return { ingested: 0, duplicates: 0, unknown: 0, results: [], affected: [] };
     }
 
-    // Drop taps already stored before doing any heavier work, so a frequent poll
-    // whose overlap window only re-covers ingested taps costs one cheap lookup
-    // and nothing else.
-    const fresh = await this.filterNewTaps(taps);
+    const unique = [...new Map(taps.map((tap) => [tap.externalId, tap])).values()];
+    const existing = await this.prisma.attendanceEvent.findMany({
+      where: { externalId: { in: unique.map((tap) => tap.externalId) } },
+      select: { externalId: true },
+    });
+    const existingIds = new Set(existing.map((event) => event.externalId));
+    const fresh = unique.filter((tap) => !existingIds.has(tap.externalId));
     if (fresh.length === 0) {
-      return 0;
+      return {
+        ingested: 0,
+        duplicates: unique.length,
+        unknown: 0,
+        results: unique.map((tap) => ({ externalId: tap.externalId, status: 'duplicate' })),
+        affected: [],
+      };
     }
 
     const biometricIds = [...new Set(fresh.map((tap) => tap.biometricsId))];
@@ -113,45 +132,66 @@ export class AttendanceService {
       const employeeId = employeeIdByBiometricId.get(tap.biometricsId);
       return employeeId ? [{ tap, employeeId }] : [];
     });
-    if (known.length === 0) {
-      return 0;
-    }
+    const knownByExternalId = new Map(known.map((item) => [item.tap.externalId, item]));
 
-    const { count } = await this.prisma.attendanceEvent.createMany({
-      data: known.map(({ tap, employeeId }) => ({
-        employeeId,
-        eventType: AttendanceEventType.OFFICE_ACCESS,
-        source: AttendanceSource.OFFICE,
-        origin: AttendanceOrigin.BIOMETRICS,
-        timestamp: tap.timestamp,
+    const created = known.length === 0 ? [] : await this.prisma.$transaction(async (tx) => {
+      const rows = await tx.attendanceEvent.createManyAndReturn({
+        data: known.map(({ tap, employeeId }) => ({
+          employeeId,
+          eventType: AttendanceEventType.OFFICE_ACCESS,
+          source: AttendanceSource.OFFICE,
+          origin: AttendanceOrigin.BIOMETRICS,
+          timestamp: tap.timestamp,
+          externalId: tap.externalId,
+          latitude: OFFICE_LOCATION.latitude,
+          longitude: OFFICE_LOCATION.longitude,
+        })),
+        skipDuplicates: true,
+        select: { externalId: true, employeeId: true, timestamp: true },
+      });
+
+      const affectedDays = new Map<string, { employeeId: string; dayKey: Date }>();
+      for (const row of rows) {
+        const dayKey = getAttendanceDayKey(row.timestamp);
+        affectedDays.set(`${row.employeeId}:${dayKey.getTime()}`, {
+          employeeId: row.employeeId,
+          dayKey,
+        });
+      }
+      for (const { employeeId, dayKey } of affectedDays.values()) {
+        await this.recomputeAttendanceDay(tx, employeeId, dayKey);
+      }
+      return rows;
+    });
+
+    const createdIds = new Set(created.map((row) => row.externalId));
+    const results = unique.map((tap) => {
+      if (existingIds.has(tap.externalId)) {
+        return { externalId: tap.externalId, status: 'duplicate' as const };
+      }
+      if (!knownByExternalId.has(tap.externalId)) {
+        return { externalId: tap.externalId, status: 'unknown_biometrics_id' as const };
+      }
+      return {
         externalId: tap.externalId,
-        latitude: OFFICE_LOCATION.latitude,
-        longitude: OFFICE_LOCATION.longitude,
-      })),
-      skipDuplicates: true,
+        status: createdIds.has(tap.externalId) ? 'ingested' as const : 'duplicate' as const,
+      };
     });
+    const affected = created.map((row) => ({
+      employeeId: row.employeeId,
+      date: toCompanyOffsetIso(getAttendanceDayKey(row.timestamp)).slice(0, 10),
+    }));
 
-    // Recompute only the days that actually gained a tap this run.
-    const affected = new Map<string, { employeeId: string; dayKey: Date }>();
-    for (const { tap, employeeId } of known) {
-      const dayKey = getAttendanceDayKey(tap.timestamp);
-      affected.set(`${employeeId}:${dayKey.getTime()}`, { employeeId, dayKey });
-    }
-    for (const { employeeId, dayKey } of affected.values()) {
-      await this.prisma.$transaction((tx) => this.recomputeAttendanceDay(tx, employeeId, dayKey));
-    }
-
-    return count;
-  }
-
-  /** Keep only taps whose `externalId` is not already stored. */
-  private async filterNewTaps(taps: BiometricTap[]): Promise<BiometricTap[]> {
-    const existing = await this.prisma.attendanceEvent.findMany({
-      where: { externalId: { in: taps.map((tap) => tap.externalId) } },
-      select: { externalId: true },
-    });
-    const seen = new Set(existing.map((event) => event.externalId));
-    return taps.filter((tap) => !seen.has(tap.externalId));
+    return {
+      ingested: results.filter((result) => result.status === 'ingested').length,
+      duplicates: results.filter((result) => result.status === 'duplicate').length,
+      unknown: results.filter((result) => result.status === 'unknown_biometrics_id').length,
+      results,
+      affected: [...new Map(affected.map((target) => [
+        `${target.employeeId}:${target.date}`,
+        target,
+      ])).values()],
+    };
   }
 
   /**

@@ -1,4 +1,14 @@
-import { IsDateString, IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsDateString,
+  IsNotEmpty,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
 
 export class IngestBiometricEventDTO {
   @IsString()
@@ -13,4 +23,13 @@ export class IngestBiometricEventDTO {
 
   @IsDateString()
   timestamp!: string;
+}
+
+export class IngestBiometricEventsDTO {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => IngestBiometricEventDTO)
+  events!: IngestBiometricEventDTO[];
 }

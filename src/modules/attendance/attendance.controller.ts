@@ -10,7 +10,10 @@ import { BiometricSyncService } from './biometrics/biometric-sync.service';
 import { CreateAttendanceEventDTO } from './dto/create-attendance-event.dto';
 import { GetAttendanceHistoryQueryDTO } from './dto/get-attendance-history-query.dto';
 import { GetRosterQueryDTO } from './dto/get-roster-query.dto';
-import { IngestBiometricEventDTO } from './dto/ingest-biometric-event.dto';
+import {
+  IngestBiometricEventDTO,
+  IngestBiometricEventsDTO,
+} from './dto/ingest-biometric-event.dto';
 import { AttendanceUpdatesService } from './attendance-updates.service';
 import {
   AttendanceEventRecord,
@@ -18,6 +21,7 @@ import {
   DailyAttendanceSummary,
   RosterResult,
 } from './constants/attendance.constants';
+import { BiometricIngestResult } from './biometrics/biometrics.constants';
 
 @Controller('attendance')
 export class AttendanceController {
@@ -35,6 +39,7 @@ export class AttendanceController {
   ): Promise<{ ingested: number }> {
     await this.attendanceService.assertOrgManager(callerId, organizationId);
     const ingested = await this.biometricSync.sync();
+    if (ingested > 0) this.attendanceUpdates.notify('biometric');
     return { ingested };
   }
 
@@ -52,13 +57,31 @@ export class AttendanceController {
   @AllowAnonymous()
   @Post('event')
   async ingestBiometricEvent(@Body() body: IngestBiometricEventDTO): Promise<{ ingested: number }> {
-    const ingested = await this.attendanceService.ingestBiometricAccess([{
+    const result = await this.attendanceService.ingestBiometricAccessDetailed([{
       externalId: body.externalId,
       biometricsId: body.biometricsId,
       timestamp: new Date(body.timestamp),
     }]);
-    if (ingested > 0) this.attendanceUpdates.notify('biometric');
-    return { ingested };
+    if (result.ingested > 0) this.attendanceUpdates.notify('biometric', result.affected);
+    return { ingested: result.ingested };
+  }
+
+  /** Batch receiver used by the real-time on-premise agent. */
+  @AllowAnonymous()
+  @Post('events/biometric/batch')
+  async ingestBiometricEvents(
+    @Body() body: IngestBiometricEventsDTO,
+  ): Promise<Omit<BiometricIngestResult, 'affected'>> {
+    const result = await this.attendanceService.ingestBiometricAccessDetailed(
+      body.events.map((event) => ({
+        externalId: event.externalId,
+        biometricsId: event.biometricsId,
+        timestamp: new Date(event.timestamp),
+      })),
+    );
+    if (result.ingested > 0) this.attendanceUpdates.notify('biometric', result.affected);
+    const { affected: _affected, ...response } = result;
+    return response;
   }
 
   @Header('X-Accel-Buffering', 'no')

@@ -18,6 +18,26 @@ export interface BiometricTap {
   externalId: string;
 }
 
+export type BiometricIngestStatus = 'ingested' | 'duplicate' | 'unknown_biometrics_id';
+
+export interface BiometricIngestEventResult {
+  externalId: string;
+  status: BiometricIngestStatus;
+}
+
+export interface AttendanceUpdateTarget {
+  employeeId: string;
+  date: string;
+}
+
+export interface BiometricIngestResult {
+  ingested: number;
+  duplicates: number;
+  unknown: number;
+  results: BiometricIngestEventResult[];
+  affected: AttendanceUpdateTarget[];
+}
+
 /** ISAPI access-control event-search endpoint (JSON). */
 export const ACS_EVENT_PATH = '/ISAPI/AccessControl/AcsEvent?format=json';
 
