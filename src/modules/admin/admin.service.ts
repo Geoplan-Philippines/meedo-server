@@ -132,12 +132,6 @@ export class AdminService {
       throw new BadRequestException('Name cannot be empty');
     }
 
-    if (dto.role !== undefined && dto.role !== member.role) {
-      throw new BadRequestException(
-        'Role changes are not supported by this endpoint',
-      );
-    }
-
     if (dto.teamId) {
       const team = await prisma.team.findFirst({
         where: { id: dto.teamId, organizationId },

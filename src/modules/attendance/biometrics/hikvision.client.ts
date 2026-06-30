@@ -142,7 +142,7 @@ export class HikvisionClient {
       throw new ServiceUnavailableException('Hikvision device is not configured');
     }
 
-    const searchID = `users-${Date.now()}`;
+    const searchID = `${Math.floor(Math.random() * 1e9)}`;
     const users: HikvisionDirectoryUser[] = [];
     let position = 0;
 
@@ -169,7 +169,7 @@ export class HikvisionClient {
       }
 
       position += matches.length;
-      const total = search?.totalMatches ?? position;
+      const total = search?.totalMatches ?? Number.POSITIVE_INFINITY;
       if (
         matches.length === 0 ||
         search?.responseStatusStrg !== 'MORE' ||

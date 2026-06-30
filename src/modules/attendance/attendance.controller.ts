@@ -52,6 +52,7 @@ export class AttendanceController {
     await this.attendanceService.assertOrgManager(callerId, organizationId);
     return { users: await this.biometricSync.listDeviceUsers() };
   }
+  
   @Post('events')
   async recordAttendanceEvent(
     @Body() body: CreateAttendanceEventDTO,

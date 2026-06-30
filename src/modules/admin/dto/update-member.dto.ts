@@ -33,8 +33,4 @@ export class UpdateMemberDTO {
   @IsOptional()
   @IsString()
   teamId?: string | null;
-
-  @IsOptional()
-  @IsIn(['member', 'admin', 'owner'])
-  role?: OnboardMemberRole;
 }
