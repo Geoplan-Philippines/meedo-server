@@ -3,7 +3,7 @@ import { AttendanceOrigin } from '@prisma/client';
 
 import { PrismaService } from '../../../core/database/prisma.service';
 import { AttendanceService } from '../attendance.service';
-import { HikvisionClient } from './hikvision.client';
+import { HikvisionClient, HikvisionDirectoryUser } from './hikvision.client';
 import { SYNC_MAX_LOOKBACK_MS, SYNC_OVERLAP_MS } from './biometrics.constants';
 
 /**
@@ -62,11 +62,16 @@ export class BiometricSyncService {
     }
   }
 
+  /** Read the people currently enrolled on the configured access controller. */
+  listDeviceUsers(): Promise<HikvisionDirectoryUser[]> {
+    return this.hikvision.fetchUsers();
+  }
+
   /**
    * Where this poll starts. Once running, resume from where the last poll ended
    * (minus an overlap) to keep the window tight. On a cold process, resume from
    * the last tap ever stored. Never look back past the lookback floor, so a
-   * first run — or one after long downtime — can't replay the whole device log.
+   * first run â€” or one after long downtime â€” can't replay the whole device log.
    */
   private async resolveWindowStart(now: Date): Promise<Date> {
     const floor = new Date(now.getTime() - SYNC_MAX_LOOKBACK_MS);

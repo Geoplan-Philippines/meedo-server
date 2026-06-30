@@ -35,6 +35,34 @@ interface AcsEventResponse {
   };
 }
 
+interface HikvisionUserInfo {
+  employeeNo?: string;
+  name?: string;
+  userType?: string;
+  Valid?: { enable?: boolean };
+}
+
+interface UserInfoSearchResponse {
+  UserInfoSearch?: {
+    responseStatusStrg?: string;
+    numOfMatches?: number;
+    totalMatches?: number;
+    UserInfo?: HikvisionUserInfo[];
+  };
+}
+
+export interface HikvisionDirectoryUser {
+  employeeNo: string;
+  name: string;
+  userType: string;
+  enabled: boolean;
+}
+
+const USER_INFO_SEARCH_PATH = '/ISAPI/AccessControl/UserInfo/Search?format=json';
+const USER_INFO_PAGE_SIZE = 10;
+const USER_INFO_MAX_PAGES = 300;
+const HIKVISION_REQUEST_TIMEOUT_MS = 8_000;
+
 const md5 = (input: string): string => createHash('md5').update(input).digest('hex');
 
 /**
@@ -53,6 +81,11 @@ export class HikvisionClient {
   /** True only when host + credentials are all configured. */
   get isConfigured(): boolean {
     return !!this.host && !!this.username && !!this.password;
+  }
+
+  private get baseUrl(): string {
+    const host = this.host!.replace(/\/+$/, '');
+    return /^https?:\/\//i.test(host) ? host : `http://${host}`;
   }
 
   /**
@@ -103,15 +136,66 @@ export class HikvisionClient {
     return taps;
   }
 
+  /** Fetch every enrolled device user, respecting the device's 10-row page cap. */
+  async fetchUsers(): Promise<HikvisionDirectoryUser[]> {
+    if (!this.isConfigured) {
+      throw new ServiceUnavailableException('Hikvision device is not configured');
+    }
+
+    const searchID = `users-${Date.now()}`;
+    const users: HikvisionDirectoryUser[] = [];
+    let position = 0;
+
+    for (let page = 0; page < USER_INFO_MAX_PAGES; page += 1) {
+      const result = await this.post<UserInfoSearchResponse>(USER_INFO_SEARCH_PATH, {
+        UserInfoSearchCond: {
+          searchID,
+          searchResultPosition: position,
+          maxResults: USER_INFO_PAGE_SIZE,
+        },
+      });
+      const search = result.UserInfoSearch;
+      const matches = search?.UserInfo ?? [];
+
+      for (const user of matches) {
+        const employeeNo = user.employeeNo?.trim();
+        if (!employeeNo) continue;
+        users.push({
+          employeeNo,
+          name: user.name?.trim() ?? '',
+          userType: user.userType ?? 'normal',
+          enabled: user.Valid?.enable ?? true,
+        });
+      }
+
+      position += matches.length;
+      const total = search?.totalMatches ?? position;
+      if (
+        matches.length === 0 ||
+        search?.responseStatusStrg !== 'MORE' ||
+        position >= total
+      ) {
+        return users.sort((a, b) =>
+          a.employeeNo.localeCompare(b.employeeNo, undefined, { numeric: true }),
+        );
+      }
+    }
+
+    throw new ServiceUnavailableException('Hikvision user search exceeded the page limit');
+  }
+
   /** POST with digest auth: try once unauthenticated, then answer the challenge. */
   private async post<T>(path: string, body: unknown): Promise<T> {
-    const url = `http://${this.host}${path}`;
+    const url = `${this.baseUrl}${path}`;
     const payload = JSON.stringify(body);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'ngrok-skip-browser-warning': 'true',
+    };
 
     let response: Response;
     try {
-      response = await fetch(url, { method: 'POST', headers, body: payload });
+      response = await this.fetchWithTimeout(url, { method: 'POST', headers, body: payload });
 
       if (response.status === 401) {
         const challenge = response.headers.get('www-authenticate');
@@ -119,7 +203,7 @@ export class HikvisionClient {
           throw new Error('Device demanded auth but sent no WWW-Authenticate header.');
         }
         const authorization = this.buildAuthHeader('POST', path, this.parseChallenge(challenge));
-        response = await fetch(url, {
+        response = await this.fetchWithTimeout(url, {
           method: 'POST',
           headers: { ...headers, Authorization: authorization },
           body: payload,
@@ -140,6 +224,15 @@ export class HikvisionClient {
     return response.json() as Promise<T>;
   }
 
+  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), HIKVISION_REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
   private parseChallenge(header: string): DigestChallenge {
     const fields: Record<string, string> = {};
     const body = header.replace(/^Digest\s+/i, '');
