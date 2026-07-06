@@ -512,6 +512,22 @@ model TimesheetEntry {
   rejectionReason               String?                   @map("rejection_reason")
 
   auditLogs                     TimesheetAuditLog[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([projectId])
+  @@index([organizationId, userId, workDate])
+  @@index([organizationId, workDate])
+  @@index([organizationId, workDate, status])
+  @@index([organizationId, projectId, workDate])
+  @@index([organizationId, status, workDate])
+  @@index([status])
+  @@map("timesheet_entries")
+}
+
 model AttendanceEvent {
   id                            String                    @id @default(uuid())
 
@@ -532,16 +548,10 @@ model AttendanceEvent {
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
-  @@index([organizationId])
-  @@index([userId])
-  @@index([projectId])
-  @@index([organizationId, userId, workDate])
-  @@index([organizationId, workDate])
-  @@index([organizationId, workDate, status])
-  @@index([organizationId, projectId, workDate])
-  @@index([organizationId, status, workDate])
-  @@index([status])
-  @@map("timesheet_entries")
+  @@index([employeeId])
+  @@index([timestamp])
+  @@index([employeeId, timestamp])
+  @@map("attendance_events")
 }
 
 model TimesheetPeriodLock {
@@ -598,10 +608,6 @@ model TimesheetAuditLog {
   @@index([timesheetEntryId])
   @@index([action])
   @@map("timesheet_audit_logs")
-  @@index([employeeId])
-  @@index([timestamp])
-  @@index([employeeId, timestamp])
-  @@map("attendance_events")
 }
 
 model Attendance {
@@ -684,6 +690,8 @@ enum TimesheetAuditAction {
   LOCKED_PERIOD
   UNLOCKED_PERIOD
   EXPORTED
+}
+
 enum AttendanceSource {
   OFFICE
   FIELD
