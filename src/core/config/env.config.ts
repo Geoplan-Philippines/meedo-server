@@ -25,7 +25,14 @@ const schema = z.object({
   CLOUDINARY_API_KEY: z.string().min(1),
   CLOUDINARY_CLOUD_NAME: z.string().min(1),
   PRESET_NAME: z.string().min(1),
-  CLOUDINARY_BASE_URL: z.string().min(1)
+  CLOUDINARY_BASE_URL: z.string().min(1),
+
+  // Hikvision access-control device (biometric attendance sync). Optional so the
+  // app still boots where no device is configured; sync no-ops until all three
+  // are set.
+  HIKVISION_HOST: z.string().optional(),
+  HIKVISION_USERNAME: z.string().optional(),
+  HIKVISION_PASSWORD: z.string().optional(),
 });
 
 const parsed = schema.safeParse(process.env);

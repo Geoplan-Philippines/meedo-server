@@ -38,6 +38,24 @@ const TIMESHEET_PROJECTS = [
   },
 ];
 
+async function seedOrgUser(
+  orgId: string,
+  { email, password, name, role }: { email: string; password: string; name: string; role: string },
+) {
+  let user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    await auth.api.signUpEmail({ body: { email, password, name } });
+    user = await prisma.user.findUniqueOrThrow({ where: { email } });
+  }
+  user = await prisma.user.update({ where: { id: user.id }, data: { emailVerified: true } });
+  await prisma.member.upsert({
+    where: { organizationId_userId: { organizationId: orgId, userId: user.id } },
+    update: { role },
+    create: { organizationId: orgId, userId: user.id, role },
+  });
+  return user;
+}
+
 async function main() {
   console.log('Seeding...');
 
@@ -48,24 +66,19 @@ async function main() {
   });
   console.log('Organization:', org.id);
 
-  let user = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } });
-  if (!user) {
-    await auth.api.signUpEmail({
-      body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD, name: ADMIN_NAME },
-    });
-    user = await prisma.user.findUniqueOrThrow({ where: { email: ADMIN_EMAIL } });
-  }
-
-  user = await prisma.user.update({
-    where: { id: user.id },
-    data: { emailVerified: true },
+  const user = await seedOrgUser(org.id, {
+    email: 'admin@geoplanph.com',
+    password: 'admin123',
+    name: 'Admin',
+    role: 'owner',
   });
-  console.log('User:', user.id);
+  console.log('Admin user:', user.id);
 
-  await prisma.member.upsert({
-    where: { organizationId_userId: { organizationId: org.id, userId: user.id } },
-    update: { role: 'owner' },
-    create: { organizationId: org.id, userId: user.id, role: 'owner' },
+  const normalUser = await seedOrgUser(org.id, {
+    email: 'user@geoplanph.com',
+    password: 'user123456',
+    name: 'User',
+    role: 'member',
   });
   console.log('Admin member linked');
 
@@ -89,6 +102,7 @@ async function main() {
     create: { organizationId: org.id, userId: memberUser.id, role: 'member' },
   });
   console.log('Timesheet member linked');
+  console.log('Normal user:', normalUser.id);
 
   for (const name of CATEGORIES) {
     await prisma.ticketCategory.upsert({
@@ -146,6 +160,8 @@ async function main() {
   console.log('Done.');
   console.log(`Admin login -> ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
   console.log(`Member login -> ${MEMBER_EMAIL} / ${MEMBER_PASSWORD}`);
+  console.log(`Admin login -> admin@geoplanph.com / admin123`);
+  console.log(`User login  -> user@geoplanph.com / user123456`);
 }
 
 main()

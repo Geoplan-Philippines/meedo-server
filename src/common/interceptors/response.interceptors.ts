@@ -5,6 +5,10 @@ import { ApiResponse } from "../responses/api.response";
 @Injectable()
 export class ResponseInteceptor<T> implements NestInterceptor<T, ApiResponse<T>> {
   intercept(context: ExecutionContext, next: CallHandler): Observable<ApiResponse<T>> {
+    const accept = context.switchToHttp().getRequest().headers?.accept;
+    if (typeof accept === 'string' && accept.includes('text/event-stream')) {
+      return next.handle();
+    }
     const statusCode = context.switchToHttp().getResponse().statusCode;
 
     return next.handle().pipe(
