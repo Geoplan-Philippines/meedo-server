@@ -1,4 +1,4 @@
-import { InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 
@@ -29,6 +29,7 @@ const mockTicket = {
   project: null,
   team: null,
   assignees: [],
+  relatedTickets: [],
 };
 
 const mockPrismaService = {
@@ -89,12 +90,19 @@ describe('TicketsService', () => {
       priority: 'MEDIUM' as const,
     };
 
+    /** Ticket creation runs inside `prisma.$transaction`; this mocks the tx client
+     *  and hands back the capturing `create` mock so assertions can inspect it. */
+    const mockCreateTransaction = (create: jest.Mock) => {
+      mockPrismaService.$transaction.mockImplementation(async (fn: Function) => fn({ tickets: { create } }));
+    };
+
     it('creates and returns a ticket', async () => {
-      mockPrismaService.tickets.create.mockResolvedValue(mockTicket);
+      const create = jest.fn().mockResolvedValue(mockTicket);
+      mockCreateTransaction(create);
 
       const result = await service.createTicket(dto, 'org-uuid-1');
 
-      expect(mockPrismaService.tickets.create).toHaveBeenCalledWith(
+      expect(create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             title: dto.title,
@@ -108,14 +116,15 @@ describe('TicketsService', () => {
 
     it('deduplicates assigneeIds before creating', async () => {
       mockPrismaService.member.count.mockResolvedValue(1);
-      mockPrismaService.tickets.create.mockResolvedValue(mockTicket);
+      const create = jest.fn().mockResolvedValue(mockTicket);
+      mockCreateTransaction(create);
 
       await service.createTicket(
         { ...dto, assigneeIds: ['member-1', 'member-1'] },
         'org-uuid-1',
       );
 
-      const createCall = mockPrismaService.tickets.create.mock.calls[0][0];
+      const createCall = create.mock.calls[0][0];
       const assigneeData = createCall.data.assignees.createMany.data;
       expect(assigneeData).toHaveLength(1);
     });
@@ -127,13 +136,15 @@ describe('TicketsService', () => {
         meta: { target: ['ticket_number'] },
       });
 
-      mockPrismaService.tickets.create
+      mockPrismaService.$transaction
         .mockRejectedValueOnce(collisionError)
-        .mockResolvedValueOnce(mockTicket);
+        .mockImplementationOnce(async (fn: Function) =>
+          fn({ tickets: { create: jest.fn().mockResolvedValue(mockTicket) } }),
+        );
 
       const result = await service.createTicket(dto, 'org-uuid-1');
 
-      expect(mockPrismaService.tickets.create).toHaveBeenCalledTimes(2);
+      expect(mockPrismaService.$transaction).toHaveBeenCalledTimes(2);
       expect(result).toEqual(mockTicket);
     });
 
@@ -144,13 +155,13 @@ describe('TicketsService', () => {
         meta: { target: ['ticket_number'] },
       });
 
-      mockPrismaService.tickets.create.mockRejectedValue(collisionError);
+      mockPrismaService.$transaction.mockRejectedValue(collisionError);
 
       await expect(service.createTicket(dto, 'org-uuid-1')).rejects.toThrow(
         InternalServerErrorException,
       );
 
-      expect(mockPrismaService.tickets.create).toHaveBeenCalledTimes(MAX_TICKET_NUMBER_RETRIES);
+      expect(mockPrismaService.$transaction).toHaveBeenCalledTimes(MAX_TICKET_NUMBER_RETRIES);
     });
 
     it('throws NotFoundException when ticketStatusId is invalid', async () => {
@@ -289,6 +300,51 @@ describe('TicketsService', () => {
       await service.updateTicket('ticket-uuid-1', { title: 'Updated' }, 'org-uuid-1');
 
       expect(deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('mirrors both directions when relatedTicketIds is provided', async () => {
+      mockPrismaService.tickets.findFirst.mockResolvedValue(existingTicket);
+      mockPrismaService.tickets.count.mockResolvedValue(1); // the related ticket exists in the org
+
+      const relationCreateMany = jest.fn();
+      mockPrismaService.$transaction.mockImplementation(async (fn: Function) => {
+        return fn({
+          tickets: {
+            update: jest.fn(),
+            findUniqueOrThrow: jest.fn().mockResolvedValue(mockTicket),
+          },
+          ticketAssignee: { deleteMany: jest.fn(), createMany: jest.fn() },
+          ticketRelation: {
+            findMany: jest.fn().mockResolvedValue([]),
+            deleteMany: jest.fn(),
+            createMany: relationCreateMany,
+          },
+        });
+      });
+
+      await service.updateTicket(
+        'ticket-uuid-1',
+        { relatedTicketIds: ['ticket-uuid-2'] },
+        'org-uuid-1',
+      );
+
+      expect(relationCreateMany).toHaveBeenCalledWith({
+        data: [
+          { ticketId: 'ticket-uuid-1', relatedTicketId: 'ticket-uuid-2' },
+          { ticketId: 'ticket-uuid-2', relatedTicketId: 'ticket-uuid-1' },
+        ],
+        skipDuplicates: true,
+      });
+    });
+
+    it('rejects relating a ticket to itself', async () => {
+      mockPrismaService.tickets.findFirst.mockResolvedValue(existingTicket);
+
+      await expect(
+        service.updateTicket('ticket-uuid-1', { relatedTicketIds: ['ticket-uuid-1'] }, 'org-uuid-1'),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
     });
   });
 });
