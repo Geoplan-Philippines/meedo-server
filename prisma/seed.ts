@@ -4,8 +4,39 @@ import { prisma } from '../src/core/database/prisma.client';
 const ORG_NAME = 'Geoplan Philippines Inc.';
 const ORG_SLUG = 'geoplan-philippines-inc';
 
+const ADMIN_NAME = 'Admin';
+const ADMIN_EMAIL = 'admin@geoplanph.com';
+const ADMIN_PASSWORD = 'admin123';
+
+const MEMBER_NAME = 'Timesheet Member';
+const MEMBER_EMAIL = 'member@geoplanph.com';
+const MEMBER_PASSWORD = 'member123';
+
 const CATEGORIES = ['Hardware', 'Support', 'Customer Service'];
 const TEAMS = ['IT / System Developer', 'Business Development Group'];
+const TIMESHEET_PROJECTS = [
+  {
+    apptivoId:       'local-timesheet-wo-001',
+    workOrderNumber: 'WO-001',
+    customerName:    'Geoplan Internal Operations',
+    status:          'Open',
+    total:           0,
+  },
+  {
+    apptivoId:       'local-timesheet-wo-002',
+    workOrderNumber: 'WO-002',
+    customerName:    'Field Survey Support',
+    status:          'Open',
+    total:           0,
+  },
+  {
+    apptivoId:       'local-timesheet-wo-003',
+    workOrderNumber: 'WO-003',
+    customerName:    'Client Documentation',
+    status:          'Open',
+    total:           0,
+  },
+];
 
 async function seedOrgUser(
   orgId: string,
@@ -49,6 +80,28 @@ async function main() {
     name: 'User',
     role: 'member',
   });
+  console.log('Admin member linked');
+
+  let memberUser = await prisma.user.findUnique({ where: { email: MEMBER_EMAIL } });
+  if (!memberUser) {
+    await auth.api.signUpEmail({
+      body: { email: MEMBER_EMAIL, password: MEMBER_PASSWORD, name: MEMBER_NAME },
+    });
+    memberUser = await prisma.user.findUniqueOrThrow({ where: { email: MEMBER_EMAIL } });
+  }
+
+  memberUser = await prisma.user.update({
+    where: { id: memberUser.id },
+    data: { emailVerified: true },
+  });
+  console.log('Timesheet member user:', memberUser.id);
+
+  await prisma.member.upsert({
+    where: { organizationId_userId: { organizationId: org.id, userId: memberUser.id } },
+    update: { role: 'member' },
+    create: { organizationId: org.id, userId: memberUser.id, role: 'member' },
+  });
+  console.log('Timesheet member linked');
   console.log('Normal user:', normalUser.id);
 
   for (const name of CATEGORIES) {
@@ -76,10 +129,37 @@ async function main() {
       update: {},
       create: { teamId: team.id, userId: user.id },
     });
+
+    await prisma.teamMember.upsert({
+      where: { teamId_userId: { teamId: team.id, userId: memberUser.id } },
+      update: {},
+      create: { teamId: team.id, userId: memberUser.id },
+    });
   }
   console.log('Teams seeded');
 
+  for (const project of TIMESHEET_PROJECTS) {
+    await prisma.project.upsert({
+      where: { apptivoId: project.apptivoId },
+      update: {
+        workOrderNumber: project.workOrderNumber,
+        customerName:    project.customerName,
+        status:          project.status,
+        total:           project.total,
+        organizationId:  org.id,
+      },
+      create: {
+        ...project,
+        reportedDate:   new Date(),
+        organizationId: org.id,
+      },
+    });
+  }
+  console.log('Timesheet demo projects seeded');
+
   console.log('Done.');
+  console.log(`Admin login -> ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
+  console.log(`Member login -> ${MEMBER_EMAIL} / ${MEMBER_PASSWORD}`);
   console.log(`Admin login -> admin@geoplanph.com / admin123`);
   console.log(`User login  -> user@geoplanph.com / user123456`);
 }

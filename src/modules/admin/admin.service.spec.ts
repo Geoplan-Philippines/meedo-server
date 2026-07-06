@@ -11,6 +11,14 @@ jest.mock('../../core/auth/auth', () => ({
   },
 }));
 
+jest.mock('../../core/database/prisma.client', () => ({
+  prisma: {
+    user: {
+      delete: jest.fn().mockResolvedValue(undefined),
+    },
+  },
+}));
+
 const mockUser = {
   id: '111222333',
   name: 'Clark Dalisay',
@@ -38,7 +46,7 @@ describe('AdminService', () => {
     }).compile();
 
     service = module.get<AdminService>(AdminService);
-    jest.resetAllMocks();
+    jest.clearAllMocks();
   });
 
   describe('onboardMember', () => {
@@ -60,7 +68,6 @@ describe('AdminService', () => {
           email: dto.email,
           password: dto.password,
         },
-        returnHeaders: false,
       });
       expect(auth.api.addMember).toHaveBeenCalledWith({
         body: {

@@ -22,6 +22,7 @@ async function bootstrap() {
     origin: env.CORS_ALLOWED_ORIGINS,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-org-id'],
+    exposedHeaders: ['Content-Disposition'],
     credentials: true,
   });
 

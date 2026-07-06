@@ -81,6 +81,9 @@ describe('TicketsService', () => {
 
     service = module.get<TicketsService>(TicketsService);
     jest.resetAllMocks();
+    mockPrismaService.$transaction.mockImplementation((fn: Function) => fn(mockPrismaService));
+    mockActivityService.resolveMemberId.mockResolvedValue(undefined);
+    mockActivityService.record.mockResolvedValue(undefined);
   });
 
   describe('createTicket', () => {
