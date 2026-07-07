@@ -47,9 +47,7 @@ export class TicketsService {
       ...this.buildViewWhere(view),
       ...(ticketStatusId?.length ? { ticketStatusId: { in: ticketStatusId } } : {}),
       ...(priority?.length ? { priority: { in: priority } } : {}),
-      ...(teamId?.length ? { teamId: { in: teamId } } : {}),
-      ...(categoryId ? { categoryId } : {}),
-      ...(assigneeId ? { assignees: { some: { memberId: assigneeId } } } : {}),
+      ...this.buildScopeWhere({ teamId, categoryId, assigneeId }),
       ...this.buildSearchWhere(search),
     };
 
@@ -94,12 +92,16 @@ export class TicketsService {
   }
 
   async getFacets(query: GetTicketFacetsQueryDTO, organizationId: string): Promise<TicketFacets> {
-    const { search, includeArchived, view } = query;
+    const { search, includeArchived, view, teamId, categoryId, assigneeId } = query;
 
-    // Context shared by every count: org + archived scope + the active search.
+    // Context shared by every count: org + archived scope + the active search and
+    // scope filters (team/category/assignee), so badge counts match the list. Only
+    // the status/priority selections are omitted, so each option's badge shows what
+    // picking it would yield.
     const contextWhere: Prisma.TicketsWhereInput = {
       organizationId,
       ...(includeArchived ? {} : { isArchived: false }),
+      ...this.buildScopeWhere({ teamId, categoryId, assigneeId }),
       ...this.buildSearchWhere(search),
     };
 
@@ -411,6 +413,20 @@ export class TicketsService {
       return {};
     }
     return { ticketStatus: { is: { category: { in: TICKET_VIEW_CATEGORIES[view] } } } };
+  }
+
+  /** Scope filters shared by the ticket list and its facet counts, so both agree
+   *  on which tickets are in view. Absent filters contribute nothing. */
+  private buildScopeWhere(scope: {
+    teamId?: string[];
+    categoryId?: string;
+    assigneeId?: string;
+  }): Prisma.TicketsWhereInput {
+    return {
+      ...(scope.teamId?.length ? { teamId: { in: scope.teamId } } : {}),
+      ...(scope.categoryId ? { categoryId: scope.categoryId } : {}),
+      ...(scope.assigneeId ? { assignees: { some: { memberId: scope.assigneeId } } } : {}),
+    };
   }
 
   private buildSearchWhere(search: string | undefined): Prisma.TicketsWhereInput {

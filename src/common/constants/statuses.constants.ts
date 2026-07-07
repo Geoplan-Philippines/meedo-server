@@ -15,6 +15,20 @@ export const SYSTEM_STATUSES = [
 ] as const;
 
 /**
+ * Legacy default statuses (seeded before SYSTEM_STATUSES existed) used different
+ * names than the canonical set. Map each legacy name to its canonical equivalent
+ * so self-healing can rename the existing row in place — promoting it to a system
+ * status while preserving its id (and therefore every ticket pointing at it)
+ * instead of leaving an orphaned duplicate. Categories already align via the
+ * add_ticket_status_category backfill ('open' -> UNSTARTED = Todo,
+ * 'cancelled' -> CANCELED = Canceled), so only the name needs normalizing.
+ */
+export const LEGACY_STATUS_NAME_MAP: Record<string, string> = {
+  Cancelled: 'Canceled',
+  Open: 'Todo',
+};
+
+/**
  * Curated palette for custom (editable) statuses. Mirrors the client's swatch
  * options and is intentionally distinct from the SYSTEM_STATUSES hues so custom
  * statuses read as their own family. Create/update requests are rejected if the

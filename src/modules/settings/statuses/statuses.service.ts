@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { TicketStatus } from '@prisma/client';
 
 import { PrismaService } from '../../../core/database/prisma.service';
-import { SYSTEM_STATUSES } from '../../../common/constants/statuses.constants';
+import { LEGACY_STATUS_NAME_MAP, SYSTEM_STATUSES } from '../../../common/constants/statuses.constants';
 import { CreateStatusDTO } from './dto/create-status.dto';
 import { UpdateStatusDTO } from './dto/update-status.dto';
 
@@ -15,9 +15,12 @@ export class StatusesService {
     // Self-heal: make sure the built-in system statuses exist for this org
     // (covers organizations created before the standard set was introduced).
     await this.ensureSystemStatuses(organizationId);
+    // Order custom statuses by createdAt here; sortByCanonicalOrder relies on a
+    // stable sort to preserve it (system/custom partitioning is handled there, so
+    // no isSystem hint is needed).
     const statuses = await this.prisma.ticketStatus.findMany({
       where: { organizationId },
-      orderBy: [{ isSystem: 'desc' }, { createdAt: 'asc' }],
+      orderBy: { createdAt: 'asc' },
     });
     return this.sortByCanonicalOrder(statuses);
   }
@@ -97,13 +100,35 @@ export class StatusesService {
     if (existing >= SYSTEM_STATUSES.length) {
       return;
     }
-    // Upsert by (organizationId, name): create missing ones and promote any
-    // same-named legacy status to the canonical system definition.
-    await this.prisma.$transaction(
-      SYSTEM_STATUSES.map((status) =>
-        this.prisma.ticketStatus.upsert({
+    await this.prisma.$transaction(async (tx) => {
+      // Rename legacy statuses to their canonical names first so the upsert below
+      // promotes the existing row in place — preserving its id and every ticket
+      // pointing at it — instead of creating a duplicate (e.g. the pre-existing
+      // 'Cancelled' alongside a new 'Canceled', or 'Open' alongside 'Todo'). Skip
+      // when the canonical name already exists to avoid violating the
+      // (organizationId, name) unique constraint.
+      for (const [legacyName, canonicalName] of Object.entries(LEGACY_STATUS_NAME_MAP)) {
+        const canonicalExists = await tx.ticketStatus.findUnique({
+          where: { organizationId_name: { organizationId, name: canonicalName } },
+          select: { id: true },
+        });
+        if (canonicalExists) {
+          continue;
+        }
+        await tx.ticketStatus.updateMany({
+          where: { organizationId, name: legacyName },
+          data: { name: canonicalName },
+        });
+      }
+
+      // Create any missing system statuses. For an already-existing row (e.g. a
+      // renamed legacy default), only flag it as a system status — never
+      // overwrite its color or category, which would silently change how existing
+      // boards look.
+      for (const status of SYSTEM_STATUSES) {
+        await tx.ticketStatus.upsert({
           where: { organizationId_name: { organizationId, name: status.name } },
-          update: { isSystem: true, color: status.color, category: status.category },
+          update: { isSystem: true },
           create: {
             organizationId,
             name: status.name,
@@ -111,8 +136,8 @@ export class StatusesService {
             category: status.category,
             isSystem: true,
           },
-        }),
-      ),
-    );
+        });
+      }
+    });
   }
 }

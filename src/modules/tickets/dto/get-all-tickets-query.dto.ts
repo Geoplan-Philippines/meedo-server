@@ -3,15 +3,8 @@ import { IsBoolean, IsEnum, IsIn, IsOptional, IsString, IsUUID } from 'class-val
 import { TicketPriority } from '@prisma/client';
 
 import { PaginationQueryDTO } from 'src/common/dto/pagination-query.dto';
+import { toStringArray } from 'src/common/transforms/to-string-array.transform';
 import { TICKET_SORTABLE_FIELDS, TICKET_VIEWS, type TicketSortField, type TicketView } from '../constants/ticket.constants';
-
-/** Coerce a repeated (`?k=a&k=b`) or comma-separated (`?k=a,b`) query param into a
- *  trimmed string array; leave undefined when the param is absent. */
-const toStringArray = ({ value }: { value: unknown }): string[] | undefined => {
-  if (value === undefined || value === null) return undefined;
-  const raw = Array.isArray(value) ? value : String(value).split(',');
-  return raw.map((entry) => String(entry).trim()).filter(Boolean);
-};
 
 export class GetAllTicketsQueryDTO extends PaginationQueryDTO {
   @IsOptional()

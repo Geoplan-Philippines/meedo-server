@@ -37,6 +37,7 @@ const mockPrismaService = {
     findMany: jest.fn(),
     findFirst: jest.fn(),
     count: jest.fn(),
+    groupBy: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
     findUniqueOrThrow: jest.fn(),
@@ -345,6 +346,62 @@ describe('TicketsService', () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getFacets', () => {
+    it('scopes every count by team/category/assignee so badges match the list', async () => {
+      mockPrismaService.tickets.count.mockResolvedValue(0);
+      mockPrismaService.tickets.groupBy.mockResolvedValue([]);
+
+      await service.getFacets(
+        { teamId: ['team-1'], categoryId: 'cat-1', assigneeId: 'mem-1' },
+        'org-uuid-1',
+      );
+
+      const expectedScope = {
+        organizationId: 'org-uuid-1',
+        isArchived: false,
+        teamId: { in: ['team-1'] },
+        categoryId: 'cat-1',
+        assignees: { some: { memberId: 'mem-1' } },
+      };
+      // The "all" view count uses the bare context (no view constraint).
+      expect(mockPrismaService.tickets.count).toHaveBeenCalledWith({ where: expectedScope });
+      // Status/priority groupings inherit the same scope (view undefined here).
+      expect(mockPrismaService.tickets.groupBy).toHaveBeenCalledWith({
+        by: ['ticketStatusId'],
+        where: expectedScope,
+        _count: { _all: true },
+      });
+      expect(mockPrismaService.tickets.groupBy).toHaveBeenCalledWith({
+        by: ['priority'],
+        where: expectedScope,
+        _count: { _all: true },
+      });
+    });
+
+    it('shapes view/status/priority counts and drops the null-status group', async () => {
+      // Promise.all order: backlog, active, closed, all.
+      mockPrismaService.tickets.count
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(2)
+        .mockResolvedValueOnce(3)
+        .mockResolvedValueOnce(10);
+      mockPrismaService.tickets.groupBy
+        .mockResolvedValueOnce([
+          { ticketStatusId: 'st-1', _count: { _all: 3 } },
+          { ticketStatusId: null, _count: { _all: 2 } },
+        ])
+        .mockResolvedValueOnce([{ priority: 'HIGH', _count: { _all: 4 } }]);
+
+      const result = await service.getFacets({}, 'org-uuid-1');
+
+      expect(result).toEqual({
+        views: { backlog: 1, active: 2, closed: 3, all: 10 },
+        statuses: [{ ticketStatusId: 'st-1', count: 3 }],
+        priorities: [{ priority: 'HIGH', count: 4 }],
+      });
     });
   });
 });
