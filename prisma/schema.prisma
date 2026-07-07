@@ -328,11 +328,21 @@ model Lead {
   @@map("leads")
 }
 
+enum TicketStatusCategory {
+  BACKLOG
+  UNSTARTED
+  STARTED
+  COMPLETED
+  CANCELED
+}
+
 model TicketStatus {
   id                            String                    @id @default(uuid())
   name                          String
   color                         String?                   @default("#6B7280")
+  category                      TicketStatusCategory      @default(BACKLOG)
   isArchived                    Boolean                   @default(false) @map("is_archived")
+  isSystem                      Boolean                   @default(false) @map("is_system")
 
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -344,6 +354,7 @@ model TicketStatus {
 
   @@unique([organizationId, name])
   @@index([organizationId])
+  @@index([category])
   @@map("ticket_status")
 }
 
@@ -367,6 +378,8 @@ model Tickets {
   assignees                     TicketAssignee[]
   comments                      TicketComment[]
   activities                    TicketActivity[]
+  relatedTickets                TicketRelation[]          @relation("TicketRelationSource")
+  relatedFrom                   TicketRelation[]          @relation("TicketRelationTarget")
 
   ticketStatus                  TicketStatus?             @relation(fields: [ticketStatusId], references: [id], onDelete: SetNull)
   category                      TicketCategory?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -404,6 +417,25 @@ model TicketAssignee {
   @@index([ticketId])
   @@index([memberId])
   @@map("ticket_assignees")
+}
+
+// A directed link between two tickets. Relations are symmetric: linking A→B always
+// mirrors a B→A row, so either ticket surfaces the other and unlinking clears both.
+model TicketRelation {
+  id                            String                    @id @default(uuid())
+
+  ticketId                      String                    @map("ticket_id")
+  ticket                        Tickets                   @relation("TicketRelationSource", fields: [ticketId], references: [id], onDelete: Cascade)
+
+  relatedTicketId               String                    @map("related_ticket_id")
+  relatedTicket                 Tickets                   @relation("TicketRelationTarget", fields: [relatedTicketId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+
+  @@unique([ticketId, relatedTicketId])
+  @@index([ticketId])
+  @@index([relatedTicketId])
+  @@map("ticket_relations")
 }
 
 model SlaPolicy {

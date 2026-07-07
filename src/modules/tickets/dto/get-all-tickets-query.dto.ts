@@ -3,16 +3,28 @@ import { IsBoolean, IsEnum, IsIn, IsOptional, IsString, IsUUID } from 'class-val
 import { TicketPriority } from '@prisma/client';
 
 import { PaginationQueryDTO } from 'src/common/dto/pagination-query.dto';
-import { TICKET_SORTABLE_FIELDS, type TicketSortField } from '../constants/ticket.constants';
+import { toStringArray } from 'src/common/transforms/to-string-array.transform';
+import { TICKET_SORTABLE_FIELDS, TICKET_VIEWS, type TicketSortField, type TicketView } from '../constants/ticket.constants';
 
 export class GetAllTicketsQueryDTO extends PaginationQueryDTO {
   @IsOptional()
-  @IsUUID()
-  ticketStatusId?: string;
+  @IsIn(TICKET_VIEWS)
+  view?: TicketView;
 
   @IsOptional()
-  @IsEnum(TicketPriority)
-  priority?: TicketPriority;
+  @Transform(toStringArray)
+  @IsUUID('4', { each: true })
+  ticketStatusId?: string[];
+
+  @IsOptional()
+  @Transform(toStringArray)
+  @IsEnum(TicketPriority, { each: true })
+  priority?: TicketPriority[];
+
+  @IsOptional()
+  @Transform(toStringArray)
+  @IsUUID('4', { each: true })
+  teamId?: string[];
 
   @IsOptional()
   @IsUUID()
