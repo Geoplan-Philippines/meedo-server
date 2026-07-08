@@ -376,17 +376,19 @@ export class TimesheetService {
     this.ensureNoSelfApproval(entries, userId!);
     await this.ensureEntriesNotLocked(organizationId, entries);
 
-    const submittedEntries = entries.filter((entry) => entry.status === TimesheetEntryStatus.SUBMITTED);
-    if (submittedEntries.length === 0) {
-      throw new BadRequestException('No submitted timesheet entries found to approve.');
+    const approvableEntries = entries.filter(
+      (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
+    );
+    if (approvableEntries.length === 0) {
+      throw new BadRequestException('No timesheet entries available to approve.');
     }
 
     const approvedAt = new Date();
-    const ids = submittedEntries.map((entry) => entry.id);
+    const ids = approvableEntries.map((entry) => entry.id);
 
     return this.prisma.$transaction(async (tx) => {
       await tx.timesheetEntry.updateMany({
-        where: { id: { in: ids }, organizationId, status: TimesheetEntryStatus.SUBMITTED },
+        where: { id: { in: ids }, organizationId, status: { in: [TimesheetEntryStatus.SUBMITTED, TimesheetEntryStatus.DRAFT] } },
         data: {
           status: TimesheetEntryStatus.APPROVED,
           approvedAt,
@@ -398,7 +400,7 @@ export class TimesheetService {
       });
 
       await tx.timesheetAuditLog.createMany({
-        data: submittedEntries.map((entry) => ({
+        data: approvableEntries.map((entry) => ({
           organizationId,
           actorMemberId: member.id,
           targetUserId: entry.userId,
@@ -444,17 +446,19 @@ export class TimesheetService {
     this.ensureNoSelfApproval(entries, userId!);
     await this.ensureEntriesNotLocked(organizationId, entries);
 
-    const submittedEntries = entries.filter((entry) => entry.status === TimesheetEntryStatus.SUBMITTED);
-    if (submittedEntries.length === 0) {
-      throw new BadRequestException('No submitted timesheet entries found to reject.');
+    const rejectableEntries = entries.filter(
+      (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
+    );
+    if (rejectableEntries.length === 0) {
+      throw new BadRequestException('No timesheet entries available to reject.');
     }
 
     const rejectedAt = new Date();
-    const ids = submittedEntries.map((entry) => entry.id);
+    const ids = rejectableEntries.map((entry) => entry.id);
 
     return this.prisma.$transaction(async (tx) => {
       await tx.timesheetEntry.updateMany({
-        where: { id: { in: ids }, organizationId, status: TimesheetEntryStatus.SUBMITTED },
+        where: { id: { in: ids }, organizationId, status: { in: [TimesheetEntryStatus.SUBMITTED, TimesheetEntryStatus.DRAFT] } },
         data: {
           status: TimesheetEntryStatus.REJECTED,
           rejectedAt,
@@ -466,7 +470,7 @@ export class TimesheetService {
       });
 
       await tx.timesheetAuditLog.createMany({
-        data: submittedEntries.map((entry) => ({
+        data: rejectableEntries.map((entry) => ({
           organizationId,
           actorMemberId: member.id,
           targetUserId: entry.userId,
