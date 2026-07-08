@@ -528,7 +528,7 @@ model TimesheetEntry {
   workDate                      DateTime                  @map("work_date")
   hours                         Float
   location                      String                    @default("OFC - DW")
-  workType                      TimesheetWorkType         @default(OFFICE_DIRECT_WORK) @map("work_type")
+  workType                      TimesheetWorkType         @default(REGULAR) @map("work_type")
   task                          String
   projectDescription            String?                   @map("project_description")
   isOvertime                    Boolean                   @default(false) @map("is_overtime")
@@ -703,13 +703,10 @@ enum TimesheetEntryStatus {
 }
 
 enum TimesheetWorkType {
-  OFFICE
-  OFFICE_DIRECT_WORK
-  FIELD
-  WFH
+  REGULAR
+  REST_DAY
   LEAVE
   OFFSET
-  HOLIDAY
 }
 
 enum TimesheetAuditAction {

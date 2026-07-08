@@ -52,9 +52,10 @@ const TIMESHEET_SUMMARY_ENTRY_INCLUDE = {
   },
   user: {
     select: {
-      id:    true,
-      name:  true,
-      email: true,
+      id:           true,
+      name:         true,
+      email:        true,
+      employeeCode: true,
       teamMembers: {
         select: { team: { select: { id: true, name: true, organizationId: true } } },
       },
@@ -510,7 +511,7 @@ export class TimesheetService {
     const { start, end } = parsePeriodRange(query.periodStart, query.periodEnd);
     const where = this.buildSummaryWhere(organizationId, start, end, query);
 
-    const [entries, organization, lock] = await Promise.all([
+    const [entries, organization, lock, exporter] = await Promise.all([
       this.prisma.timesheetEntry.findMany({
         where,
         include: TIMESHEET_SUMMARY_ENTRY_INCLUDE,
@@ -529,6 +530,10 @@ export class TimesheetService {
           },
         },
       }),
+      this.prisma.user.findUnique({
+        where: { id: userId! },
+        select: { name: true, email: true },
+      }),
     ]);
 
     const workbook = await buildTimesheetWorkbook({
@@ -538,7 +543,7 @@ export class TimesheetService {
       organizationId,
       organizationName: organization?.name ?? 'Organization',
       organizationSlug: organization?.slug ?? organizationId,
-      exportedBy: member.id,
+      exportedBy: exporter?.name || exporter?.email || member.id,
       exportedAt: new Date(),
       isLocked: lock?.isLocked ?? false,
     });
@@ -1093,6 +1098,7 @@ function buildTimesheetSummary(
     userId: string;
     employeeName: string;
     employeeEmail: string;
+    employeeCode: string | null;
     department: string;
     totalHours: number;
     regularHours: number;
@@ -1113,6 +1119,7 @@ function buildTimesheetSummary(
       userId: entry.userId,
       employeeName: entry.user.name || entry.user.email,
       employeeEmail: entry.user.email,
+      employeeCode: entry.user.employeeCode ?? null,
       department: employeeTeamNames(entry, organizationId),
       totalHours: 0,
       regularHours: 0,
@@ -1200,6 +1207,12 @@ async function buildTimesheetWorkbook(options: {
   return workbook;
 }
 
+const PAYROLL_HEADERS = ['Team', 'Employee', 'Code', 'RG', 'OT', 'RD', 'RH', 'SH', 'RHRD', 'SHRD', 'LVE', 'ND', 'Hours', 'Status'];
+const PAYROLL_STATUS_COLUMN = 14;
+const PAYROLL_NUMERIC_COLUMNS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+const PAYROLL_HEADER_ROW = 6;
+const COMPANY_TIMEZONE = 'Asia/Manila';
+
 function addSummarySheet(
   workbook: ExcelJS.Workbook,
   options: {
@@ -1212,68 +1225,89 @@ function addSummarySheet(
   },
   summary: ReturnType<typeof buildTimesheetSummary>,
 ): void {
-  const sheet = workbook.addWorksheet('Summary', { views: [{ state: 'frozen', ySplit: 4 }] });
-  sheet.mergeCells('A1:F1');
-  sheet.getCell('A1').value = 'Timesheet Summary';
-  sheet.getCell('A1').font = { bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+  const sheet = workbook.addWorksheet('Timesheet', { views: [{ state: 'frozen', ySplit: PAYROLL_HEADER_ROW }] });
+
+  sheet.mergeCells('A1:N1');
+  sheet.getCell('A1').value = `Timesheet — ${formatLongDate(options.periodStart)} to ${formatLongDate(options.periodEnd)}`;
+  sheet.getCell('A1').font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
   sheet.getCell('A1').fill = solidFill('1F4E78');
   sheet.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center' };
-  sheet.getRow(1).height = 28;
+  sheet.getRow(1).height = 24;
 
-  const metadata = [
+  const metadata: [string, string][] = [
     ['Organization', options.organizationName],
-    ['Date range', `${toDateInputValue(options.periodStart)} to ${toDateInputValue(options.periodEnd)}`],
     ['Exported by', options.exportedBy],
-    ['Exported at', options.exportedAt.toISOString()],
-    ['Lock status', options.isLocked ? 'Locked' : 'Unlocked'],
-    ['Total employees', summary.totalEmployees],
-    ['Total entries', summary.totalEntries],
-    ['Total hours', summary.totalHours],
+    ['Export date', formatLongDate(options.exportedAt, COMPANY_TIMEZONE)],
   ];
-
   metadata.forEach(([label, value], index) => {
-    const row = sheet.getRow(index + 3);
+    const row = sheet.getRow(index + 2);
     row.getCell(1).value = label;
-    row.getCell(2).value = value;
     row.getCell(1).font = { bold: true };
+    row.getCell(2).value = value;
   });
 
-  const statusStart = metadata.length + 5;
-  sheet.getRow(statusStart).values = ['Status', 'Rows'];
-  styleHeaderRow(sheet.getRow(statusStart));
-  Object.entries(summary.totalsByStatus).forEach(([status, count], index) => {
-    sheet.getRow(statusStart + index + 1).values = [status, count];
-  });
+  sheet.getRow(PAYROLL_HEADER_ROW).values = PAYROLL_HEADERS;
+  styleHeaderRow(sheet.getRow(PAYROLL_HEADER_ROW));
 
-  const employeeStart = statusStart + Math.max(Object.keys(summary.totalsByStatus).length, 1) + 3;
-  sheet.getRow(employeeStart).values = ['Employee', 'Email', 'Status', 'Total hours', 'Regular', 'Overtime', 'Leave', 'Offset'];
-  styleHeaderRow(sheet.getRow(employeeStart));
   summary.employees.forEach((employee, index) => {
-    const row = sheet.getRow(employeeStart + index + 1);
+    const buckets = payrollBuckets(employee.entries);
+
+    const status = options.isLocked ? 'LOCKED' : employee.status;
+    const row = sheet.getRow(PAYROLL_HEADER_ROW + 1 + index);
     row.values = [
+      employee.department || '—',
       employee.employeeName,
-      employee.employeeEmail,
-      employee.status,
-      employee.totalHours,
-      employee.regularHours,
-      employee.overtimeHours,
-      employee.leaveHours,
-      employee.offsetHours,
+      employee.employeeCode ?? '',
+      buckets.rg, buckets.ot, buckets.rd, buckets.rh, buckets.sh,
+      buckets.rhrd, buckets.shrd, buckets.lve, buckets.nd, buckets.hours,
+      status,
     ];
-    applyStatusFill(row.getCell(3), employee.status);
-    [4, 5, 6, 7, 8].forEach((cell) => { row.getCell(cell).numFmt = '0.00'; });
+    applyStatusFill(row.getCell(PAYROLL_STATUS_COLUMN), status);
+    PAYROLL_NUMERIC_COLUMNS.forEach((cell) => { row.getCell(cell).numFmt = 'General'; });
   });
 
   sheet.columns = [
-    { width: 24 },
-    { width: 34 },
-    { width: 16 },
-    { width: 14 },
-    { width: 14 },
-    { width: 14 },
-    { width: 14 },
-    { width: 14 },
+    { width: 12 },
+    { width: 28 },
+    { width: 22 },
+    { width: 8 }, { width: 8 }, { width: 8 }, { width: 8 }, { width: 8 },
+    { width: 9 }, { width: 9 }, { width: 8 }, { width: 8 }, { width: 10 },
+    { width: 12 },
   ];
+}
+
+/** "July 6, 2026". Period dates are UTC date-only values, so format them in UTC;
+ *  pass the company timezone for real timestamps like the export date. */
+function formatLongDate(date: Date, timeZone = 'UTC'): string {
+  return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone }).format(date);
+}
+
+interface PayrollBuckets {
+  rg: number; ot: number; rd: number; rh: number; sh: number;
+  rhrd: number; shrd: number; lve: number; nd: number; hours: number;
+}
+
+function emptyPayrollBuckets(): PayrollBuckets {
+  return { rg: 0, ot: 0, rd: 0, rh: 0, sh: 0, rhrd: 0, shrd: 0, lve: 0, nd: 0, hours: 0 };
+}
+
+/** Assigns each entry's hours to exactly one payroll bucket. RH/SH/RHRD/SHRD are not
+ *  yet distinguishable in the data model, so they stay 0. */
+function payrollBuckets(entries: TimesheetSummaryEntry[]): PayrollBuckets {
+  const buckets = emptyPayrollBuckets();
+  for (const entry of entries) {
+    buckets.hours += entry.hours;
+    if (entry.isOvertime) buckets.ot += entry.hours;
+    else if (entry.isNightDifferential) buckets.nd += entry.hours;
+    else if (entry.workType === 'LEAVE') buckets.lve += entry.hours;
+    else if (entry.workType === 'REST_DAY') buckets.rd += entry.hours;
+    else buckets.rg += entry.hours;
+  }
+  return {
+    rg: roundHours(buckets.rg), ot: roundHours(buckets.ot), rd: roundHours(buckets.rd),
+    rh: buckets.rh, sh: buckets.sh, rhrd: buckets.rhrd, shrd: buckets.shrd,
+    lve: roundHours(buckets.lve), nd: roundHours(buckets.nd), hours: roundHours(buckets.hours),
+  };
 }
 
 function addDetailsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSummaryEntry[], organizationId: string): void {
@@ -1392,9 +1426,12 @@ function addProjectTotalsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSum
 }
 
 function styleHeaderRow(row: ExcelJS.Row): void {
-  row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  row.fill = solidFill('4472C4');
-  row.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  // Style only the populated header cells; a row-level fill would bleed to the sheet edge.
+  row.eachCell({ includeEmpty: false }, (cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = solidFill('4472C4');
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  });
 }
 
 function solidFill(argb: string): ExcelJS.Fill {

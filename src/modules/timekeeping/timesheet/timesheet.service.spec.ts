@@ -13,7 +13,7 @@ const mockEntry = {
   workDate:              new Date('2026-06-22T00:00:00.000Z'),
   hours:                 8,
   location:              'OFC - DW',
-  workType:              TimesheetWorkType.OFFICE_DIRECT_WORK,
+  workType:              TimesheetWorkType.REGULAR,
   task:                  'Inspection work',
   projectDescription:    null,
   isOvertime:            false,

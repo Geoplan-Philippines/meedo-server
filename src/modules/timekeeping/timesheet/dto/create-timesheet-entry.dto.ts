@@ -37,7 +37,7 @@ export class CreateTimesheetEntryDTO {
   @MaxLength(100)
   location?: string;
 
-  @ApiPropertyOptional({ enum: TimesheetWorkType, example: TimesheetWorkType.OFFICE_DIRECT_WORK })
+  @ApiPropertyOptional({ enum: TimesheetWorkType, example: TimesheetWorkType.REGULAR })
   @IsOptional()
   @IsEnum(TimesheetWorkType)
   workType?: TimesheetWorkType;
