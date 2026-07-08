@@ -258,9 +258,7 @@ export class TimesheetService {
     const member = await this.resolveMember(organizationId, userId);
     const existing = await this.findOwnEntryOrThrow(entryId, organizationId, userId!);
 
-    if (existing.status !== TimesheetEntryStatus.DRAFT) {
-      throw new BadRequestException('Only draft timesheet entries can be deleted.');
-    }
+    this.assertCanEdit(existing.status);
 
     await this.ensureDateNotLocked(organizationId, existing.workDate);
 
@@ -932,7 +930,7 @@ export class TimesheetService {
 
   private assertCanEdit(status: TimesheetEntryStatus): void {
     if (status !== TimesheetEntryStatus.DRAFT && status !== TimesheetEntryStatus.REJECTED) {
-      throw new BadRequestException('Only draft or rejected timesheet entries can be updated.');
+      throw new BadRequestException('Only draft or rejected timesheet entries can be modified.');
     }
   }
 
