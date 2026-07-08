@@ -193,9 +193,7 @@ export class TimesheetService {
     const member = await this.resolveMember(organizationId, userId);
     const existing = await this.findOwnEntryOrThrow(entryId, organizationId, userId!);
 
-    if (existing.status !== TimesheetEntryStatus.DRAFT) {
-      throw new BadRequestException('Only draft timesheet entries can be updated.');
-    }
+    this.assertCanEdit(existing.status);
 
     if (dto.projectId) {
       await this.ensureProjectInOrganization(dto.projectId, organizationId);
@@ -219,6 +217,14 @@ export class TimesheetService {
         : {}),
       ...(dto.isOvertime !== undefined ? { isOvertime: dto.isOvertime } : {}),
       ...(dto.isNightDifferential !== undefined ? { isNightDifferential: dto.isNightDifferential } : {}),
+      ...(existing.status === TimesheetEntryStatus.REJECTED
+        ? {
+            status: TimesheetEntryStatus.DRAFT,
+            rejectedAt: null,
+            rejectedByMemberId: null,
+            rejectionReason: null,
+          }
+        : {}),
     };
 
     return this.prisma.$transaction(async (tx) => {
@@ -922,6 +928,12 @@ export class TimesheetService {
     }
 
     return entry;
+  }
+
+  private assertCanEdit(status: TimesheetEntryStatus): void {
+    if (status !== TimesheetEntryStatus.DRAFT && status !== TimesheetEntryStatus.REJECTED) {
+      throw new BadRequestException('Only draft or rejected timesheet entries can be updated.');
+    }
   }
 
   private ensureAdminMember(role: string): void {
