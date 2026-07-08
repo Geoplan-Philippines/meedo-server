@@ -24,11 +24,11 @@ export class CreateTimesheetEntryDTO {
   @IsDateString()
   workDate!: string;
 
-  @ApiProperty({ example: 8, minimum: 0, maximum: 24 })
+  @ApiProperty({ example: 8, minimum: 1, maximum: 9 })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @Max(24)
+  @Min(1)
+  @Max(9)
   hours!: number;
 
   @ApiPropertyOptional({ example: 'OFC - DW', maxLength: 100 })

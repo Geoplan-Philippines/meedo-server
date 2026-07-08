@@ -217,6 +217,7 @@ export class TimesheetService {
         : {}),
       ...(dto.isOvertime !== undefined ? { isOvertime: dto.isOvertime } : {}),
       ...(dto.isNightDifferential !== undefined ? { isNightDifferential: dto.isNightDifferential } : {}),
+      // Editing a rejected entry returns it to draft; a submitted entry stays pending after edits.
       ...(existing.status === TimesheetEntryStatus.REJECTED
         ? {
             status: TimesheetEntryStatus.DRAFT,
@@ -258,7 +259,7 @@ export class TimesheetService {
     const member = await this.resolveMember(organizationId, userId);
     const existing = await this.findOwnEntryOrThrow(entryId, organizationId, userId!);
 
-    this.assertCanEdit(existing.status);
+    this.assertCanDelete(existing.status);
 
     await this.ensureDateNotLocked(organizationId, existing.workDate);
 
@@ -929,8 +930,15 @@ export class TimesheetService {
   }
 
   private assertCanEdit(status: TimesheetEntryStatus): void {
+    // Draft, rejected, and submitted (pending) entries can be edited; approved entries are locked.
+    if (status === TimesheetEntryStatus.APPROVED) {
+      throw new BadRequestException('Approved timesheet entries can no longer be modified.');
+    }
+  }
+
+  private assertCanDelete(status: TimesheetEntryStatus): void {
     if (status !== TimesheetEntryStatus.DRAFT && status !== TimesheetEntryStatus.REJECTED) {
-      throw new BadRequestException('Only draft or rejected timesheet entries can be modified.');
+      throw new BadRequestException('Only draft or rejected timesheet entries can be deleted.');
     }
   }
 
