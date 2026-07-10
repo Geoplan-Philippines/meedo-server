@@ -758,6 +758,9 @@ model WeeklyScheduleDay {
   isWorkingDay                  Boolean                   @default(true) @map("is_working_day")
   expectedSource                AttendanceSource?         @map("expected_source")
 
+  // When false, lateness is not recorded for this day (e.g. a flexible WFH day).
+  trackLateness                 Boolean                   @default(true) @map("track_lateness")
+
   shiftId                       String?                   @map("shift_id")
   shift                         Shift?                    @relation(fields: [shiftId], references: [id], onDelete: SetNull)
 

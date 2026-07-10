@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { AttendancePolicy, AttendanceSource, DayOfWeek, Prisma, Shift } from '@prisma/client';
 
 import { PrismaService } from '../../../../../core/database/prisma.service';
 import { AttendancePolicyService } from '../../policy/attendance-policy.service';
@@ -17,14 +17,41 @@ const SCHEDULE_WITH_DAYS = {
 type ScheduleWithDays = Prisma.WeeklyScheduleGetPayload<{ include: typeof SCHEDULE_WITH_DAYS }>;
 
 /** Which layer of the org-default -> team -> employee hierarchy applied. */
-type AssignmentSource = 'employee' | 'team' | 'organization-default' | 'none';
+export type AssignmentSource = 'employee' | 'team' | 'organization-default' | 'none';
+
+/** Trimmed holiday shape used for month/day matching without loading every column. */
+type HolidayMatch = { date: Date; isRecurring: boolean };
+
+/**
+ * The effective schedule for one employee on one date: which weekly schedule
+ * applied (and how it was resolved), plus the derived shift, work mode, expected
+ * hours, rest-day/holiday flags, and the org policy. This is the read-only
+ * contract the attendance engine consumes to grade a day.
+ */
+export interface EffectiveSchedule {
+  userId: string;
+  date: string;
+  dayOfWeek: DayOfWeek;
+  source: AssignmentSource;
+  schedule: { id: string; name: string; isDefault: boolean } | null;
+  isWorkingDay: boolean | null;
+  isRestDay: boolean | null;
+  expectedSource: AttendanceSource | null;
+  expectedHours: number;
+  isFlexible: boolean;
+  /** When false, lateness is not recorded for this day (per the weekly schedule). */
+  trackLateness: boolean;
+  shift: Shift | null;
+  isHoliday: boolean;
+  policy: AttendancePolicy;
+}
 
 /**
  * Read-only resolver: works out which weekly schedule (and therefore shift, work
  * mode, and hours) applies to an employee on a given date, following the
- * employee -> team -> org-default precedence. It never writes and is not yet
- * consumed by the attendance/timesheet engine — it powers the "effective"
- * preview endpoint and is the seam a later phase will read from.
+ * employee -> team -> org-default precedence. It never writes. It powers the
+ * "effective" preview endpoint and is the seam the attendance engine reads from
+ * to grade each day (present/late/absent/rest/holiday, expected vs actual hours).
  */
 @Injectable()
 export class ScheduleResolverService {
@@ -33,20 +60,95 @@ export class ScheduleResolverService {
     private policyService: AttendancePolicyService,
   ) {}
 
-  async resolveEffective(organizationId: string, userId: string, dateInput?: string) {
+  /** Effective schedule for a single employee on a single date. */
+  async resolveEffective(
+    organizationId: string,
+    userId: string,
+    dateInput?: string,
+  ): Promise<EffectiveSchedule> {
     await this.assertMember(organizationId, userId);
 
     const date = parseDateOnly(dateInput ?? new Date().toISOString());
-    const dayOfWeek = DAY_OF_WEEK_BY_INDEX[date.getUTCDay()];
+    const [{ schedule, source }, policy, holidays] = await Promise.all([
+      this.resolveSchedule(organizationId, userId),
+      this.policyService.getPolicy(organizationId),
+      this.loadHolidays(organizationId),
+    ]);
 
-    const { schedule, source } = await this.resolveSchedule(organizationId, userId);
+    return this.buildEffective(userId, date, schedule, source, policy, holidays);
+  }
+
+  /**
+   * Effective schedule for many employees on one date. Policy and holidays are
+   * fetched once and shared, so grading a roster page costs one policy read and
+   * one holiday read plus a schedule lookup per employee.
+   */
+  async resolveEffectiveForUsers(
+    organizationId: string,
+    userIds: string[],
+    dateInput?: string,
+  ): Promise<Map<string, EffectiveSchedule>> {
+    const result = new Map<string, EffectiveSchedule>();
+    if (userIds.length === 0) return result;
+
+    const date = parseDateOnly(dateInput ?? new Date().toISOString());
+    const [policy, holidays] = await Promise.all([
+      this.policyService.getPolicy(organizationId),
+      this.loadHolidays(organizationId),
+    ]);
+
+    await Promise.all(
+      [...new Set(userIds)].map(async (userId) => {
+        const { schedule, source } = await this.resolveSchedule(organizationId, userId);
+        result.set(userId, this.buildEffective(userId, date, schedule, source, policy, holidays));
+      }),
+    );
+
+    return result;
+  }
+
+  /**
+   * Effective schedule for one employee across many dates. The employee's
+   * schedule and the org policy are constant across the range, so they are
+   * resolved once; only the weekday entry and holiday match vary per date.
+   */
+  async resolveEffectiveForDates(
+    organizationId: string,
+    userId: string,
+    dateInputs: string[],
+  ): Promise<Map<string, EffectiveSchedule>> {
+    const result = new Map<string, EffectiveSchedule>();
+    if (dateInputs.length === 0) return result;
+
+    const [{ schedule, source }, policy, holidays] = await Promise.all([
+      this.resolveSchedule(organizationId, userId),
+      this.policyService.getPolicy(organizationId),
+      this.loadHolidays(organizationId),
+    ]);
+
+    for (const input of dateInputs) {
+      const date = parseDateOnly(input);
+      result.set(
+        toDateString(date),
+        this.buildEffective(userId, date, schedule, source, policy, holidays),
+      );
+    }
+
+    return result;
+  }
+
+  /** Assemble the effective view from an already-resolved schedule, policy, and holiday set. */
+  private buildEffective(
+    userId: string,
+    date: Date,
+    schedule: ScheduleWithDays | null,
+    source: AssignmentSource,
+    policy: AttendancePolicy,
+    holidays: HolidayMatch[],
+  ): EffectiveSchedule {
+    const dayOfWeek = DAY_OF_WEEK_BY_INDEX[date.getUTCDay()];
     const day = schedule?.days.find((entry) => entry.dayOfWeek === dayOfWeek) ?? null;
     const shift = day?.shift ?? null;
-
-    const [policy, isHoliday] = await Promise.all([
-      this.policyService.getPolicy(organizationId),
-      this.isHoliday(organizationId, date),
-    ]);
 
     return {
       userId,
@@ -63,8 +165,9 @@ export class ScheduleResolverService {
         ? shiftWorkedHours(shift.startTime, shift.endTime, shift.breakMinutes, shift.crossesMidnight)
         : 0,
       isFlexible: shift?.isFlexible ?? false,
+      trackLateness: day?.trackLateness ?? true,
       shift,
-      isHoliday,
+      isHoliday: this.matchesHoliday(holidays, date),
       policy,
     };
   }
@@ -108,13 +211,16 @@ export class ScheduleResolverService {
     return { schedule: null, source: 'none' };
   }
 
-  /** A date is a holiday if a one-off matches the full date or a recurring one matches the month/day. */
-  private async isHoliday(organizationId: string, date: Date): Promise<boolean> {
-    const holidays = await this.prisma.holiday.findMany({
+  /** All holidays for the org, trimmed to what month/day matching needs. */
+  private loadHolidays(organizationId: string): Promise<HolidayMatch[]> {
+    return this.prisma.holiday.findMany({
       where: { organizationId },
       select: { date: true, isRecurring: true },
     });
+  }
 
+  /** A date is a holiday if a one-off matches the full date or a recurring one matches the month/day. */
+  private matchesHoliday(holidays: HolidayMatch[], date: Date): boolean {
     const year = date.getUTCFullYear();
     const month = date.getUTCMonth();
     const day = date.getUTCDate();

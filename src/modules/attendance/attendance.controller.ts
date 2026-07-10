@@ -17,8 +17,8 @@ import {
 import { AttendanceUpdatesService } from './attendance-updates.service';
 import {
   AttendanceEventRecord,
-  AttendanceRecord,
   DailyAttendanceSummary,
+  EnrichedAttendanceRecord,
   RosterResult,
 } from './constants/attendance.constants';
 import { BiometricIngestResult } from './biometrics/biometrics.constants';
@@ -117,10 +117,11 @@ export class AttendanceController {
 
   @Get('summary')
   async getMyDailyAttendance(
+    @CurrentOrganizationId() organizationId: string,
     @CurrentUser('id') employeeId: string,
     @Query('date') date?: string,
   ): Promise<DailyAttendanceSummary> {
-    return this.attendanceService.getDailyAttendance(employeeId, date);
+    return this.attendanceService.getDailyAttendance(organizationId, employeeId, date);
   }
 
   @Get('roster')
@@ -148,15 +149,16 @@ export class AttendanceController {
     @Query() query: GetAttendanceHistoryQueryDTO,
     @CurrentOrganizationId() organizationId: string,
     @CurrentUser('id') callerId: string,
-  ): Promise<PaginatedResponse<AttendanceRecord>> {
+  ): Promise<PaginatedResponse<EnrichedAttendanceRecord>> {
     return this.attendanceService.getEmployeeHistory(organizationId, callerId, employeeId, query);
   }
 
   @Get()
   async getMyAttendanceHistory(
     @Query() query: GetAttendanceHistoryQueryDTO,
+    @CurrentOrganizationId() organizationId: string,
     @CurrentUser('id') employeeId: string,
-  ): Promise<PaginatedResponse<AttendanceRecord>> {
-    return this.attendanceService.getMyAttendanceHistory(employeeId, query);
+  ): Promise<PaginatedResponse<EnrichedAttendanceRecord>> {
+    return this.attendanceService.getMyAttendanceHistory(organizationId, employeeId, query);
   }
 }

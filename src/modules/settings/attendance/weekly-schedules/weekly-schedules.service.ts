@@ -221,5 +221,6 @@ function toDayCreate(day: WeeklyScheduleDayDTO) {
     isWorkingDay: day.isWorkingDay,
     expectedSource: day.expectedSource ?? null,
     shiftId: day.shiftId ?? null,
+    trackLateness: day.trackLateness ?? true,
   };
 }

@@ -30,4 +30,12 @@ export class WeeklyScheduleDayDTO {
   @IsOptional()
   @IsUUID()
   shiftId?: string;
+
+  @ApiPropertyOptional({
+    default: true,
+    description: 'When false, lateness is not recorded for this day (e.g. a flexible WFH day)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  trackLateness?: boolean;
 }
