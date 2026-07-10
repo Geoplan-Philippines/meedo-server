@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { HttpException } from '@nestjs/common';
 import { PrismaService } from '../../../core/database/prisma.service';
 import { ProjectsService } from './projects.service';
+import { ClientsService } from '../clients/clients.service';
 
 const mockProject = {
   id: '111222333',
@@ -9,9 +10,11 @@ const mockProject = {
   customerName: 'Clark PH',
   status: 'active',
   total: 1000,
-  reportData: null,
+  reportedDate: null,
   apptivoId: 'apptivo-123',
   organizationId: 'org-geo',
+  clientId: null,
+  client: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -26,6 +29,10 @@ const mockPrismaService = {
   $transaction: jest.fn(),
 };
 
+const mockClientsService = {
+  getClientMap: jest.fn(),
+};
+
 global.fetch = jest.fn();
 
 describe('ProjectsService', () => {
@@ -36,6 +43,7 @@ describe('ProjectsService', () => {
       providers: [
         ProjectsService,
         { provide: PrismaService, useValue: mockPrismaService },
+        { provide: ClientsService, useValue: mockClientsService },
       ],
     }).compile();
 
@@ -82,11 +90,16 @@ describe('ProjectsService', () => {
         id: 'apptivo-1',
         workOrderNumber: 'SO-2026-1111',
         customerName: 'Clark PH',
+        customerId: 'client-apptivo-1',
         statusName: 'active',
         total: '1000',
         reportedDate: '2026-01-01',
       },
     ];
+
+    beforeEach(() => {
+      mockClientsService.getClientMap.mockResolvedValue(new Map());
+    });
 
     it('normalizes work order data correctly', async () => {
       const rawWorkOrders = [
@@ -94,6 +107,7 @@ describe('ProjectsService', () => {
           id: 'app-123',
           workOrderNumber: 'IO-2026-1111',
           customerName: 'Clark PH',
+          customerId: 'client-apptivo-1',
           statusName: 'active',
           total: '1000',
           reportedDate: '2026-01-01',
@@ -137,23 +151,47 @@ describe('ProjectsService', () => {
       expect(result.deleted).toBe(0);
     });
 
-    it('handles nested data structure from Apptivo', async () => {
+    it('resolves clientId from clientMap', async () => {
+      const clientMap = new Map([['client-apptivo-1', 'db-client-uuid-1']]);
+      mockClientsService.getClientMap.mockResolvedValue(clientMap);
+
       (global.fetch as jest.Mock).mockResolvedValue({
         ok: true,
-        json: jest.fn().mockResolvedValue({ data: { data: mockWorkOrders } }),
+        json: jest.fn().mockResolvedValue({ data: mockWorkOrders }),
       });
 
       mockPrismaService.$transaction.mockResolvedValue([mockProject, { count: 0 }]);
 
-      const result = await service.syncWorkOrdersFromApptivo('org-uuid-1');
+      await service.syncWorkOrdersFromApptivo('org-uuid-1');
 
-      expect(result.synced).toBe(1);
+      expect(mockPrismaService.project.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ clientId: 'db-client-uuid-1' }),
+        }),
+      );
+    });
+
+    it('sets clientId to null when client not in map', async () => {
+      mockClientsService.getClientMap.mockResolvedValue(new Map());
+
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ data: mockWorkOrders }),
+      });
+
+      mockPrismaService.$transaction.mockResolvedValue([mockProject, { count: 0 }]);
+
+      await service.syncWorkOrdersFromApptivo('org-uuid-1');
+
+      expect(mockPrismaService.project.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ clientId: null }),
+        }),
+      );
     });
 
     it('throws HttpException when fetch fails', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: false,
-      });
+      (global.fetch as jest.Mock).mockResolvedValue({ ok: false });
 
       await expect(service.syncWorkOrdersFromApptivo('org-uuid-1')).rejects.toThrow(HttpException);
     });
@@ -171,6 +209,18 @@ describe('ProjectsService', () => {
       });
 
       await expect(service.syncWorkOrdersFromApptivo('org-uuid-1')).rejects.toThrow(HttpException);
+    });
+
+    it('returns early without purging when no work orders fetched', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ data: [] }),
+      });
+
+      const result = await service.syncWorkOrdersFromApptivo('org-uuid-1');
+
+      expect(result).toEqual({ synced: 0, deleted: 0 });
+      expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
     });
   });
 });
