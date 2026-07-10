@@ -21,6 +21,7 @@ import { CrmModule } from './modules/crm/crm.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { StatusesModule } from './modules/settings/statuses/statuses.module';
 import { TeamsModule } from './modules/settings/teams/teams.module';
+import { AttendanceSettingsModule } from './modules/settings/attendance/attendance-settings.module';
 import { TicketsModule } from './modules/tickets/tickets.module';
 import { SlaPoliciesModule } from './modules/sla/sla-policies.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
@@ -41,6 +42,7 @@ import { AttendanceModule } from './modules/attendance/attendance.module';
     AdminModule,
     StatusesModule,
     TeamsModule,
+    AttendanceSettingsModule,
     TicketsModule,
     SlaPoliciesModule,
     AttendanceModule,

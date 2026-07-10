@@ -1,4 +1,4 @@
-import { IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
 export type OnboardMemberRole = 'member' | 'admin' | 'owner';
 
@@ -29,6 +29,11 @@ export class OnboardMemberDTO {
   @IsOptional()
   @IsString()
   teamId?: string;
+
+  /** Weekly schedule to assign this employee (org attendance settings). */
+  @IsOptional()
+  @IsUUID()
+  weeklyScheduleId?: string;
 
   @IsOptional()
   @IsIn(['member', 'admin', 'owner'])
