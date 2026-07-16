@@ -36,6 +36,54 @@ export class CloudinaryService {
     });
   }
 
+  /**
+   * Uploads an arbitrary attachment (image or any other file type).
+   *
+   * `resource_type: 'auto'` lets Cloudinary store images as images (so they get
+   * `f_auto,q_auto` optimisation) and everything else as `raw` — the returned
+   * `secure_url` is then a direct download link. Executable / script types are
+   * rejected outright; size is capped by the controller's ParseFilePipe.
+   */
+  async uploadFile(
+    file: Express.Multer.File,
+    folder: string = 'meedo-v3/ticket-attachments',
+  ): Promise<UploadApiResponse> {
+    const extension = file.originalname.split('.').pop()?.toLowerCase() ?? '';
+    const blockedExtensions = [
+      'exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'cpl', 'jar',
+      'app', 'sh', 'ps1', 'vbs', 'dll', 'msc', 'reg',
+    ];
+    if (blockedExtensions.includes(extension)) {
+      throw new BadRequestException('This file type is not allowed');
+    }
+
+    const isImage = file.mimetype.startsWith('image/');
+
+    return new Promise((resolve, reject) => {
+      const upload = cloudinary.uploader.upload_stream(
+        {
+          folder,
+          resource_type: 'auto',
+          // Keep the human filename in the public id so raw download URLs are readable,
+          // while unique_filename avoids collisions.
+          use_filename: true,
+          unique_filename: true,
+          filename_override: file.originalname,
+          ...(isImage
+            ? { transformation: [{ fetch_format: 'auto', quality: 'auto' }] }
+            : {}),
+        },
+        (error, result) => {
+          if (error) return reject(error);
+          if (!result) return reject(new Error('Cloudinary upload failed: No result returned'));
+          resolve(result);
+        },
+      );
+
+      Readable.from(file.buffer).pipe(upload);
+    });
+  }
+
   async deleteImage(publicId: string): Promise<{result: string}> {
     return new Promise((resolve, reject) => {
       cloudinary.uploader.destroy(publicId, (error, result) => {

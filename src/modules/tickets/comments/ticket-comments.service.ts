@@ -8,9 +8,11 @@ import { isOrgAdminRole } from 'src/common/constants/org-roles.constants';
 import { CreateTicketCommentDTO } from './dto/create-ticket-comment.dto';
 import { UpdateTicketCommentDTO } from './dto/update-ticket-comment.dto';
 import { TicketActivityService } from '../activity/ticket-activity.service';
-import { COMMENT_INCLUDE, CommentWithAuthor } from '../constants/ticket.constants';
+import { COMMENT_INCLUDE, COMMENT_THREAD_INCLUDE, CommentWithAuthor } from '../constants/ticket.constants';
 
 export type CommentWithPermissions = CommentWithAuthor & { canModify: boolean };
+/** A top-level comment plus its (one level of) replies, each with a canModify flag. */
+export type CommentThreadItem = CommentWithPermissions & { replies: CommentWithPermissions[] };
 
 @Injectable()
 export class TicketCommentsService {
@@ -24,27 +26,34 @@ export class TicketCommentsService {
     organizationId: string,
     userId: string | undefined,
     query: PaginationQueryDTO,
-  ): Promise<PaginatedResponse<CommentWithPermissions>> {
+  ): Promise<PaginatedResponse<CommentThreadItem>> {
     await this.ensureTicketInOrg(ticketId, organizationId);
     const { page, limit } = query;
 
     const member = await this.activity.resolveMember(organizationId, userId);
     const isAdmin = isOrgAdminRole(member?.role);
+    const canModify = (authorMemberId: string | null): boolean =>
+      isAdmin || (!!member && authorMemberId === member.id);
 
+    // Paginate top-level comments only; each carries its replies inline.
     const [comments, total] = await Promise.all([
       this.prisma.ticketComment.findMany({
-        where: { ticketId },
-        include: COMMENT_INCLUDE,
+        where: { ticketId, parentId: null },
+        include: COMMENT_THREAD_INCLUDE,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'asc' },
       }),
-      this.prisma.ticketComment.count({ where: { ticketId } }),
+      this.prisma.ticketComment.count({ where: { ticketId, parentId: null } }),
     ]);
 
-    const data: CommentWithPermissions[] = comments.map((comment) => ({
+    const data: CommentThreadItem[] = comments.map((comment) => ({
       ...comment,
-      canModify: isAdmin || (!!member && comment.authorMemberId === member.id),
+      canModify: canModify(comment.authorMemberId),
+      replies: comment.replies.map((reply) => ({
+        ...reply,
+        canModify: canModify(reply.authorMemberId),
+      })),
     }));
 
     return { data, meta: buildPaginationMeta(total, page, limit) };
@@ -55,9 +64,22 @@ export class TicketCommentsService {
     organizationId: string,
     userId: string | undefined,
     dto: CreateTicketCommentDTO,
-  ): Promise<CommentWithAuthor> {
+  ): Promise<CommentThreadItem> {
     await this.ensureTicketInOrg(ticketId, organizationId);
     const authorMemberId = await this.activity.resolveMemberId(organizationId, userId);
+
+    // Threads are one level deep: replying to a reply attaches to its top-level parent.
+    let parentId: string | null = null;
+    if (dto.parentId) {
+      const parent = await this.prisma.ticketComment.findFirst({
+        where: { id: dto.parentId, ticketId },
+        select: { id: true, parentId: true },
+      });
+      if (!parent) {
+        throw new NotFoundException('Parent comment not found on this ticket.');
+      }
+      parentId = parent.parentId ?? parent.id;
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const comment = await tx.ticketComment.create({
@@ -65,18 +87,25 @@ export class TicketCommentsService {
           ticketId,
           authorMemberId,
           body: dto.body,
+          parentId,
         },
         include: COMMENT_INCLUDE,
       });
 
-      await this.activity.record(tx, {
-        ticketId,
-        actorMemberId: authorMemberId,
-        type: TicketActivityType.COMMENTED,
-        meta: { commentId: comment.id },
-      });
+      // Only top-level comments surface on the activity timeline; replies are a
+      // sub-conversation and would otherwise flood it.
+      if (!parentId) {
+        await this.activity.record(tx, {
+          ticketId,
+          actorMemberId: authorMemberId,
+          type: TicketActivityType.COMMENTED,
+          meta: { commentId: comment.id },
+        });
+      }
 
-      return comment;
+      // The author just wrote it, so they can always modify it; a fresh
+      // comment/reply has no replies of its own yet.
+      return { ...comment, canModify: true, replies: [] };
     });
   }
 

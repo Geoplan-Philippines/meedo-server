@@ -72,6 +72,19 @@ export const COMMENT_INCLUDE = {
 
 export type CommentWithAuthor = Prisma.TicketCommentGetPayload<{ include: typeof COMMENT_INCLUDE }>;
 
+/** Thread view: top-level comments with one level of nested replies. */
+export const COMMENT_THREAD_INCLUDE = {
+  author: {
+    include: { user: { select: TICKET_USER_SELECT } },
+  },
+  replies: {
+    include: { author: { include: { user: { select: TICKET_USER_SELECT } } } },
+    orderBy: { createdAt: 'asc' },
+  },
+} satisfies Prisma.TicketCommentInclude;
+
+export type CommentWithReplies = Prisma.TicketCommentGetPayload<{ include: typeof COMMENT_THREAD_INCLUDE }>;
+
 export const ACTIVITY_INCLUDE = {
   actor: {
     include: { user: { select: TICKET_USER_SELECT } },
