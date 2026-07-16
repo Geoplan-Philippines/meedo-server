@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Post, Query } from '@nestjs/common';
 import { Client } from '@prisma/client';
 import { CurrentOrganizationId } from '../../../common/decorators/current-organization-id.decorator';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
@@ -17,7 +17,7 @@ export class ClientsController {
     return this.clientsService.getAllClients(query, organizationId);
   }
 
-  @Get('sync')
+  @Post('sync')
   async syncClients(
     @CurrentOrganizationId() organizationId: string,
   ): Promise<{ message: string; synced: number; deleted: number }> {

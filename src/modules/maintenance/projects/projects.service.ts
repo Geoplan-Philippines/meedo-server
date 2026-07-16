@@ -40,6 +40,8 @@ export class ProjectsService {
   }
 
   async syncWorkOrdersFromApptivo(organizationId: string): Promise<{ synced: number; deleted: number }> {
+    await this.clientsService.syncClientsFromApptivo(organizationId);
+
     const workOrders = await this.fetchApptivoWorkOrders();
 
     if (workOrders.length === 0) {
@@ -57,12 +59,12 @@ export class ProjectsService {
 
     const upserts = projects.map(({ apptivoId, clientId, ...data }) =>
       this.prisma.project.upsert({
-        where: { apptivoId },
-        update: { ...data, clientId: clientId ?? null },
+        where: { organizationId_apptivoId: { organizationId, apptivoId } },
+        update: { ...data, clientId },
         create: {
           apptivoId,
           ...data,
-          clientId: clientId ?? null,
+          clientId,
           organizationId,
         },
       }),
@@ -114,12 +116,12 @@ function normalizeProject(
   const apptivoClientId = wo.customerId ? String(wo.customerId).trim() : null;
 
   return {
-    apptivoId:       String(wo.id),
+    apptivoId: String(wo.id),
     workOrderNumber: wo.workOrderNumber || '',
-    customerName:    wo.customerName || '',
-    status:          wo.statusName || 'Unknown',
-    total:           Number.isFinite(total) ? total : 0,
-    reportedDate:    date && !isNaN(date.getTime()) ? date : null,
-    clientId:        apptivoClientId ? (clientMap.get(apptivoClientId) ?? null) : null,
+    customerName: wo.customerName || '',
+    status: wo.statusName || 'Unknown',
+    total: Number.isFinite(total) ? total : 0,
+    reportedDate: date && !isNaN(date.getTime()) ? date : null,
+    clientId: apptivoClientId ? (clientMap.get(apptivoClientId) ?? null) : null,
   };
 }

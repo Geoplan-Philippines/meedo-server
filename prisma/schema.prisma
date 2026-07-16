@@ -296,7 +296,7 @@ model Project {
   total                         Float
   reportedDate                  DateTime?                 @map("reported_date")
 
-  apptivoId                     String                    @unique @map("apptivo_id")
+  apptivoId                     String                    @map("apptivo_id")
   organizationId                String                    @map("organization_id")
   clientId                      String?                   @map("client_id")
 
@@ -310,10 +310,10 @@ model Project {
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
+  @@unique([organizationId, apptivoId])
   @@index([organizationId])
   @@index([clientId])
   @@map("projects")
-
 }
 
 model Client {

@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Post, Query } from '@nestjs/common';
 import { CurrentOrganizationId } from '../../../common/decorators/current-organization-id.decorator';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { ProjectsService } from './projects.service';
@@ -17,7 +17,7 @@ export class ProjectsController {
     return this.projectsService.getAllProjects(query, organizationId);
   }
 
-  @Get('sync')
+  @Post('sync')
   async syncWorkOrders(
     @CurrentOrganizationId() organizationId: string,
   ): Promise<{ message: string; synced: number; deleted: number }> {

@@ -31,6 +31,7 @@ const mockPrismaService = {
 
 const mockClientsService = {
   getClientMap: jest.fn(),
+  syncClientsFromApptivo: jest.fn(),
 };
 
 global.fetch = jest.fn();
@@ -99,6 +100,7 @@ describe('ProjectsService', () => {
 
     beforeEach(() => {
       mockClientsService.getClientMap.mockResolvedValue(new Map());
+      mockClientsService.syncClientsFromApptivo.mockResolvedValue({ synced: 0, deleted: 0 });
     });
 
     it('normalizes work order data correctly', async () => {
@@ -149,6 +151,7 @@ describe('ProjectsService', () => {
 
       expect(result.synced).toBe(1);
       expect(result.deleted).toBe(0);
+      expect(mockClientsService.syncClientsFromApptivo).toHaveBeenCalledWith('org-uuid-1');
     });
 
     it('resolves clientId from clientMap', async () => {
