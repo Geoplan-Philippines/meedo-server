@@ -505,6 +505,11 @@ model TicketComment {
   authorMemberId                String?                   @map("author_member_id")
   author                        Member?                   @relation(fields: [authorMemberId], references: [id], onDelete: SetNull)
 
+  // One level of threaded replies: a reply points at its top-level parent.
+  parentId                      String?                   @map("parent_id")
+  parent                        TicketComment?            @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies                       TicketComment[]           @relation("CommentReplies")
+
   body                          String
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
@@ -512,6 +517,7 @@ model TicketComment {
 
   @@index([ticketId])
   @@index([authorMemberId])
+  @@index([parentId])
   @@map("ticket_comments")
 }
 
