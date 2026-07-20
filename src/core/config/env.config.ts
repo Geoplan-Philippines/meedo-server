@@ -18,9 +18,10 @@ const schema = z.object({
   FACE_RECOGNITION_API_URL: z.string().default('http://localhost:5000'),
   FACE_RECOGNITION_API_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 
-  APPTIVO_API_RESOURCE: z.string().default('https://api.apptivo.com/v1/'),
+  APPTIVO_API_RESOURCE: z.string().url().default('https://api.apptivo.com/v1/'),
   APPTIVO_API_KEY: z.string().min(1),
   APPTIVO_API_ACCESS_KEY: z.string().min(1),
+  APPTIVO_CUSTOMERS_API_RESOURCE: z.string().url().default('https://api2.apptivo.com/app/dao/v6/customers?a=getAll'),
   CLOUDINARY_API_KEY_SECRET: z.string().min(1),
   CLOUDINARY_API_KEY: z.string().min(1),
   CLOUDINARY_CLOUD_NAME: z.string().min(1),

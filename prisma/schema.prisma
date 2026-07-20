@@ -117,6 +117,7 @@ model Organization {
   timesheetEntries              TimesheetEntry[]
   timesheetPeriodLocks          TimesheetPeriodLock[]
   timesheetAuditLogs            TimesheetAuditLog[]
+  clients                       Client[]
 
   @@map("organizations")
 }
@@ -295,10 +296,12 @@ model Project {
   total                         Float
   reportedDate                  DateTime?                 @map("reported_date")
 
-  apptivoId                     String                    @unique @map("apptivo_id")
+  apptivoId                     String                    @map("apptivo_id")
   organizationId                String                    @map("organization_id")
+  clientId                      String?                   @map("client_id")
 
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  client                        Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   tickets                       Tickets[]
   slaPolicies                   SlaPolicy[]
@@ -307,9 +310,28 @@ model Project {
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
+  @@unique([organizationId, apptivoId])
   @@index([organizationId])
+  @@index([clientId])
   @@map("projects")
+}
 
+model Client {
+  id                            String                    @id @default(uuid())
+  apptivoId                     String                    @map("apptivo_id")
+  customerName                  String                    @map("customer_name")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  projects                      Project[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, apptivoId])
+  @@index([organizationId])
+  @@map("clients")
 }
 
 model Lead {
