@@ -5,10 +5,14 @@ import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
 import { WorkOrder, ProjectInput, ApptivoResponse } from './types/project.type';
+import { ClientsService } from '../clients/clients.service';
 
 @Injectable()
 export class ProjectsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly clientsService: ClientsService,
+  ) {}
 
   async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string): Promise<PaginatedResponse<Project>> {
     const { page, limit } = query;
@@ -19,6 +23,7 @@ export class ProjectsService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
+        include: { client: true },
       }),
       this.prisma.project.count({ where: { organizationId } }),
     ]);
@@ -34,15 +39,34 @@ export class ProjectsService {
     };
   }
 
-  async syncWorkOrdersFromApptivo(organizationId: string) {
-    const projects = (await this.fetchApptivoWorkOrders()).map(normalize);
+  async syncWorkOrdersFromApptivo(organizationId: string): Promise<{ synced: number; deleted: number }> {
+    await this.clientsService.syncClientsFromApptivo(organizationId);
+
+    const workOrders = await this.fetchApptivoWorkOrders();
+
+    if (workOrders.length === 0) {
+      return { synced: 0, deleted: 0 };
+    }
+
+    const apptivoClientIds = [
+      ...new Set(workOrders.map((wo) => wo.customerId).filter(Boolean).map((id) => String(id).trim())),
+    ];
+
+    const clientMap = await this.clientsService.getClientMap(organizationId, apptivoClientIds);
+
+    const projects = workOrders.map((wo) => normalizeProject(wo, clientMap));
     const apptivoIds = projects.map((p) => p.apptivoId);
 
-    const upserts = projects.map(({ apptivoId, ...data }) =>
+    const upserts = projects.map(({ apptivoId, clientId, ...data }) =>
       this.prisma.project.upsert({
-        where: { apptivoId },
-        update: data,
-        create: { apptivoId, ...data, organization: { connect: { id: organizationId } } },
+        where: { organizationId_apptivoId: { organizationId, apptivoId } },
+        update: { ...data, clientId },
+        create: {
+          apptivoId,
+          ...data,
+          clientId,
+          organizationId,
+        },
       }),
     );
 
@@ -57,13 +81,11 @@ export class ProjectsService {
   }
 
   private async fetchApptivoWorkOrders(): Promise<WorkOrder[]> {
-    const apptivoApiUrl = `${env.APPTIVO_API_RESOURCE}&numRecords=1000&apiKey=${env.APPTIVO_API_KEY}&accessKey=${env.APPTIVO_API_ACCESS_KEY}`;
+    const url = `${env.APPTIVO_API_RESOURCE}&numRecords=1000&apiKey=${env.APPTIVO_API_KEY}&accessKey=${env.APPTIVO_API_ACCESS_KEY}`;
 
-    let payload: ApptivoResponse;
+    let payload: ApptivoResponse<WorkOrder>;
     try {
-      const response = await fetch(apptivoApiUrl,
-        { headers: { Accept: 'application/json' } }
-      );
+      const response = await fetch(url, { headers: { Accept: 'application/json' } });
 
       if (!response.ok) {
         throw new HttpException('Failed to fetch Apptivo data', HttpStatus.BAD_GATEWAY);
@@ -75,22 +97,23 @@ export class ProjectsService {
       throw new HttpException('Network error while fetching Apptivo data', HttpStatus.BAD_GATEWAY);
     }
 
-    const items =
-      payload?.data && typeof payload.data === 'object' && 'data' in payload.data
-        ? payload.data.data
-        : payload?.data ?? payload;
+    const items = payload?.data;
 
     if (!Array.isArray(items)) {
       throw new HttpException('Unexpected Apptivo response structure', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    return items as WorkOrder[];
+    return items;
   }
-};
+}
 
-function normalize(wo: WorkOrder): ProjectInput {
+function normalizeProject(
+  wo: WorkOrder,
+  clientMap: Map<string, string>,
+): ProjectInput & { apptivoId: string; clientId: string | null } {
   const total = Number(wo.total);
   const date = wo.reportedDate ? new Date(wo.reportedDate) : null;
+  const apptivoClientId = wo.customerId ? String(wo.customerId).trim() : null;
 
   return {
     apptivoId: String(wo.id),
@@ -99,7 +122,6 @@ function normalize(wo: WorkOrder): ProjectInput {
     status: wo.statusName || 'Unknown',
     total: Number.isFinite(total) ? total : 0,
     reportedDate: date && !isNaN(date.getTime()) ? date : null,
+    clientId: apptivoClientId ? (clientMap.get(apptivoClientId) ?? null) : null,
   };
 }
-
-

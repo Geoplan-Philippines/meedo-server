@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, P
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
-import { TicketCommentsService, CommentWithPermissions } from './ticket-comments.service';
+import { TicketCommentsService, CommentThreadItem } from './ticket-comments.service';
 import { TicketActivityService } from '../activity/ticket-activity.service';
 import { CreateTicketCommentDTO } from './dto/create-ticket-comment.dto';
 import { UpdateTicketCommentDTO } from './dto/update-ticket-comment.dto';
@@ -25,7 +25,7 @@ export class TicketCommentsController {
     @Query() query: PaginationQueryDTO,
     @CurrentOrganizationId() organizationId: string,
     @CurrentUser('id') userId: string,
-  ): Promise<PaginatedResponse<CommentWithPermissions>> {
+  ): Promise<PaginatedResponse<CommentThreadItem>> {
     return this.ticketCommentsService.getComments(ticketId, organizationId, userId, query);
   }
 
@@ -35,7 +35,7 @@ export class TicketCommentsController {
     @Body() body: CreateTicketCommentDTO,
     @CurrentOrganizationId() organizationId: string,
     @CurrentUser('id') userId: string,
-  ): Promise<CommentWithAuthor> {
+  ): Promise<CommentThreadItem> {
     return this.ticketCommentsService.addComment(ticketId, organizationId, userId, body);
   }
 
