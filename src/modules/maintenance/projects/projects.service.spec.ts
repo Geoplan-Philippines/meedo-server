@@ -7,7 +7,6 @@ import { ClientsService } from '../clients/clients.service';
 const mockProject = {
   id: '111222333',
   workOrderNumber: 'IO-2026-1111',
-  customerName: 'Clark PH',
   status: 'active',
   total: 1000,
   reportedDate: null,
@@ -83,6 +82,37 @@ describe('ProjectsService', () => {
         expect.objectContaining({ skip: 20, take: 10 }),
       );
     });
+
+    it('filters by clientId when provided', async () => {
+      mockPrismaService.project.findMany.mockResolvedValue([]);
+      mockPrismaService.project.count.mockResolvedValue(0);
+
+      await service.getAllProjects({ page: 1, limit: 10, clientId: 'client-uuid-1' }, 'org-uuid-1');
+
+      expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { organizationId: 'org-uuid-1', clientId: 'client-uuid-1' },
+        }),
+      );
+      expect(mockPrismaService.project.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { organizationId: 'org-uuid-1', clientId: 'client-uuid-1' },
+        }),
+      );
+    });
+
+    it('does not filter by clientId when not provided', async () => {
+      mockPrismaService.project.findMany.mockResolvedValue([]);
+      mockPrismaService.project.count.mockResolvedValue(0);
+
+      await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1');
+
+      expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { organizationId: 'org-uuid-1' },
+        }),
+      );
+    });
   });
 
   describe('syncWorkOrdersFromApptivo', () => {
@@ -129,7 +159,6 @@ describe('ProjectsService', () => {
         expect.objectContaining({
           create: expect.objectContaining({
             workOrderNumber: 'IO-2026-1111',
-            customerName: 'Clark PH',
             status: 'active',
             total: 1000,
             reportedDate: new Date('2026-01-01'),

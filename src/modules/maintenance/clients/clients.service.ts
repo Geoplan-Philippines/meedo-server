@@ -1,16 +1,22 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { Client } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { GetAllClientsQueryDTO } from './dto/get-all-clients-query.dto';
 import { Customer, ClientInput, ApptivoResponse } from '../projects/types/project.type';
 
+const CLIENT_INCLUDE = {
+  _count: { select: { projects: true } },
+} satisfies Prisma.ClientInclude;
+
+type ClientWithCount = Prisma.ClientGetPayload<{ include: typeof CLIENT_INCLUDE }>;
+
 @Injectable()
 export class ClientsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getAllClients(query: GetAllClientsQueryDTO, organizationId: string): Promise<PaginatedResponse<Client>> {
+  async getAllClients(query: GetAllClientsQueryDTO, organizationId: string): Promise<PaginatedResponse<ClientWithCount>> {
     const { page, limit } = query;
 
     const [clients, total] = await Promise.all([
@@ -19,6 +25,7 @@ export class ClientsService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
+        include: CLIENT_INCLUDE,
       }),
       this.prisma.client.count({ where: { organizationId } }),
     ]);

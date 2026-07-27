@@ -15,17 +15,19 @@ export class ProjectsService {
   ) {}
 
   async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string): Promise<PaginatedResponse<Project>> {
-    const { page, limit } = query;
+    const { page, limit, clientId } = query;
+
+    const where = { organizationId, ...(clientId ? { clientId } : {}) };
 
     const [projects, total] = await Promise.all([
       this.prisma.project.findMany({
-        where: { organizationId },
+        where,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: { client: true },
       }),
-      this.prisma.project.count({ where: { organizationId } }),
+      this.prisma.project.count({ where }),
     ]);
 
     return {
@@ -118,7 +120,6 @@ function normalizeProject(
   return {
     apptivoId: String(wo.id),
     workOrderNumber: wo.workOrderNumber || '',
-    customerName: wo.customerName || '',
     status: wo.statusName || 'Unknown',
     total: Number.isFinite(total) ? total : 0,
     reportedDate: date && !isNaN(date.getTime()) ? date : null,

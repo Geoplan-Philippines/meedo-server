@@ -22,9 +22,9 @@ const TIMESHEET_ENTRY_INCLUDE = {
   project: {
     select: {
       id:              true,
-      customerName:    true,
       workOrderNumber: true,
       status:          true,
+      client:          { select: { customerName: true } },
     },
   },
   approvedBy: {
@@ -45,9 +45,9 @@ const TIMESHEET_SUMMARY_ENTRY_INCLUDE = {
   project: {
     select: {
       id:              true,
-      customerName:    true,
       workOrderNumber: true,
       status:          true,
+      client:          { select: { customerName: true } },
     },
   },
   user: {
@@ -89,7 +89,7 @@ const TIMESHEET_AUDIT_LOG_INCLUDE = {
       workDate: true,
       hours: true,
       status: true,
-      project: { select: { id: true, customerName: true, workOrderNumber: true } },
+      project: { select: { id: true, workOrderNumber: true, client: { select: { customerName: true } } } },
     },
   },
 } satisfies Prisma.TimesheetAuditLogInclude;
@@ -811,7 +811,7 @@ export class TimesheetService {
       ...(search
         ? {
             OR: [
-              { customerName: { contains: search, mode: 'insensitive' } },
+              { client: { customerName: { contains: search, mode: 'insensitive' } } },
               { workOrderNumber: { contains: search, mode: 'insensitive' } },
             ],
           }
@@ -823,14 +823,14 @@ export class TimesheetService {
         where,
         select: {
           id:              true,
-          customerName:    true,
           workOrderNumber: true,
           status:          true,
           reportedDate:    true,
+          client:          { select: { customerName: true } },
         },
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: [{ customerName: 'asc' }, { workOrderNumber: 'asc' }],
+        orderBy: [{ client: { customerName: 'asc' } }, { workOrderNumber: 'asc' }],
       }),
       this.prisma.project.count({ where }),
     ]);
@@ -1141,7 +1141,7 @@ function buildTimesheetSummary(
     const dayKey = toDateInputValue(entry.workDate);
     existing.dailyTotals[dayKey] = (existing.dailyTotals[dayKey] ?? 0) + entry.hours;
 
-    const projectKey = `${entry.project.customerName} — ${entry.project.workOrderNumber}`;
+    const projectKey = `${entry.project.client?.customerName || ''} — ${entry.project.workOrderNumber}`;
     existing.projectTotals[projectKey] = (existing.projectTotals[projectKey] ?? 0) + entry.hours;
     existing.entries.push(entry);
     employeeMap.set(key, existing);
@@ -1349,7 +1349,7 @@ function addDetailsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSummaryEn
       entry.isNightDifferential ? 'Y' : '',
       toDateInputValue(entry.workDate),
       entry.location,
-      entry.project.customerName,
+      entry.project.client?.customerName || '',
       entry.project.workOrderNumber,
       entry.task,
       entry.hours,
@@ -1406,7 +1406,7 @@ function addProjectTotalsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSum
   const totals = new Map<string, { project: string; tag: string; hours: number }>();
   for (const entry of entries) {
     const key = `${entry.project.id}:${entry.project.workOrderNumber}`;
-    const existing = totals.get(key) ?? { project: entry.project.customerName, tag: entry.project.workOrderNumber, hours: 0 };
+    const existing = totals.get(key) ?? { project: entry.project.client?.customerName || '', tag: entry.project.workOrderNumber, hours: 0 };
     existing.hours += entry.hours;
     totals.set(key, existing);
   }
