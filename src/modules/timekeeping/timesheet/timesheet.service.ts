@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, TimesheetAuditAction, TimesheetEntryStatus } from '@prisma/client';
+import { Prisma, TimesheetAuditAction, TimesheetEntryStatus, TimesheetWorkType } from '@prisma/client';
 import ExcelJS from 'exceljs';
 
 import { PrismaService } from '../../../core/database/prisma.service';
@@ -149,15 +149,16 @@ export class TimesheetService {
     const member = await this.resolveMember(organizationId, userId);
     await this.ensureProjectInOrganization(dto.projectId, organizationId);
     const workDate = parseDateOnly(dto.workDate);
+    const hours = this.resolveEntryHours(dto.workType ?? TimesheetWorkType.REGULAR, dto.hours);
     await this.ensureDateNotLocked(organizationId, workDate);
-    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, dto.hours, dto.isOvertime ?? false);
+    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, hours, dto.isOvertime ?? false);
 
     const data = {
       organizationId,
       userId: userId!,
       projectId: dto.projectId,
       workDate,
-      hours: dto.hours,
+      hours,
       location: dto.location?.trim() || undefined,
       workType: dto.workType,
       task: dto.task.trim(),
@@ -204,7 +205,8 @@ export class TimesheetService {
     }
 
     const workDate = dto.workDate !== undefined ? parseDateOnly(dto.workDate) : existing.workDate;
-    const hours = dto.hours !== undefined ? dto.hours : existing.hours;
+    const workType = dto.workType !== undefined ? dto.workType : existing.workType;
+    const hours = this.resolveEntryHours(workType, dto.hours !== undefined ? dto.hours : existing.hours);
     const isOvertime = dto.isOvertime !== undefined ? dto.isOvertime : existing.isOvertime;
     await this.ensureDateNotLocked(organizationId, existing.workDate);
     await this.ensureDateNotLocked(organizationId, workDate);
@@ -213,7 +215,7 @@ export class TimesheetService {
     const data: Prisma.TimesheetEntryUncheckedUpdateInput = {
       ...(dto.projectId !== undefined ? { projectId: dto.projectId } : {}),
       ...(dto.workDate !== undefined ? { workDate } : {}),
-      ...(dto.hours !== undefined ? { hours: dto.hours } : {}),
+      hours,
       ...(dto.location !== undefined ? { location: dto.location.trim() || 'OFC - DW' } : {}),
       ...(dto.workType !== undefined ? { workType: dto.workType } : {}),
       ...(dto.task !== undefined ? { task: dto.task.trim() } : {}),
@@ -898,6 +900,18 @@ export class TimesheetService {
     if (lock) {
       throw new ForbiddenException('This timesheet period is locked.');
     }
+  }
+
+  private resolveEntryHours(workType: TimesheetWorkType, hours: number | undefined): number {
+    if (workType === TimesheetWorkType.LEAVE) {
+      return hours ?? 0;
+    }
+
+    if (hours === undefined || hours < 1 || hours > 9) {
+      throw new BadRequestException('Hours must be between 1 and 9.');
+    }
+
+    return hours;
   }
 
   private async ensureDailyHoursLimit(
