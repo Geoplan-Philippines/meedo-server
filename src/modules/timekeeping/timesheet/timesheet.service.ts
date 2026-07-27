@@ -18,6 +18,9 @@ import { SubmitTimesheetWeekDTO } from './dto/submit-timesheet-week.dto';
 import { UnlockTimesheetPeriodDTO } from './dto/unlock-timesheet-period.dto';
 import { UpdateTimesheetEntryDTO } from './dto/update-timesheet-entry.dto';
 
+const MAX_REGULAR_HOURS_PER_DAY = 9;
+const MAX_TOTAL_HOURS_PER_DAY = 24;
+
 const TIMESHEET_ENTRY_INCLUDE = {
   project: {
     select: {
@@ -147,7 +150,7 @@ export class TimesheetService {
     await this.ensureProjectInOrganization(dto.projectId, organizationId);
     const workDate = parseDateOnly(dto.workDate);
     await this.ensureDateNotLocked(organizationId, workDate);
-    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, dto.hours);
+    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, dto.hours, dto.isOvertime ?? false);
 
     const data = {
       organizationId,
@@ -202,9 +205,10 @@ export class TimesheetService {
 
     const workDate = dto.workDate !== undefined ? parseDateOnly(dto.workDate) : existing.workDate;
     const hours = dto.hours !== undefined ? dto.hours : existing.hours;
+    const isOvertime = dto.isOvertime !== undefined ? dto.isOvertime : existing.isOvertime;
     await this.ensureDateNotLocked(organizationId, existing.workDate);
     await this.ensureDateNotLocked(organizationId, workDate);
-    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, hours, entryId);
+    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, hours, isOvertime, entryId);
 
     const data: Prisma.TimesheetEntryUncheckedUpdateInput = {
       ...(dto.projectId !== undefined ? { projectId: dto.projectId } : {}),
@@ -375,7 +379,6 @@ export class TimesheetService {
 
     const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds);
     this.ensureNoSelfApproval(entries, userId!);
-    await this.ensureEntriesNotLocked(organizationId, entries);
 
     const approvableEntries = entries.filter(
       (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
@@ -445,7 +448,6 @@ export class TimesheetService {
 
     const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds);
     this.ensureNoSelfApproval(entries, userId!);
-    await this.ensureEntriesNotLocked(organizationId, entries);
 
     const rejectableEntries = entries.filter(
       (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
@@ -903,21 +905,36 @@ export class TimesheetService {
     userId: string,
     workDate: Date,
     hours: number,
+    isOvertime: boolean,
     excludeEntryId?: string,
   ): Promise<void> {
-    const result = await this.prisma.timesheetEntry.aggregate({
-      where: {
-        organizationId,
-        userId,
-        workDate,
-        ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
-      },
-      _sum: { hours: true },
-    });
+    const where = {
+      organizationId,
+      userId,
+      workDate,
+      ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
+    };
 
-    const existingHours = result._sum.hours ?? 0;
-    if (existingHours + hours > 24) {
-      throw new BadRequestException('Total timesheet hours cannot exceed 24 hours for one work date.');
+    const [totalResult, regularResult] = await Promise.all([
+      this.prisma.timesheetEntry.aggregate({ where, _sum: { hours: true } }),
+      this.prisma.timesheetEntry.aggregate({
+        where: { ...where, isOvertime: false },
+        _sum: { hours: true },
+      }),
+    ]);
+
+    const existingTotalHours = totalResult._sum.hours ?? 0;
+    if (existingTotalHours + hours > MAX_TOTAL_HOURS_PER_DAY) {
+      throw new BadRequestException(`Total timesheet hours cannot exceed ${MAX_TOTAL_HOURS_PER_DAY} hours for one work date.`);
+    }
+
+    if (!isOvertime) {
+      const existingRegularHours = regularResult._sum.hours ?? 0;
+      if (existingRegularHours + hours > MAX_REGULAR_HOURS_PER_DAY) {
+        throw new BadRequestException(
+          `Regular hours across all projects cannot exceed ${MAX_REGULAR_HOURS_PER_DAY} hours for one work date. Mark the extra hours as overtime.`,
+        );
+      }
     }
   }
 
@@ -1008,15 +1025,6 @@ export class TimesheetService {
     if (entries.some((entry) => entry.userId === actorUserId)) {
       throw new ForbiddenException('Approvers cannot approve or reject their own timesheet entries.');
     }
-  }
-
-  private async ensureEntriesNotLocked(organizationId: string, entries: TimesheetSummaryEntry[]): Promise<void> {
-    if (entries.length === 0) return;
-
-    const timestamps = entries.map((entry) => entry.workDate.getTime());
-    const periodStart = new Date(Math.min(...timestamps));
-    const periodEnd = new Date(Math.max(...timestamps));
-    await this.ensurePeriodNotLocked(organizationId, periodStart, periodEnd);
   }
 
   private buildWorkDateFilter(periodStart?: string, periodEnd?: string): Prisma.TimesheetEntryWhereInput {
