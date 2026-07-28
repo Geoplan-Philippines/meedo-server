@@ -3,9 +3,11 @@ import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 import { CurrentOrganizationId } from '../../../common/decorators/current-organization-id.decorator';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
+import { ApiPaginatedResponse } from '../../../common/decorators/api-paginated-response.decorator';
 import { ProjectsService } from './projects.service';
 import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
-import { Project } from '@prisma/client';
+import { ProjectResponseDTO } from './dto/project-response.dto';
+import type { Project } from '@prisma/client';
 
 @ApiTags('Projects')
 @Controller('maintenance/projects')
@@ -15,7 +17,7 @@ export class ProjectsController {
   @AllowAnonymous()
   @Get()
   @ApiOperation({ summary: 'List projects', description: 'Paginated list of projects, optionally filtered by client.' })
-  @ApiOkResponse({ description: 'Paginated projects with client info' })
+  @ApiPaginatedResponse(ProjectResponseDTO)
   async getAllProjects(
     @Query() query: GetAllProjectsQueryDTO,
     @CurrentOrganizationId() organizationId: string,

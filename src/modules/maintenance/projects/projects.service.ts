@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import type { Project } from '@prisma/client';
 import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
@@ -9,6 +9,8 @@ import { ClientsService } from '../clients/clients.service';
 
 @Injectable()
 export class ProjectsService {
+  private readonly logger = new Logger(ProjectsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly clientsService: ClientsService,
@@ -57,6 +59,14 @@ export class ProjectsService {
     const clientMap = await this.clientsService.getClientMap(organizationId, apptivoClientIds);
 
     const projects = workOrders.map((wo) => normalizeProject(wo, clientMap));
+
+    for (let i = 0; i < projects.length; i++) {
+      if (!projects[i].clientId) {
+        this.logger.warn(
+          `Work order "${workOrders[i].workOrderNumber}" (customer: "${workOrders[i].customerName || 'unknown'}") could not be linked to a client — apptivoId "${workOrders[i].customerId}" not found in client map. The project will be created without a client.`,
+        );
+      }
+    }
     const apptivoIds = projects.map((p) => p.apptivoId);
 
     const upserts = projects.map(({ apptivoId, clientId, ...data }) =>
@@ -83,29 +93,58 @@ export class ProjectsService {
   }
 
   private async fetchApptivoWorkOrders(): Promise<WorkOrder[]> {
-    const url = `${env.APPTIVO_API_RESOURCE}&numRecords=1000&apiKey=${env.APPTIVO_API_KEY}&accessKey=${env.APPTIVO_API_ACCESS_KEY}`;
+    const allWorkOrders: WorkOrder[] = [];
+    let startIndex = 0;
+    const batchSize = 500;
+    const maxIterations = 20;
+    let iterations = 0;
+    let hitCap = false;
 
-    let payload: ApptivoResponse<WorkOrder>;
-    try {
-      const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    while (iterations < maxIterations) {
+      const url = `${env.APPTIVO_API_RESOURCE}&numRecords=${batchSize}&startIndex=${startIndex}&apiKey=${env.APPTIVO_API_KEY}&accessKey=${env.APPTIVO_API_ACCESS_KEY}`;
 
-      if (!response.ok) {
-        throw new HttpException('Failed to fetch Apptivo data', HttpStatus.BAD_GATEWAY);
+      let payload: ApptivoResponse<WorkOrder>;
+      try {
+        const response = await fetch(url, { headers: { Accept: 'application/json' } });
+
+        if (!response.ok) {
+          throw new HttpException('Failed to fetch Apptivo data', HttpStatus.BAD_GATEWAY);
+        }
+
+        payload = await response.json();
+      } catch (error) {
+        if (error instanceof HttpException) throw error;
+        throw new HttpException('Network error while fetching Apptivo data', HttpStatus.BAD_GATEWAY);
       }
 
-      payload = await response.json();
-    } catch (error) {
-      if (error instanceof HttpException) throw error;
-      throw new HttpException('Network error while fetching Apptivo data', HttpStatus.BAD_GATEWAY);
+      const items = payload?.data;
+
+      if (!Array.isArray(items)) {
+        throw new HttpException('Unexpected Apptivo response structure', HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+
+      if (items.length === 0) break;
+
+      allWorkOrders.push(...items);
+
+      if (items.length < batchSize) break;
+
+      startIndex += items.length;
+      iterations++;
+
+      if (iterations === maxIterations) {
+        hitCap = true;
+      }
     }
 
-    const items = payload?.data;
-
-    if (!Array.isArray(items)) {
-      throw new HttpException('Unexpected Apptivo response structure', HttpStatus.INTERNAL_SERVER_ERROR);
+    if (hitCap) {
+      throw new HttpException(
+        'Apptivo fetch exceeded maximum page limit — sync aborted to prevent partial purge',
+        HttpStatus.BAD_GATEWAY,
+      );
     }
 
-    return items;
+    return allWorkOrders;
   }
 }
 

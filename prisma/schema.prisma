@@ -329,6 +329,7 @@ model Client {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([organizationId, apptivoId])
+  @@unique([organizationId, customerName])
   @@index([organizationId])
   @@map("clients")
 }

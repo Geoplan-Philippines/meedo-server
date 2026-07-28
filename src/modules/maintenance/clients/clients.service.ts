@@ -82,11 +82,15 @@ export class ClientsService {
     });
     const existingByName = new Map(existingClients.map((c) => [c.customerName, c.apptivoId]));
 
-    for (const [customerName, apptivoId] of byName) {
+    // Identity decision: (organizationId, customerName) is the canonical client identity.
+    // Changed from apptivoId-based identity to name-based If this causes issues (e.g. orphaned
+    // project links), consider switching to apptivoId-based identity or a hybrid approach
+    // that reconciles apptivoIds on conflict.  
+      for (const [customerName, apptivoId] of byName) {
       const existingApptivoId = existingByName.get(customerName);
       if (existingApptivoId && existingApptivoId !== apptivoId) {
         this.logger.warn(
-          `Apptivo sent apptivoId "${apptivoId}" for existing client "${customerName}" (org ${organizationId}), which already has apptivoId "${existingApptivoId}". Keeping existing apptivoId — investigate possible duplicate customer on Apptivo's side.`,
+          `Apptivo sent apptivoId "${apptivoId}" for existing client "${customerName}" (org ${organizationId}), which already has apptivoId "${existingApptivoId}". Keeping existing apptivoId — projects linked via this customerName will resolve to the old apptivoId and may be orphaned.`,
         );
       }
     }

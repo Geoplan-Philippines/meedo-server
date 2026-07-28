@@ -112,6 +112,10 @@ interface RawProjectRow {
   customer_name: string | null;
 }
 
+interface RawProjectCountRow {
+  count: bigint;
+}
+
 @Injectable()
 export class TimesheetService {
   constructor(private prisma: PrismaService) {}
@@ -814,37 +818,26 @@ export class TimesheetService {
     await this.resolveMember(organizationId, userId);
     const { page, limit, search } = query;
     const searchTerm = search || null;
+    const whereClause = this.buildProjectSearchWhere(organizationId, searchTerm);
 
-    const where: Prisma.ProjectWhereInput = {
-      organizationId,
-      ...(searchTerm
-        ? {
-            OR: [
-              { client: { customerName: { contains: searchTerm, mode: 'insensitive' } } },
-              { workOrderNumber: { contains: searchTerm, mode: 'insensitive' } },
-              { client: null },
-            ],
-          }
-        : {}),
-    };
-
-    const [rows, total] = await Promise.all([
+    const [rows, countRows] = await Promise.all([
       this.prisma.$queryRaw<RawProjectRow[]>(Prisma.sql`
         SELECT p.id, p.work_order_number, p.status, p.reported_date, c.customer_name
         FROM projects p
         LEFT JOIN clients c ON c.id = p.client_id
-        WHERE p.organization_id = ${organizationId}
-          AND (
-            ${searchTerm}::text IS NULL
-            OR c.customer_name ILIKE '%' || ${searchTerm} || '%'
-            OR p.work_order_number ILIKE '%' || ${searchTerm} || '%'
-            OR p.client_id IS NULL
-          )
+        ${whereClause}
         ORDER BY c.customer_name ASC NULLS LAST, p.work_order_number ASC
         LIMIT ${limit} OFFSET ${(page - 1) * limit}
       `),
-      this.prisma.project.count({ where }),
+      this.prisma.$queryRaw<RawProjectCountRow[]>(Prisma.sql`
+        SELECT COUNT(*) AS count
+        FROM projects p
+        LEFT JOIN clients c ON c.id = p.client_id
+        ${whereClause}
+      `),
     ]);
+
+    const total = Number(countRows[0]?.count ?? 0);
 
     const projects = rows.map((r) => ({
       id: r.id,
@@ -1054,6 +1047,19 @@ export class TimesheetService {
         ...(end ? { lte: end } : {}),
       },
     };
+  }
+
+  // Used only by getProjects
+  private buildProjectSearchWhere(organizationId: string, searchTerm: string | null): Prisma.Sql {
+    return Prisma.sql`
+      WHERE p.organization_id = ${organizationId}
+        AND (
+          ${searchTerm}::text IS NULL
+          OR c.customer_name ILIKE '%' || ${searchTerm} || '%'
+          OR p.work_order_number ILIKE '%' || ${searchTerm} || '%'
+          OR p.client_id IS NULL
+        )
+    `;
   }
 }
 
