@@ -104,6 +104,14 @@ interface TimesheetExportResult {
   mimeType: string;
 }
 
+interface RawProjectRow {
+  id: string;
+  work_order_number: string;
+  status: string;
+  reported_date: Date | null;
+  customer_name: string | null;
+}
+
 @Injectable()
 export class TimesheetService {
   constructor(private prisma: PrismaService) {}
@@ -805,35 +813,46 @@ export class TimesheetService {
   ) {
     await this.resolveMember(organizationId, userId);
     const { page, limit, search } = query;
+    const searchTerm = search || null;
 
     const where: Prisma.ProjectWhereInput = {
       organizationId,
-      ...(search
+      ...(searchTerm
         ? {
             OR: [
-              { client: { customerName: { contains: search, mode: 'insensitive' } } },
-              { workOrderNumber: { contains: search, mode: 'insensitive' } },
+              { client: { customerName: { contains: searchTerm, mode: 'insensitive' } } },
+              { workOrderNumber: { contains: searchTerm, mode: 'insensitive' } },
+              { client: null },
             ],
           }
         : {}),
     };
 
-    const [projects, total] = await Promise.all([
-      this.prisma.project.findMany({
-        where,
-        select: {
-          id:              true,
-          workOrderNumber: true,
-          status:          true,
-          reportedDate:    true,
-          client:          { select: { customerName: true } },
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: [{ client: { customerName: 'asc' } }, { workOrderNumber: 'asc' }],
-      }),
+    const [rows, total] = await Promise.all([
+      this.prisma.$queryRaw<RawProjectRow[]>(Prisma.sql`
+        SELECT p.id, p.work_order_number, p.status, p.reported_date, c.customer_name
+        FROM projects p
+        LEFT JOIN clients c ON c.id = p.client_id
+        WHERE p.organization_id = ${organizationId}
+          AND (
+            ${searchTerm}::text IS NULL
+            OR c.customer_name ILIKE '%' || ${searchTerm} || '%'
+            OR p.work_order_number ILIKE '%' || ${searchTerm} || '%'
+            OR p.client_id IS NULL
+          )
+        ORDER BY c.customer_name ASC NULLS LAST, p.work_order_number ASC
+        LIMIT ${limit} OFFSET ${(page - 1) * limit}
+      `),
       this.prisma.project.count({ where }),
     ]);
+
+    const projects = rows.map((r) => ({
+      id: r.id,
+      workOrderNumber: r.work_order_number,
+      status: r.status,
+      reportedDate: r.reported_date,
+      client: r.customer_name !== null ? { customerName: r.customer_name } : null,
+    }));
 
     return { data: projects, meta: buildPaginationMeta(total, page, limit) };
   }

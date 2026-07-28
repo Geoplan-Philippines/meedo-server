@@ -1,4 +1,5 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
@@ -14,6 +15,8 @@ type ClientWithCount = Prisma.ClientGetPayload<{ include: typeof CLIENT_INCLUDE 
 
 @Injectable()
 export class ClientsService {
+  private readonly logger = new Logger(ClientsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async getAllClients(query: GetAllClientsQueryDTO, organizationId: string): Promise<PaginatedResponse<ClientWithCount>> {
@@ -49,30 +52,60 @@ export class ClientsService {
       return { synced: 0, deleted: 0 };
     }
 
-    const apptivoIds = validCustomers.map((c) => String(c.customerId).trim());
+    // (organizationId, customerName) is the canonical client identity.
+    // If Apptivo sends the same name under multiple apptivoIds in one batch,
+    // the first one seen wins; the rest are reconciled against it below.
+    const byName = new Map<string, string>(); // customerName -> apptivoId
+    for (const c of validCustomers) {
+      const customerName = (c.customerName ?? '').trim();
 
-    const upserts = validCustomers.map((c) => {
+
+
       const apptivoId = String(c.customerId).trim();
-      const data: ClientInput = {
-        apptivoId,
-        customerName: c.customerName || '',
-      };
+      
 
-      return this.prisma.client.upsert({
-        where: { organizationId_apptivoId: { organizationId, apptivoId } },
-        update: { customerName: data.customerName },
-        create: { ...data, organization: { connect: { id: organizationId } } },
-      });
+      if (customerName === '') {
+        this.logger.warn(`Skipping Apptivo customer ${apptivoId}: missing customerName, cannot resolve client identity.`);
+        continue;
+      }
+
+      if (!byName.has(customerName)) {
+        byName.set(customerName, apptivoId);
+      }
+    }
+
+    const incomingNames = Array.from(byName.keys());
+
+    const existingClients = await this.prisma.client.findMany({
+      where: { organizationId, customerName: { in: incomingNames } },
+      select: { customerName: true, apptivoId: true },
     });
+    const existingByName = new Map(existingClients.map((c) => [c.customerName, c.apptivoId]));
 
-    const purge = this.prisma.client.deleteMany({
-      where: { organizationId, apptivoId: { notIn: apptivoIds } },
-    });
+    for (const [customerName, apptivoId] of byName) {
+      const existingApptivoId = existingByName.get(customerName);
+      if (existingApptivoId && existingApptivoId !== apptivoId) {
+        this.logger.warn(
+          `Apptivo sent apptivoId "${apptivoId}" for existing client "${customerName}" (org ${organizationId}), which already has apptivoId "${existingApptivoId}". Keeping existing apptivoId — investigate possible duplicate customer on Apptivo's side.`,
+        );
+      }
+    }
+    const toCreate = incomingNames.filter((name) => !existingByName.has(name));
 
-    const results = await this.prisma.$transaction([...upserts, purge]);
-    const deleted = (results.at(-1) as { count: number }).count;
+    const [, { count: deleted }] = await this.prisma.$transaction([
+      this.prisma.client.createMany({
+        data: toCreate.map((name) => {
+          const data: ClientInput = { apptivoId: byName.get(name)!, customerName: name };
+          return { ...data, organizationId };
+        }),
+        skipDuplicates: true,
+      }),
+      this.prisma.client.deleteMany({
+        where: { organizationId, customerName: { notIn: incomingNames } },
+      }),
+    ]);
 
-    return { synced: validCustomers.length, deleted };
+    return { synced: incomingNames.length, deleted };
   }
 
   async getClientMap(organizationId: string, apptivoClientIds: string[]): Promise<Map<string, string>> {
