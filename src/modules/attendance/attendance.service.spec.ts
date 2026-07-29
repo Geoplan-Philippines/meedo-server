@@ -15,7 +15,7 @@ const DAY_KEY_ISO = '2026-06-24T16:00:00.000Z';
 const mockTx = {
   attendanceEvent: {
     create: jest.fn(),
-    aggregate: jest.fn(),
+    findFirst: jest.fn(),
   },
   attendance: {
     upsert: jest.fn(),
@@ -56,9 +56,10 @@ describe('AttendanceService', () => {
     it('persists a FIELD_IN with the derived source and MANUAL origin', async () => {
       const createdEvent = { id: 'event-1' };
       mockTx.attendanceEvent.create.mockResolvedValue(createdEvent);
-      mockTx.attendanceEvent.aggregate.mockResolvedValue({
-        _min: { timestamp: FIRST_IN },
-        _max: { timestamp: FIRST_IN },
+      // Only event of the day: it is both the first and the latest event.
+      mockTx.attendanceEvent.findFirst.mockResolvedValue({
+        timestamp: FIRST_IN,
+        eventType: AttendanceEventType.FIELD_IN,
       });
 
       const result = await service.recordAttendanceEvent(EMPLOYEE_ID, {
@@ -81,10 +82,13 @@ describe('AttendanceService', () => {
     it('computes first-in / last-out / billable hours across merged sources', async () => {
       mockTx.attendanceEvent.create.mockResolvedValue({ id: 'event-2' });
       // Day already has an 08:00 office tap; the new 17:00 field-out closes it.
-      mockTx.attendanceEvent.aggregate.mockResolvedValue({
-        _min: { timestamp: FIRST_IN },
-        _max: { timestamp: LAST_OUT },
-      });
+      mockTx.attendanceEvent.findFirst.mockImplementation(({ orderBy }) =>
+        Promise.resolve(
+          orderBy.timestamp === 'asc'
+            ? { timestamp: FIRST_IN }
+            : { timestamp: LAST_OUT, eventType: AttendanceEventType.FIELD_OUT },
+        ),
+      );
 
       await service.recordAttendanceEvent(EMPLOYEE_ID, {
         eventType: AttendanceEventType.FIELD_OUT,
@@ -102,6 +106,90 @@ describe('AttendanceService', () => {
         },
         update: { firstIn: FIRST_IN, lastOut: LAST_OUT, billableHours: 9 },
       });
+    });
+
+    it('leaves last-out and billable hours null while the session is still open', async () => {
+      mockTx.attendanceEvent.create.mockResolvedValue({ id: 'event-3' });
+      // Only a clock-in so far: the day's latest event is an "in", not an OUT.
+      mockTx.attendanceEvent.findFirst.mockResolvedValue({
+        timestamp: FIRST_IN,
+        eventType: AttendanceEventType.OFFICE_IN,
+      });
+
+      await service.recordAttendanceEvent(EMPLOYEE_ID, {
+        eventType: AttendanceEventType.OFFICE_IN,
+        timestamp: FIRST_IN.toISOString(),
+      });
+
+      expect(mockTx.attendance.upsert).toHaveBeenCalledWith({
+        where: { employeeId_date: { employeeId: EMPLOYEE_ID, date: new Date(DAY_KEY_ISO) } },
+        create: {
+          employeeId: EMPLOYEE_ID,
+          date: new Date(DAY_KEY_ISO),
+          firstIn: FIRST_IN,
+          lastOut: null,
+          billableHours: null,
+        },
+        update: { firstIn: FIRST_IN, lastOut: null, billableHours: null },
+      });
+    });
+
+    it('never seeds first-in from an OUT with no prior IN (no 0-hour record)', async () => {
+      mockTx.attendanceEvent.create.mockResolvedValue({ id: 'event-4' });
+      // The day holds only an OUT: the first-IN lookup excludes OUT types and
+      // finds nothing, so no bogus firstIn == lastOut record is written.
+      mockTx.attendanceEvent.findFirst.mockImplementation(({ orderBy }) =>
+        Promise.resolve(
+          orderBy.timestamp === 'asc'
+            ? null
+            : { timestamp: FIRST_IN, eventType: AttendanceEventType.OFFICE_OUT },
+        ),
+      );
+
+      await service.recordAttendanceEvent(EMPLOYEE_ID, {
+        eventType: AttendanceEventType.OFFICE_OUT,
+        timestamp: FIRST_IN.toISOString(),
+      });
+
+      const firstInLookup = mockTx.attendanceEvent.findFirst.mock.calls.find(
+        ([args]) => args.orderBy.timestamp === 'asc',
+      )?.[0];
+      expect(firstInLookup.where.eventType).toEqual({
+        notIn: [
+          AttendanceEventType.OFFICE_OUT,
+          AttendanceEventType.FIELD_OUT,
+          AttendanceEventType.WFH_OUT,
+        ],
+      });
+      expect(mockTx.attendance.upsert).not.toHaveBeenCalled();
+      expect(mockTx.attendance.deleteMany).toHaveBeenCalledWith({
+        where: { employeeId: EMPLOYEE_ID, date: new Date(DAY_KEY_ISO) },
+      });
+    });
+
+    it('anchors first-in to the earliest genuine IN, not an earlier orphan OUT', async () => {
+      mockTx.attendanceEvent.create.mockResolvedValue({ id: 'event-5' });
+      // Timeline: an early orphan OUT, then the real 08:00 IN, then the 17:00
+      // OUT. The OUT-excluding asc lookup returns the 08:00 IN as firstIn, so
+      // billable hours run from the real clock-in, not the stray OUT.
+      mockTx.attendanceEvent.findFirst.mockImplementation(({ orderBy }) =>
+        Promise.resolve(
+          orderBy.timestamp === 'asc'
+            ? { timestamp: FIRST_IN }
+            : { timestamp: LAST_OUT, eventType: AttendanceEventType.OFFICE_OUT },
+        ),
+      );
+
+      await service.recordAttendanceEvent(EMPLOYEE_ID, {
+        eventType: AttendanceEventType.OFFICE_OUT,
+        timestamp: LAST_OUT.toISOString(),
+      });
+
+      expect(mockTx.attendance.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: { firstIn: FIRST_IN, lastOut: LAST_OUT, billableHours: 9 },
+        }),
+      );
     });
 
     it('rejects a future timestamp', async () => {

@@ -16,8 +16,8 @@ export class AttendanceScheduler {
 
   /**
    * Auto-clock out every still-open session at the cutoff hour, company time.
-   * A real punch after the cutoff still wins, since `lastOut` is the day's
-   * maximum event timestamp.
+   * A real punch after the cutoff still wins, since it becomes the day's latest
+   * OUT event and `lastOut` is derived from that.
    */
   @Cron(`0 ${AUTO_CLOCK_OUT_HOUR} * * *`, {
     name: 'auto-clock-out',

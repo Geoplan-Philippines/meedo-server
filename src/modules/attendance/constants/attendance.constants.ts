@@ -59,8 +59,8 @@ export const SOURCE_AUTO_OUT_EVENT: Record<AttendanceSource, AttendanceEventType
 
 /**
  * Local hour (Asia/Manila) at which an employee still clocked in is automatically
- * clocked out. A real punch after this time still wins, because `lastOut` is the
- * day's maximum event timestamp.
+ * clocked out. A real punch after this time still wins: it becomes the day's
+ * latest OUT event, which is what `lastOut` is derived from.
  */
 export const AUTO_CLOCK_OUT_HOUR = 18;
 

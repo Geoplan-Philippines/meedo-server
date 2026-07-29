@@ -90,9 +90,10 @@ export class AttendanceService {
    * skipped, so overlapping poll windows never double-count; taps for unknown
    * biometric IDs are ignored. Returns the number of new events stored.
    *
-   * A tap is just a presence mark: the day's first tap becomes `firstIn` and its
-   * last becomes `lastOut` via the usual MIN/MAX recompute. A lone tap with no
-   * closing punch stays "open" and is auto-clocked-out at the cutoff hour.
+   * A tap is just a presence mark: the day's first tap becomes `firstIn`, but a
+   * bare tap never closes the day, so `lastOut` stays null until an explicit OUT
+   * or the auto-clock-out at the cutoff. A lone tap with no closing punch stays
+   * "open" and is auto-clocked-out at the cutoff hour.
    */
   async ingestBiometricAccess(taps: BiometricTap[]): Promise<number> {
     return (await this.ingestBiometricAccessDetailed(taps)).ingested;
@@ -200,9 +201,10 @@ export class AttendanceService {
    *
    * Only sessions whose latest event is still an "in" and falls before the
    * cutoff are closed; anyone who already clocked out — or who later punches out
-   * past 18:00 — keeps their real `lastOut`, since it is the day's maximum event
-   * timestamp. Re-running is safe: an auto-closed day's latest event is now an
-   * OUT, so it is skipped. Returns the number of sessions closed.
+   * past 18:00 — keeps their real `lastOut`, since the recompute takes the
+   * timestamp of the day's latest OUT event. Re-running is safe: an auto-closed
+   * day's latest event is now an OUT, so it is skipped. Returns the number of
+   * sessions closed.
    */
   async runAutoClockOut(now: Date = new Date()): Promise<number> {
     const dayKey = getAttendanceDayKey(now);
@@ -512,22 +514,47 @@ export class AttendanceService {
     dayKey: Date,
   ): Promise<void> {
     const { start, end } = getAttendanceDayRange(dayKey);
+    const window = { employeeId, timestamp: { gte: start, lt: end } };
 
-    const bounds = await tx.attendanceEvent.aggregate({
-      where: { employeeId, timestamp: { gte: start, lt: end } },
-      _min: { timestamp: true },
-      _max: { timestamp: true },
-    });
+    const [firstInEvent, latestEvent] = await Promise.all([
+      // `firstIn` is anchored to the day's first genuine clock-in / presence
+      // event, so OUT types are excluded here. An OUT with no prior IN (a stray
+      // biometric OUT, or a forgotten clock-in) must never seed `firstIn` — that
+      // would otherwise make the OUT both first-in and last-out and materialize a
+      // bogus 0-hour record.
+      tx.attendanceEvent.findFirst({
+        where: { ...window, eventType: { notIn: [...OUT_EVENT_TYPES] } },
+        orderBy: { timestamp: 'asc' },
+        select: { timestamp: true },
+      }),
+      tx.attendanceEvent.findFirst({
+        where: window,
+        orderBy: { timestamp: 'desc' },
+        select: { timestamp: true, eventType: true },
+      }),
+    ]);
 
-    const firstIn = bounds._min.timestamp;
-    const lastOut = bounds._max.timestamp;
-
-    if (!firstIn || !lastOut) {
+    // No genuine clock-in means there is no session to materialize: a day of only
+    // orphan OUT events is treated the same as a day with no events at all. The
+    // raw OUT events still remain queryable in the timeline for audit.
+    if (!firstInEvent) {
       await tx.attendance.deleteMany({ where: { employeeId, date: start } });
       return;
     }
 
-    const billableHours = computeBillableHours(firstIn, lastOut);
+    const firstIn = firstInEvent.timestamp;
+
+    // The day is closed only once its latest event is an explicit clock-out
+    // (`OUT_EVENT_TYPES`); until then the session is still open. A lone clock-in
+    // — or any run of in/presence events with no closing punch — therefore keeps
+    // lastOut/billableHours null instead of back-filling a last-out equal to the
+    // first-in. A bare biometric tap never closes the day (see `isOpenSession`),
+    // so it stays open until the real OUT or the auto-clock-out at the cutoff.
+    // With `firstIn` gated to a real IN, a latest OUT is always at/after it, so
+    // `billableHours` can never go negative.
+    const lastOut =
+      latestEvent && OUT_EVENT_TYPES.has(latestEvent.eventType) ? latestEvent.timestamp : null;
+    const billableHours = lastOut ? computeBillableHours(firstIn, lastOut) : null;
 
     await tx.attendance.upsert({
       where: { employeeId_date: { employeeId, date: start } },
