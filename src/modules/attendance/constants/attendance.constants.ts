@@ -1,6 +1,7 @@
 import { AttendanceEventType, AttendanceSource, Prisma } from '@prisma/client';
 
 import { PaginationMeta } from 'src/common/responses/paginated-api.response';
+import { AttendanceDayStatus } from '../utils/attendance-status.util';
 
 /**
  * Company timezone (IANA). Single source of truth for the cron schedule and the
@@ -67,12 +68,16 @@ export const AUTO_CLOCK_OUT_HOUR = 18;
 export type AttendanceRecord = Prisma.AttendanceGetPayload<object>;
 export type AttendanceEventRecord = Prisma.AttendanceEventGetPayload<object>;
 
-/** Computed view of a single attendance day plus its underlying timeline. */
+/** A materialized day plus its schedule-derived grade (status, expected vs worked, lateness). */
+export type EnrichedAttendanceRecord = AttendanceRecord & { status: AttendanceDayStatus };
+
+/** Computed view of a single attendance day plus its underlying timeline and grade. */
 export interface DailyAttendanceSummary {
   date: Date;
   firstIn: Date | null;
   lastOut: Date | null;
   billableHours: number | null;
+  status: AttendanceDayStatus;
   events: AttendanceEventRecord[];
 }
 
@@ -89,6 +94,7 @@ export interface RosterEntry {
   firstIn: Date | null;
   lastOut: Date | null;
   clockedHours: number | null;
+  status: AttendanceDayStatus;
 }
 
 /**

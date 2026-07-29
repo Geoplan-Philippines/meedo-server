@@ -34,6 +34,7 @@ model User {
   teamMembers                   TeamMember[]
   timesheetEntries              TimesheetEntry[]
   timesheetAuditTargets         TimesheetAuditLog[]       @relation("TimesheetAuditTargetUser")
+  scheduleAssignments           EmployeeScheduleAssignment[]
 
   @@map("users")
 }
@@ -117,6 +118,12 @@ model Organization {
   timesheetEntries              TimesheetEntry[]
   timesheetPeriodLocks          TimesheetPeriodLock[]
   timesheetAuditLogs            TimesheetAuditLog[]
+  attendancePolicy              AttendancePolicy?
+  shifts                        Shift[]
+  weeklySchedules               WeeklySchedule[]
+  holidays                      Holiday[]
+  teamScheduleAssignments       TeamScheduleAssignment[]
+  employeeScheduleAssignments   EmployeeScheduleAssignment[]
   clients                       Client[]
 
   @@map("organizations")
@@ -135,6 +142,7 @@ model Team {
   teamMembers                   TeamMember[]
   invitations                   Invitation[]
   tickets                       Tickets[]
+  scheduleAssignment            TeamScheduleAssignment?
 
   @@map("teams")
   @@index([organizationId])
@@ -691,6 +699,167 @@ model Attendance {
   @@map("attendances")
 }
 
+model AttendancePolicy {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @unique @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  timezone                      String                    @default("Asia/Manila")
+  autoClockOutEnabled           Boolean                   @default(true) @map("auto_clock_out_enabled")
+  autoClockOutTime              String                    @default("18:00") @map("auto_clock_out_time")
+  standardHoursPerDay           Float                     @default(8) @map("standard_hours_per_day")
+  standardHoursPerWeek          Float                     @default(40) @map("standard_hours_per_week")
+  maxHoursPerDay                Float                     @default(24) @map("max_hours_per_day")
+  graceMinutes                  Int                       @default(15) @map("grace_minutes")
+  lunchMinutes                  Int                       @default(60) @map("lunch_minutes")
+  lunchIsPaid                   Boolean                   @default(false) @map("lunch_is_paid")
+  overtimeAfterHoursPerDay      Float                     @default(8) @map("overtime_after_hours_per_day")
+  minimumOvertimeMinutes        Int                       @default(30) @map("minimum_overtime_minutes")
+  overtimeMultiplier            Float                     @default(1.25) @map("overtime_multiplier")
+  restDayMultiplier             Float                     @default(1.30) @map("rest_day_multiplier")
+  nightDifferentialMultiplier   Float                     @default(0.10) @map("night_differential_multiplier")
+  nightDifferentialStart        String                    @default("22:00") @map("night_differential_start")
+  nightDifferentialEnd          String                    @default("06:00") @map("night_differential_end")
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@map("attendance_policies")
+}
+
+model Shift {
+  id                            String                    @id @default(uuid())
+  name                          String
+  startTime                     String                    @map("start_time")
+  endTime                       String                    @map("end_time")
+  breakMinutes                  Int                       @default(60) @map("break_minutes")
+  graceMinutes                  Int?                      @map("grace_minutes")
+  crossesMidnight               Boolean                   @default(false) @map("crosses_midnight")
+  isFlexible                    Boolean                   @default(false) @map("is_flexible")
+  color                         String?                   @default("#6B7280")
+  isActive                      Boolean                   @default(true) @map("is_active")
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  scheduleDays                  WeeklyScheduleDay[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("shifts")
+}
+
+model WeeklySchedule {
+  id                            String                    @id @default(uuid())
+  name                          String
+  isDefault                     Boolean                   @default(false) @map("is_default")
+  isActive                      Boolean                   @default(true) @map("is_active")
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  days                          WeeklyScheduleDay[]
+  teamAssignments               TeamScheduleAssignment[]
+  employeeAssignments           EmployeeScheduleAssignment[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("weekly_schedules")
+}
+
+model WeeklyScheduleDay {
+  id                            String                    @id @default(uuid())
+
+  weeklyScheduleId              String                    @map("weekly_schedule_id")
+  weeklySchedule                WeeklySchedule            @relation(fields: [weeklyScheduleId], references: [id], onDelete: Cascade)
+
+  dayOfWeek                     DayOfWeek                 @map("day_of_week")
+  isWorkingDay                  Boolean                   @default(true) @map("is_working_day")
+  expectedSource                AttendanceSource?         @map("expected_source")
+
+  // When false, lateness is not recorded for this day (e.g. a flexible WFH day).
+  trackLateness                 Boolean                   @default(true) @map("track_lateness")
+
+  shiftId                       String?                   @map("shift_id")
+  shift                         Shift?                    @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([weeklyScheduleId, dayOfWeek])
+  @@index([weeklyScheduleId])
+  @@map("weekly_schedule_days")
+}
+
+model Holiday {
+  id                            String                    @id @default(uuid())
+  name                          String
+  date                          DateTime                  @map("date")
+  type                          HolidayType               @default(REGULAR)
+  isRecurring                   Boolean                   @default(false) @map("is_recurring")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, date, name])
+  @@index([organizationId])
+  @@index([organizationId, date])
+  @@map("holidays")
+}
+
+model TeamScheduleAssignment {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  teamId                        String                    @unique @map("team_id")
+  team                          Team                      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  weeklyScheduleId              String                    @map("weekly_schedule_id")
+  weeklySchedule                WeeklySchedule            @relation(fields: [weeklyScheduleId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([weeklyScheduleId])
+  @@map("team_schedule_assignments")
+}
+
+model EmployeeScheduleAssignment {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId                        String                    @map("user_id")
+  user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  weeklyScheduleId              String                    @map("weekly_schedule_id")
+  weeklySchedule                WeeklySchedule            @relation(fields: [weeklyScheduleId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("employee_schedule_assignments")
+}
+
 enum FaceProfileStatus {
   PENDING
   ACTIVE
@@ -769,4 +938,20 @@ enum AttendanceOrigin {
   BIOMETRICS
   MANUAL
   AUTO
+}
+
+enum HolidayType {
+  REGULAR
+  SPECIAL_NON_WORKING
+  SPECIAL_WORKING
+}
+
+enum DayOfWeek {
+  SUNDAY
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
 }

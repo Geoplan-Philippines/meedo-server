@@ -3,6 +3,7 @@ import {
   IsIn,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -33,4 +34,9 @@ export class UpdateMemberDTO {
   @IsOptional()
   @IsString()
   teamId?: string | null;
+
+  /** Weekly schedule assignment; pass null to clear it. */
+  @IsOptional()
+  @IsUUID()
+  weeklyScheduleId?: string | null;
 }
