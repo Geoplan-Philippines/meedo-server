@@ -13,7 +13,7 @@ const mockEntry = {
   workDate:              new Date('2026-06-22T00:00:00.000Z'),
   hours:                 8,
   location:              'OFC - DW',
-  workType:              TimesheetWorkType.OFFICE_DIRECT_WORK,
+  workType:              TimesheetWorkType.REGULAR,
   task:                  'Inspection work',
   projectDescription:    null,
   isOvertime:            false,
@@ -236,10 +236,48 @@ describe('TimesheetService', () => {
         BadRequestException,
       );
     });
+
+    it('resets a rejected entry back to draft and clears its rejection metadata', async () => {
+      const rejectedEntry = {
+        ...mockEntry,
+        status:             TimesheetEntryStatus.REJECTED,
+        rejectedAt:         new Date('2026-06-23T00:00:00.000Z'),
+        rejectedByMemberId: 'member-2',
+        rejectionReason:    'Missing details',
+      };
+      const updated = {
+        ...rejectedEntry,
+        hours:              6,
+        status:             TimesheetEntryStatus.DRAFT,
+        rejectedAt:          null,
+        rejectedByMemberId:  null,
+        rejectionReason:     null,
+      };
+      mockPrismaService.timesheetEntry.findFirst.mockResolvedValue(rejectedEntry);
+      mockTx.timesheetEntry.update.mockResolvedValue(updated);
+      mockTx.timesheetAuditLog.create.mockResolvedValue({ id: 'audit-1' });
+
+      const result = await service.updateEntry('entry-1', 'org-1', 'user-1', { hours: 6 });
+
+      expect(mockTx.timesheetEntry.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status:             TimesheetEntryStatus.DRAFT,
+            rejectedAt:         null,
+            rejectedByMemberId: null,
+            rejectionReason:    null,
+          }),
+        }),
+      );
+      expect(result.status).toBe(TimesheetEntryStatus.DRAFT);
+      expect(result.rejectedAt).toBeNull();
+      expect(result.rejectedByMemberId).toBeNull();
+      expect(result.rejectionReason).toBeNull();
+    });
   });
 
   describe('deleteEntry', () => {
-    it('deletes only draft entries and records the delete audit log', async () => {
+    it('deletes draft entries and records the delete audit log', async () => {
       mockPrismaService.timesheetEntry.findFirst.mockResolvedValue(mockEntry);
       mockTx.timesheetAuditLog.create.mockResolvedValue({ id: 'audit-1' });
       mockTx.timesheetEntry.delete.mockResolvedValue(mockEntry);
@@ -250,6 +288,31 @@ describe('TimesheetService', () => {
         expect.objectContaining({ data: expect.objectContaining({ action: 'DELETED' }) }),
       );
       expect(mockTx.timesheetEntry.delete).toHaveBeenCalledWith({ where: { id: 'entry-1' } });
+    });
+
+    it('deletes rejected entries', async () => {
+      mockPrismaService.timesheetEntry.findFirst.mockResolvedValue({
+        ...mockEntry,
+        status:             TimesheetEntryStatus.REJECTED,
+        rejectedAt:         new Date('2026-06-23T00:00:00.000Z'),
+        rejectedByMemberId: 'member-2',
+        rejectionReason:    'Missing details',
+      });
+      mockTx.timesheetAuditLog.create.mockResolvedValue({ id: 'audit-1' });
+      mockTx.timesheetEntry.delete.mockResolvedValue(mockEntry);
+
+      await service.deleteEntry('entry-1', 'org-1', 'user-1');
+
+      expect(mockTx.timesheetEntry.delete).toHaveBeenCalledWith({ where: { id: 'entry-1' } });
+    });
+
+    it('does not allow deleting submitted or approved entries', async () => {
+      mockPrismaService.timesheetEntry.findFirst.mockResolvedValue({
+        ...mockEntry,
+        status: TimesheetEntryStatus.SUBMITTED,
+      });
+
+      await expect(service.deleteEntry('entry-1', 'org-1', 'user-1')).rejects.toThrow(BadRequestException);
     });
   });
 

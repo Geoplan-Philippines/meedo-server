@@ -21,6 +21,7 @@ import {
   AttendanceEventRecord,
   AttendanceRecord,
   DailyAttendanceSummary,
+  EnrichedAttendanceRecord,
   EVENT_TYPE_SOURCE,
   ORG_MANAGER_ROLES,
   OUT_EVENT_TYPES,
@@ -36,12 +37,17 @@ import {
   parseAttendanceDate,
   toCompanyOffsetIso,
 } from './utils/attendance-day.util';
+import { deriveDayStatus } from './utils/attendance-status.util';
+import { ScheduleResolverService } from '../settings/attendance/assignments/resolver/schedule-resolver.service';
 
 @Injectable()
 export class AttendanceService {
   private readonly logger = new Logger(AttendanceService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private scheduleResolver: ScheduleResolverService,
+  ) {}
 
   async getRegisteredBiometricIds(): Promise<string[]> {
     const users = await this.prisma.user.findMany({
@@ -288,11 +294,12 @@ export class AttendanceService {
     });
   }
 
-  /** Paginated list of the employee's computed daily attendance, newest first. */
+  /** Paginated list of the employee's computed daily attendance, newest first, each graded against its schedule. */
   async getMyAttendanceHistory(
+    organizationId: string,
     employeeId: string,
     query: GetAttendanceHistoryQueryDTO,
-  ): Promise<PaginatedResponse<AttendanceRecord>> {
+  ): Promise<PaginatedResponse<EnrichedAttendanceRecord>> {
     const { page, limit, fromDate, toDate } = query;
     const dateFilter = this.buildDayKeyFilter(fromDate, toDate);
 
@@ -301,7 +308,7 @@ export class AttendanceService {
       ...(dateFilter ? { date: dateFilter } : {}),
     };
 
-    const [data, total] = await Promise.all([
+    const [records, total] = await Promise.all([
       this.prisma.attendance.findMany({
         where,
         orderBy: { date: 'desc' },
@@ -311,7 +318,42 @@ export class AttendanceService {
       this.prisma.attendance.count({ where }),
     ]);
 
+    const data = await this.gradeRecords(organizationId, employeeId, records);
     return { data, meta: buildPaginationMeta(total, page, limit) };
+  }
+
+  /**
+   * Layer the schedule-derived grade onto a page of raw daily records. The
+   * employee's schedule and the org policy are resolved once for the whole page;
+   * only the weekday entry and holiday match vary per date.
+   */
+  private async gradeRecords(
+    organizationId: string,
+    employeeId: string,
+    records: AttendanceRecord[],
+  ): Promise<EnrichedAttendanceRecord[]> {
+    if (records.length === 0) return [];
+
+    const dateOf = (record: AttendanceRecord): string =>
+      toCompanyOffsetIso(record.date).slice(0, 10);
+
+    const effectiveByDate = await this.scheduleResolver.resolveEffectiveForDates(
+      organizationId,
+      employeeId,
+      records.map(dateOf),
+    );
+
+    return records.map((record) => {
+      const effective = effectiveByDate.get(dateOf(record))!;
+      return {
+        ...record,
+        status: deriveDayStatus(effective, {
+          firstIn: record.firstIn,
+          lastOut: record.lastOut,
+          billableHours: record.billableHours,
+        }),
+      };
+    });
   }
 
   /** Paginated raw event timeline for the employee, newest first. */
@@ -345,11 +387,16 @@ export class AttendanceService {
    * underlying ordered timeline so the client can show how first-in/last-out
    * were derived.
    */
-  async getDailyAttendance(employeeId: string, date?: string): Promise<DailyAttendanceSummary> {
+  async getDailyAttendance(
+    organizationId: string,
+    employeeId: string,
+    date?: string,
+  ): Promise<DailyAttendanceSummary> {
     const dayKey = date ? parseAttendanceDate(date) : getAttendanceDayKey(new Date());
     const { start, end } = getAttendanceDayRange(dayKey);
+    const dateStr = toCompanyOffsetIso(dayKey).slice(0, 10);
 
-    const [attendance, events] = await Promise.all([
+    const [attendance, events, effective] = await Promise.all([
       this.prisma.attendance.findUnique({
         where: { employeeId_date: { employeeId, date: dayKey } },
       }),
@@ -357,13 +404,19 @@ export class AttendanceService {
         where: { employeeId, timestamp: { gte: start, lt: end } },
         orderBy: { timestamp: 'asc' },
       }),
+      this.scheduleResolver.resolveEffective(organizationId, employeeId, dateStr),
     ]);
+
+    const firstIn = attendance?.firstIn ?? null;
+    const lastOut = attendance?.lastOut ?? null;
+    const billableHours = attendance?.billableHours ?? null;
 
     return {
       date: dayKey,
-      firstIn: attendance?.firstIn ?? null,
-      lastOut: attendance?.lastOut ?? null,
-      billableHours: attendance?.billableHours ?? null,
+      firstIn,
+      lastOut,
+      billableHours,
+      status: deriveDayStatus(effective, { firstIn, lastOut, billableHours }),
       events,
     };
   }
@@ -381,6 +434,7 @@ export class AttendanceService {
   ): Promise<RosterResult> {
     const { page, limit, date, search } = query;
     const dayKey = date ? parseAttendanceDate(date) : getAttendanceDayKey(new Date());
+    const dateStr = toCompanyOffsetIso(dayKey).slice(0, 10);
     const manager = await this.isOrgManager(callerId, organizationId);
 
     const employee: Prisma.UserWhereInput = manager
@@ -428,16 +482,30 @@ export class AttendanceService {
       this.prisma.attendance.count({ where }),
     ]);
 
-    const data: RosterEntry[] = records.map((record) => ({
-      employeeId: record.employee.id,
-      name: record.employee.name,
-      email: record.employee.email,
-      employeeCode: record.employee.employeeCode,
-      department: record.employee.teamMembers[0]?.team.name ?? null,
-      firstIn: record.firstIn,
-      lastOut: record.lastOut,
-      clockedHours: record.billableHours,
-    }));
+    const effectiveByUser = await this.scheduleResolver.resolveEffectiveForUsers(
+      organizationId,
+      records.map((record) => record.employee.id),
+      dateStr,
+    );
+
+    const data: RosterEntry[] = records.map((record) => {
+      const effective = effectiveByUser.get(record.employee.id)!;
+      return {
+        employeeId: record.employee.id,
+        name: record.employee.name,
+        email: record.employee.email,
+        employeeCode: record.employee.employeeCode,
+        department: record.employee.teamMembers[0]?.team.name ?? null,
+        firstIn: record.firstIn,
+        lastOut: record.lastOut,
+        clockedHours: record.billableHours,
+        status: deriveDayStatus(effective, {
+          firstIn: record.firstIn,
+          lastOut: record.lastOut,
+          billableHours: record.billableHours,
+        }),
+      };
+    });
 
     return {
       data,
@@ -453,7 +521,7 @@ export class AttendanceService {
     date?: string,
   ): Promise<DailyAttendanceSummary> {
     await this.assertCanViewEmployee(organizationId, callerId, employeeId);
-    return this.getDailyAttendance(employeeId, date);
+    return this.getDailyAttendance(organizationId, employeeId, date);
   }
 
   /** A single employee's paginated daily history for the roster drill-down. */
@@ -462,9 +530,9 @@ export class AttendanceService {
     callerId: string,
     employeeId: string,
     query: GetAttendanceHistoryQueryDTO,
-  ): Promise<PaginatedResponse<AttendanceRecord>> {
+  ): Promise<PaginatedResponse<EnrichedAttendanceRecord>> {
     await this.assertCanViewEmployee(organizationId, callerId, employeeId);
-    return this.getMyAttendanceHistory(employeeId, query);
+    return this.getMyAttendanceHistory(organizationId, employeeId, query);
   }
 
   /** Managers may view anyone in the org; everyone else only themselves. */

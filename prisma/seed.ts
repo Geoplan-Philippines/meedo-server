@@ -140,7 +140,7 @@ async function main() {
 
   for (const project of TIMESHEET_PROJECTS) {
     await prisma.project.upsert({
-      where: { apptivoId: project.apptivoId },
+      where: { organizationId_apptivoId: { organizationId: org.id, apptivoId: project.apptivoId } },
       update: {
         workOrderNumber: project.workOrderNumber,
         customerName:    project.customerName,

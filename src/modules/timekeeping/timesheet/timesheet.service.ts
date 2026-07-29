@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, TimesheetAuditAction, TimesheetEntryStatus } from '@prisma/client';
+import { Prisma, TimesheetAuditAction, TimesheetEntryStatus, TimesheetWorkType } from '@prisma/client';
 import ExcelJS from 'exceljs';
 
 import { PrismaService } from '../../../core/database/prisma.service';
@@ -17,6 +17,9 @@ import { LockTimesheetPeriodDTO } from './dto/lock-timesheet-period.dto';
 import { SubmitTimesheetWeekDTO } from './dto/submit-timesheet-week.dto';
 import { UnlockTimesheetPeriodDTO } from './dto/unlock-timesheet-period.dto';
 import { UpdateTimesheetEntryDTO } from './dto/update-timesheet-entry.dto';
+
+const MAX_REGULAR_HOURS_PER_DAY = 9;
+const MAX_TOTAL_HOURS_PER_DAY = 24;
 
 const TIMESHEET_ENTRY_INCLUDE = {
   project: {
@@ -52,9 +55,10 @@ const TIMESHEET_SUMMARY_ENTRY_INCLUDE = {
   },
   user: {
     select: {
-      id:    true,
-      name:  true,
-      email: true,
+      id:           true,
+      name:         true,
+      email:        true,
+      employeeCode: true,
       teamMembers: {
         select: { team: { select: { id: true, name: true, organizationId: true } } },
       },
@@ -145,15 +149,16 @@ export class TimesheetService {
     const member = await this.resolveMember(organizationId, userId);
     await this.ensureProjectInOrganization(dto.projectId, organizationId);
     const workDate = parseDateOnly(dto.workDate);
+    const hours = this.resolveEntryHours(dto.workType ?? TimesheetWorkType.REGULAR, dto.hours);
     await this.ensureDateNotLocked(organizationId, workDate);
-    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, dto.hours);
+    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, hours, dto.isOvertime ?? false);
 
     const data = {
       organizationId,
       userId: userId!,
       projectId: dto.projectId,
       workDate,
-      hours: dto.hours,
+      hours,
       location: dto.location?.trim() || undefined,
       workType: dto.workType,
       task: dto.task.trim(),
@@ -193,24 +198,24 @@ export class TimesheetService {
     const member = await this.resolveMember(organizationId, userId);
     const existing = await this.findOwnEntryOrThrow(entryId, organizationId, userId!);
 
-    if (existing.status !== TimesheetEntryStatus.DRAFT) {
-      throw new BadRequestException('Only draft timesheet entries can be updated.');
-    }
+    this.assertCanEdit(existing.status);
 
     if (dto.projectId) {
       await this.ensureProjectInOrganization(dto.projectId, organizationId);
     }
 
     const workDate = dto.workDate !== undefined ? parseDateOnly(dto.workDate) : existing.workDate;
-    const hours = dto.hours !== undefined ? dto.hours : existing.hours;
+    const workType = dto.workType !== undefined ? dto.workType : existing.workType;
+    const hours = this.resolveEntryHours(workType, dto.hours !== undefined ? dto.hours : existing.hours);
+    const isOvertime = dto.isOvertime !== undefined ? dto.isOvertime : existing.isOvertime;
     await this.ensureDateNotLocked(organizationId, existing.workDate);
     await this.ensureDateNotLocked(organizationId, workDate);
-    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, hours, entryId);
+    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, hours, isOvertime, entryId);
 
     const data: Prisma.TimesheetEntryUncheckedUpdateInput = {
       ...(dto.projectId !== undefined ? { projectId: dto.projectId } : {}),
       ...(dto.workDate !== undefined ? { workDate } : {}),
-      ...(dto.hours !== undefined ? { hours: dto.hours } : {}),
+      hours,
       ...(dto.location !== undefined ? { location: dto.location.trim() || 'OFC - DW' } : {}),
       ...(dto.workType !== undefined ? { workType: dto.workType } : {}),
       ...(dto.task !== undefined ? { task: dto.task.trim() } : {}),
@@ -219,6 +224,15 @@ export class TimesheetService {
         : {}),
       ...(dto.isOvertime !== undefined ? { isOvertime: dto.isOvertime } : {}),
       ...(dto.isNightDifferential !== undefined ? { isNightDifferential: dto.isNightDifferential } : {}),
+      // Editing a rejected entry returns it to draft; a submitted entry stays pending after edits.
+      ...(existing.status === TimesheetEntryStatus.REJECTED
+        ? {
+            status: TimesheetEntryStatus.DRAFT,
+            rejectedAt: null,
+            rejectedByMemberId: null,
+            rejectionReason: null,
+          }
+        : {}),
     };
 
     return this.prisma.$transaction(async (tx) => {
@@ -252,9 +266,7 @@ export class TimesheetService {
     const member = await this.resolveMember(organizationId, userId);
     const existing = await this.findOwnEntryOrThrow(entryId, organizationId, userId!);
 
-    if (existing.status !== TimesheetEntryStatus.DRAFT) {
-      throw new BadRequestException('Only draft timesheet entries can be deleted.');
-    }
+    this.assertCanDelete(existing.status);
 
     await this.ensureDateNotLocked(organizationId, existing.workDate);
 
@@ -369,19 +381,20 @@ export class TimesheetService {
 
     const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds);
     this.ensureNoSelfApproval(entries, userId!);
-    await this.ensureEntriesNotLocked(organizationId, entries);
 
-    const submittedEntries = entries.filter((entry) => entry.status === TimesheetEntryStatus.SUBMITTED);
-    if (submittedEntries.length === 0) {
-      throw new BadRequestException('No submitted timesheet entries found to approve.');
+    const approvableEntries = entries.filter(
+      (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
+    );
+    if (approvableEntries.length === 0) {
+      throw new BadRequestException('No timesheet entries available to approve.');
     }
 
     const approvedAt = new Date();
-    const ids = submittedEntries.map((entry) => entry.id);
+    const ids = approvableEntries.map((entry) => entry.id);
 
     return this.prisma.$transaction(async (tx) => {
       await tx.timesheetEntry.updateMany({
-        where: { id: { in: ids }, organizationId, status: TimesheetEntryStatus.SUBMITTED },
+        where: { id: { in: ids }, organizationId, status: { in: [TimesheetEntryStatus.SUBMITTED, TimesheetEntryStatus.DRAFT] } },
         data: {
           status: TimesheetEntryStatus.APPROVED,
           approvedAt,
@@ -393,7 +406,7 @@ export class TimesheetService {
       });
 
       await tx.timesheetAuditLog.createMany({
-        data: submittedEntries.map((entry) => ({
+        data: approvableEntries.map((entry) => ({
           organizationId,
           actorMemberId: member.id,
           targetUserId: entry.userId,
@@ -437,19 +450,20 @@ export class TimesheetService {
 
     const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds);
     this.ensureNoSelfApproval(entries, userId!);
-    await this.ensureEntriesNotLocked(organizationId, entries);
 
-    const submittedEntries = entries.filter((entry) => entry.status === TimesheetEntryStatus.SUBMITTED);
-    if (submittedEntries.length === 0) {
-      throw new BadRequestException('No submitted timesheet entries found to reject.');
+    const rejectableEntries = entries.filter(
+      (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
+    );
+    if (rejectableEntries.length === 0) {
+      throw new BadRequestException('No timesheet entries available to reject.');
     }
 
     const rejectedAt = new Date();
-    const ids = submittedEntries.map((entry) => entry.id);
+    const ids = rejectableEntries.map((entry) => entry.id);
 
     return this.prisma.$transaction(async (tx) => {
       await tx.timesheetEntry.updateMany({
-        where: { id: { in: ids }, organizationId, status: TimesheetEntryStatus.SUBMITTED },
+        where: { id: { in: ids }, organizationId, status: { in: [TimesheetEntryStatus.SUBMITTED, TimesheetEntryStatus.DRAFT] } },
         data: {
           status: TimesheetEntryStatus.REJECTED,
           rejectedAt,
@@ -461,7 +475,7 @@ export class TimesheetService {
       });
 
       await tx.timesheetAuditLog.createMany({
-        data: submittedEntries.map((entry) => ({
+        data: rejectableEntries.map((entry) => ({
           organizationId,
           actorMemberId: member.id,
           targetUserId: entry.userId,
@@ -501,7 +515,7 @@ export class TimesheetService {
     const { start, end } = parsePeriodRange(query.periodStart, query.periodEnd);
     const where = this.buildSummaryWhere(organizationId, start, end, query);
 
-    const [entries, organization, lock] = await Promise.all([
+    const [entries, organization, lock, exporter] = await Promise.all([
       this.prisma.timesheetEntry.findMany({
         where,
         include: TIMESHEET_SUMMARY_ENTRY_INCLUDE,
@@ -520,6 +534,10 @@ export class TimesheetService {
           },
         },
       }),
+      this.prisma.user.findUnique({
+        where: { id: userId! },
+        select: { name: true, email: true },
+      }),
     ]);
 
     const workbook = await buildTimesheetWorkbook({
@@ -529,7 +547,7 @@ export class TimesheetService {
       organizationId,
       organizationName: organization?.name ?? 'Organization',
       organizationSlug: organization?.slug ?? organizationId,
-      exportedBy: member.id,
+      exportedBy: exporter?.name || exporter?.email || member.id,
       exportedAt: new Date(),
       isLocked: lock?.isLocked ?? false,
     });
@@ -884,26 +902,53 @@ export class TimesheetService {
     }
   }
 
+  private resolveEntryHours(workType: TimesheetWorkType, hours: number | undefined): number {
+    if (workType === TimesheetWorkType.LEAVE) {
+      return hours ?? 0;
+    }
+
+    if (hours === undefined || hours < 1 || hours > 9) {
+      throw new BadRequestException('Hours must be between 1 and 9.');
+    }
+
+    return hours;
+  }
+
   private async ensureDailyHoursLimit(
     organizationId: string,
     userId: string,
     workDate: Date,
     hours: number,
+    isOvertime: boolean,
     excludeEntryId?: string,
   ): Promise<void> {
-    const result = await this.prisma.timesheetEntry.aggregate({
-      where: {
-        organizationId,
-        userId,
-        workDate,
-        ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
-      },
-      _sum: { hours: true },
-    });
+    const where = {
+      organizationId,
+      userId,
+      workDate,
+      ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
+    };
 
-    const existingHours = result._sum.hours ?? 0;
-    if (existingHours + hours > 24) {
-      throw new BadRequestException('Total timesheet hours cannot exceed 24 hours for one work date.');
+    const [totalResult, regularResult] = await Promise.all([
+      this.prisma.timesheetEntry.aggregate({ where, _sum: { hours: true } }),
+      this.prisma.timesheetEntry.aggregate({
+        where: { ...where, isOvertime: false },
+        _sum: { hours: true },
+      }),
+    ]);
+
+    const existingTotalHours = totalResult._sum.hours ?? 0;
+    if (existingTotalHours + hours > MAX_TOTAL_HOURS_PER_DAY) {
+      throw new BadRequestException(`Total timesheet hours cannot exceed ${MAX_TOTAL_HOURS_PER_DAY} hours for one work date.`);
+    }
+
+    if (!isOvertime) {
+      const existingRegularHours = regularResult._sum.hours ?? 0;
+      if (existingRegularHours + hours > MAX_REGULAR_HOURS_PER_DAY) {
+        throw new BadRequestException(
+          `Regular hours across all projects cannot exceed ${MAX_REGULAR_HOURS_PER_DAY} hours for one work date. Mark the extra hours as overtime.`,
+        );
+      }
     }
   }
 
@@ -922,6 +967,19 @@ export class TimesheetService {
     }
 
     return entry;
+  }
+
+  private assertCanEdit(status: TimesheetEntryStatus): void {
+    // Draft, rejected, and submitted (pending) entries can be edited; approved entries are locked.
+    if (status === TimesheetEntryStatus.APPROVED) {
+      throw new BadRequestException('Approved timesheet entries can no longer be modified.');
+    }
+  }
+
+  private assertCanDelete(status: TimesheetEntryStatus): void {
+    if (status !== TimesheetEntryStatus.DRAFT && status !== TimesheetEntryStatus.REJECTED) {
+      throw new BadRequestException('Only draft or rejected timesheet entries can be deleted.');
+    }
   }
 
   private ensureAdminMember(role: string): void {
@@ -981,15 +1039,6 @@ export class TimesheetService {
     if (entries.some((entry) => entry.userId === actorUserId)) {
       throw new ForbiddenException('Approvers cannot approve or reject their own timesheet entries.');
     }
-  }
-
-  private async ensureEntriesNotLocked(organizationId: string, entries: TimesheetSummaryEntry[]): Promise<void> {
-    if (entries.length === 0) return;
-
-    const timestamps = entries.map((entry) => entry.workDate.getTime());
-    const periodStart = new Date(Math.min(...timestamps));
-    const periodEnd = new Date(Math.max(...timestamps));
-    await this.ensurePeriodNotLocked(organizationId, periodStart, periodEnd);
   }
 
   private buildWorkDateFilter(periodStart?: string, periodEnd?: string): Prisma.TimesheetEntryWhereInput {
@@ -1071,6 +1120,7 @@ function buildTimesheetSummary(
     userId: string;
     employeeName: string;
     employeeEmail: string;
+    employeeCode: string | null;
     department: string;
     totalHours: number;
     regularHours: number;
@@ -1091,6 +1141,7 @@ function buildTimesheetSummary(
       userId: entry.userId,
       employeeName: entry.user.name || entry.user.email,
       employeeEmail: entry.user.email,
+      employeeCode: entry.user.employeeCode ?? null,
       department: employeeTeamNames(entry, organizationId),
       totalHours: 0,
       regularHours: 0,
@@ -1178,6 +1229,12 @@ async function buildTimesheetWorkbook(options: {
   return workbook;
 }
 
+const PAYROLL_HEADERS = ['Team', 'Employee', 'Code', 'RG', 'OT', 'RD', 'RH', 'SH', 'RHRD', 'SHRD', 'LVE', 'ND', 'Hours', 'Status'];
+const PAYROLL_STATUS_COLUMN = 14;
+const PAYROLL_NUMERIC_COLUMNS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+const PAYROLL_HEADER_ROW = 6;
+const COMPANY_TIMEZONE = 'Asia/Manila';
+
 function addSummarySheet(
   workbook: ExcelJS.Workbook,
   options: {
@@ -1190,68 +1247,89 @@ function addSummarySheet(
   },
   summary: ReturnType<typeof buildTimesheetSummary>,
 ): void {
-  const sheet = workbook.addWorksheet('Summary', { views: [{ state: 'frozen', ySplit: 4 }] });
-  sheet.mergeCells('A1:F1');
-  sheet.getCell('A1').value = 'Timesheet Summary';
-  sheet.getCell('A1').font = { bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+  const sheet = workbook.addWorksheet('Timesheet', { views: [{ state: 'frozen', ySplit: PAYROLL_HEADER_ROW }] });
+
+  sheet.mergeCells('A1:N1');
+  sheet.getCell('A1').value = `Timesheet — ${formatLongDate(options.periodStart)} to ${formatLongDate(options.periodEnd)}`;
+  sheet.getCell('A1').font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
   sheet.getCell('A1').fill = solidFill('1F4E78');
   sheet.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center' };
-  sheet.getRow(1).height = 28;
+  sheet.getRow(1).height = 24;
 
-  const metadata = [
+  const metadata: [string, string][] = [
     ['Organization', options.organizationName],
-    ['Date range', `${toDateInputValue(options.periodStart)} to ${toDateInputValue(options.periodEnd)}`],
     ['Exported by', options.exportedBy],
-    ['Exported at', options.exportedAt.toISOString()],
-    ['Lock status', options.isLocked ? 'Locked' : 'Unlocked'],
-    ['Total employees', summary.totalEmployees],
-    ['Total entries', summary.totalEntries],
-    ['Total hours', summary.totalHours],
+    ['Export date', formatLongDate(options.exportedAt, COMPANY_TIMEZONE)],
   ];
-
   metadata.forEach(([label, value], index) => {
-    const row = sheet.getRow(index + 3);
+    const row = sheet.getRow(index + 2);
     row.getCell(1).value = label;
-    row.getCell(2).value = value;
     row.getCell(1).font = { bold: true };
+    row.getCell(2).value = value;
   });
 
-  const statusStart = metadata.length + 5;
-  sheet.getRow(statusStart).values = ['Status', 'Rows'];
-  styleHeaderRow(sheet.getRow(statusStart));
-  Object.entries(summary.totalsByStatus).forEach(([status, count], index) => {
-    sheet.getRow(statusStart + index + 1).values = [status, count];
-  });
+  sheet.getRow(PAYROLL_HEADER_ROW).values = PAYROLL_HEADERS;
+  styleHeaderRow(sheet.getRow(PAYROLL_HEADER_ROW));
 
-  const employeeStart = statusStart + Math.max(Object.keys(summary.totalsByStatus).length, 1) + 3;
-  sheet.getRow(employeeStart).values = ['Employee', 'Email', 'Status', 'Total hours', 'Regular', 'Overtime', 'Leave', 'Offset'];
-  styleHeaderRow(sheet.getRow(employeeStart));
   summary.employees.forEach((employee, index) => {
-    const row = sheet.getRow(employeeStart + index + 1);
+    const buckets = payrollBuckets(employee.entries);
+
+    const status = options.isLocked ? 'LOCKED' : employee.status;
+    const row = sheet.getRow(PAYROLL_HEADER_ROW + 1 + index);
     row.values = [
+      employee.department || '—',
       employee.employeeName,
-      employee.employeeEmail,
-      employee.status,
-      employee.totalHours,
-      employee.regularHours,
-      employee.overtimeHours,
-      employee.leaveHours,
-      employee.offsetHours,
+      employee.employeeCode ?? '',
+      buckets.rg, buckets.ot, buckets.rd, buckets.rh, buckets.sh,
+      buckets.rhrd, buckets.shrd, buckets.lve, buckets.nd, buckets.hours,
+      status,
     ];
-    applyStatusFill(row.getCell(3), employee.status);
-    [4, 5, 6, 7, 8].forEach((cell) => { row.getCell(cell).numFmt = '0.00'; });
+    applyStatusFill(row.getCell(PAYROLL_STATUS_COLUMN), status);
+    PAYROLL_NUMERIC_COLUMNS.forEach((cell) => { row.getCell(cell).numFmt = 'General'; });
   });
 
   sheet.columns = [
-    { width: 24 },
-    { width: 34 },
-    { width: 16 },
-    { width: 14 },
-    { width: 14 },
-    { width: 14 },
-    { width: 14 },
-    { width: 14 },
+    { width: 12 },
+    { width: 28 },
+    { width: 22 },
+    { width: 8 }, { width: 8 }, { width: 8 }, { width: 8 }, { width: 8 },
+    { width: 9 }, { width: 9 }, { width: 8 }, { width: 8 }, { width: 10 },
+    { width: 12 },
   ];
+}
+
+/** "July 6, 2026". Period dates are UTC date-only values, so format them in UTC;
+ *  pass the company timezone for real timestamps like the export date. */
+function formatLongDate(date: Date, timeZone = 'UTC'): string {
+  return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone }).format(date);
+}
+
+interface PayrollBuckets {
+  rg: number; ot: number; rd: number; rh: number; sh: number;
+  rhrd: number; shrd: number; lve: number; nd: number; hours: number;
+}
+
+function emptyPayrollBuckets(): PayrollBuckets {
+  return { rg: 0, ot: 0, rd: 0, rh: 0, sh: 0, rhrd: 0, shrd: 0, lve: 0, nd: 0, hours: 0 };
+}
+
+/** Assigns each entry's hours to exactly one payroll bucket. RH/SH/RHRD/SHRD are not
+ *  yet distinguishable in the data model, so they stay 0. */
+function payrollBuckets(entries: TimesheetSummaryEntry[]): PayrollBuckets {
+  const buckets = emptyPayrollBuckets();
+  for (const entry of entries) {
+    buckets.hours += entry.hours;
+    if (entry.isOvertime) buckets.ot += entry.hours;
+    else if (entry.isNightDifferential) buckets.nd += entry.hours;
+    else if (entry.workType === 'LEAVE') buckets.lve += entry.hours;
+    else if (entry.workType === 'REST_DAY') buckets.rd += entry.hours;
+    else buckets.rg += entry.hours;
+  }
+  return {
+    rg: roundHours(buckets.rg), ot: roundHours(buckets.ot), rd: roundHours(buckets.rd),
+    rh: buckets.rh, sh: buckets.sh, rhrd: buckets.rhrd, shrd: buckets.shrd,
+    lve: roundHours(buckets.lve), nd: roundHours(buckets.nd), hours: roundHours(buckets.hours),
+  };
 }
 
 function addDetailsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSummaryEntry[], organizationId: string): void {
@@ -1370,9 +1448,12 @@ function addProjectTotalsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSum
 }
 
 function styleHeaderRow(row: ExcelJS.Row): void {
-  row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  row.fill = solidFill('4472C4');
-  row.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  // Style only the populated header cells; a row-level fill would bleed to the sheet edge.
+  row.eachCell({ includeEmpty: false }, (cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = solidFill('4472C4');
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  });
 }
 
 function solidFill(argb: string): ExcelJS.Fill {

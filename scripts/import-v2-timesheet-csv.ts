@@ -243,13 +243,9 @@ function findProject(
 
 function workTypeFromLocation(location?: string): TimesheetWorkType {
   const value = normalize(location ?? '');
-  if (value.includes('wfh')) return TimesheetWorkType.WFH;
-  if (value.includes('field')) return TimesheetWorkType.FIELD;
   if (value.includes('leave')) return TimesheetWorkType.LEAVE;
-  if (value.includes('holiday')) return TimesheetWorkType.HOLIDAY;
   if (value.includes('offset')) return TimesheetWorkType.OFFSET;
-  if (value.includes('ofc')) return TimesheetWorkType.OFFICE_DIRECT_WORK;
-  return TimesheetWorkType.OFFICE_DIRECT_WORK;
+  return TimesheetWorkType.REGULAR;
 }
 
 function truthy(value?: string): boolean {

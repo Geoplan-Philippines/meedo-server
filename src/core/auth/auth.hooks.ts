@@ -1,6 +1,6 @@
 import { prisma } from "../database/prisma.client";
 
-import { DEFAULT_STATUSES } from "src/common/constants/statuses.constants";
+import { SYSTEM_STATUSES } from "src/common/constants/statuses.constants";
 
 export const sessionHooks = {
   create: {
@@ -26,8 +26,9 @@ export const sessionHooks = {
 export const organizationHooks = {
   afterCreateOrganization: async ({ organization }: { organization: { id: string } }) => {
     await prisma.ticketStatus.createMany({
-      data: DEFAULT_STATUSES.map((status) => ({
+      data: SYSTEM_STATUSES.map((status) => ({
         ...status,
+        isSystem: true,
         organizationId: organization.id,
       })),
     });

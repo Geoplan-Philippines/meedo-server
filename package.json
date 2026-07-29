@@ -80,6 +80,10 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "moduleDirectories": [
+      "node_modules",
+      "<rootDir>/.."
+    ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

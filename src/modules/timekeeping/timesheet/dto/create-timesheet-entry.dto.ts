@@ -9,9 +9,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
-  Max,
   MaxLength,
-  Min,
 } from 'class-validator';
 import { TimesheetWorkType } from '@prisma/client';
 
@@ -24,12 +22,11 @@ export class CreateTimesheetEntryDTO {
   @IsDateString()
   workDate!: string;
 
-  @ApiProperty({ example: 8, minimum: 0, maximum: 24 })
+  @ApiPropertyOptional({ example: 8, minimum: 1, maximum: 9, description: 'Required unless workType is LEAVE.' })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @Max(24)
-  hours!: number;
+  hours?: number;
 
   @ApiPropertyOptional({ example: 'OFC - DW', maxLength: 100 })
   @IsOptional()
@@ -37,7 +34,7 @@ export class CreateTimesheetEntryDTO {
   @MaxLength(100)
   location?: string;
 
-  @ApiPropertyOptional({ enum: TimesheetWorkType, example: TimesheetWorkType.OFFICE_DIRECT_WORK })
+  @ApiPropertyOptional({ enum: TimesheetWorkType, example: TimesheetWorkType.REGULAR })
   @IsOptional()
   @IsEnum(TimesheetWorkType)
   workType?: TimesheetWorkType;

@@ -34,6 +34,7 @@ model User {
   teamMembers                   TeamMember[]
   timesheetEntries              TimesheetEntry[]
   timesheetAuditTargets         TimesheetAuditLog[]       @relation("TimesheetAuditTargetUser")
+  scheduleAssignments           EmployeeScheduleAssignment[]
 
   @@map("users")
 }
@@ -117,6 +118,13 @@ model Organization {
   timesheetEntries              TimesheetEntry[]
   timesheetPeriodLocks          TimesheetPeriodLock[]
   timesheetAuditLogs            TimesheetAuditLog[]
+  attendancePolicy              AttendancePolicy?
+  shifts                        Shift[]
+  weeklySchedules               WeeklySchedule[]
+  holidays                      Holiday[]
+  teamScheduleAssignments       TeamScheduleAssignment[]
+  employeeScheduleAssignments   EmployeeScheduleAssignment[]
+  clients                       Client[]
 
   @@map("organizations")
 }
@@ -134,6 +142,7 @@ model Team {
   teamMembers                   TeamMember[]
   invitations                   Invitation[]
   tickets                       Tickets[]
+  scheduleAssignment            TeamScheduleAssignment?
 
   @@map("teams")
   @@index([organizationId])
@@ -295,10 +304,12 @@ model Project {
   total                         Float
   reportedDate                  DateTime?                 @map("reported_date")
 
-  apptivoId                     String                    @unique @map("apptivo_id")
+  apptivoId                     String                    @map("apptivo_id")
   organizationId                String                    @map("organization_id")
+  clientId                      String?                   @map("client_id")
 
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  client                        Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   tickets                       Tickets[]
   slaPolicies                   SlaPolicy[]
@@ -307,9 +318,28 @@ model Project {
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
+  @@unique([organizationId, apptivoId])
   @@index([organizationId])
+  @@index([clientId])
   @@map("projects")
+}
 
+model Client {
+  id                            String                    @id @default(uuid())
+  apptivoId                     String                    @map("apptivo_id")
+  customerName                  String                    @map("customer_name")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  projects                      Project[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, apptivoId])
+  @@index([organizationId])
+  @@map("clients")
 }
 
 model Lead {
@@ -328,11 +358,21 @@ model Lead {
   @@map("leads")
 }
 
+enum TicketStatusCategory {
+  BACKLOG
+  UNSTARTED
+  STARTED
+  COMPLETED
+  CANCELED
+}
+
 model TicketStatus {
   id                            String                    @id @default(uuid())
   name                          String
   color                         String?                   @default("#6B7280")
+  category                      TicketStatusCategory      @default(BACKLOG)
   isArchived                    Boolean                   @default(false) @map("is_archived")
+  isSystem                      Boolean                   @default(false) @map("is_system")
 
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -344,6 +384,7 @@ model TicketStatus {
 
   @@unique([organizationId, name])
   @@index([organizationId])
+  @@index([category])
   @@map("ticket_status")
 }
 
@@ -367,6 +408,8 @@ model Tickets {
   assignees                     TicketAssignee[]
   comments                      TicketComment[]
   activities                    TicketActivity[]
+  relatedTickets                TicketRelation[]          @relation("TicketRelationSource")
+  relatedFrom                   TicketRelation[]          @relation("TicketRelationTarget")
 
   ticketStatus                  TicketStatus?             @relation(fields: [ticketStatusId], references: [id], onDelete: SetNull)
   category                      TicketCategory?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -404,6 +447,25 @@ model TicketAssignee {
   @@index([ticketId])
   @@index([memberId])
   @@map("ticket_assignees")
+}
+
+// A directed link between two tickets. Relations are symmetric: linking A→B always
+// mirrors a B→A row, so either ticket surfaces the other and unlinking clears both.
+model TicketRelation {
+  id                            String                    @id @default(uuid())
+
+  ticketId                      String                    @map("ticket_id")
+  ticket                        Tickets                   @relation("TicketRelationSource", fields: [ticketId], references: [id], onDelete: Cascade)
+
+  relatedTicketId               String                    @map("related_ticket_id")
+  relatedTicket                 Tickets                   @relation("TicketRelationTarget", fields: [relatedTicketId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+
+  @@unique([ticketId, relatedTicketId])
+  @@index([ticketId])
+  @@index([relatedTicketId])
+  @@map("ticket_relations")
 }
 
 model SlaPolicy {
@@ -451,6 +513,11 @@ model TicketComment {
   authorMemberId                String?                   @map("author_member_id")
   author                        Member?                   @relation(fields: [authorMemberId], references: [id], onDelete: SetNull)
 
+  // One level of threaded replies: a reply points at its top-level parent.
+  parentId                      String?                   @map("parent_id")
+  parent                        TicketComment?            @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies                       TicketComment[]           @relation("CommentReplies")
+
   body                          String
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
@@ -458,6 +525,7 @@ model TicketComment {
 
   @@index([ticketId])
   @@index([authorMemberId])
+  @@index([parentId])
   @@map("ticket_comments")
 }
 
@@ -496,7 +564,7 @@ model TimesheetEntry {
   workDate                      DateTime                  @map("work_date")
   hours                         Float
   location                      String                    @default("OFC - DW")
-  workType                      TimesheetWorkType         @default(OFFICE_DIRECT_WORK) @map("work_type")
+  workType                      TimesheetWorkType         @default(REGULAR) @map("work_type")
   task                          String
   projectDescription            String?                   @map("project_description")
   isOvertime                    Boolean                   @default(false) @map("is_overtime")
@@ -512,6 +580,22 @@ model TimesheetEntry {
   rejectionReason               String?                   @map("rejection_reason")
 
   auditLogs                     TimesheetAuditLog[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([projectId])
+  @@index([organizationId, userId, workDate])
+  @@index([organizationId, workDate])
+  @@index([organizationId, workDate, status])
+  @@index([organizationId, projectId, workDate])
+  @@index([organizationId, status, workDate])
+  @@index([status])
+  @@map("timesheet_entries")
+}
+
 model AttendanceEvent {
   id                            String                    @id @default(uuid())
 
@@ -532,16 +616,10 @@ model AttendanceEvent {
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
-  @@index([organizationId])
-  @@index([userId])
-  @@index([projectId])
-  @@index([organizationId, userId, workDate])
-  @@index([organizationId, workDate])
-  @@index([organizationId, workDate, status])
-  @@index([organizationId, projectId, workDate])
-  @@index([organizationId, status, workDate])
-  @@index([status])
-  @@map("timesheet_entries")
+  @@index([employeeId])
+  @@index([timestamp])
+  @@index([employeeId, timestamp])
+  @@map("attendance_events")
 }
 
 model TimesheetPeriodLock {
@@ -598,10 +676,6 @@ model TimesheetAuditLog {
   @@index([timesheetEntryId])
   @@index([action])
   @@map("timesheet_audit_logs")
-  @@index([employeeId])
-  @@index([timestamp])
-  @@index([employeeId, timestamp])
-  @@map("attendance_events")
 }
 
 model Attendance {
@@ -623,6 +697,167 @@ model Attendance {
   @@unique([employeeId, date])
   @@index([employeeId])
   @@map("attendances")
+}
+
+model AttendancePolicy {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @unique @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  timezone                      String                    @default("Asia/Manila")
+  autoClockOutEnabled           Boolean                   @default(true) @map("auto_clock_out_enabled")
+  autoClockOutTime              String                    @default("18:00") @map("auto_clock_out_time")
+  standardHoursPerDay           Float                     @default(8) @map("standard_hours_per_day")
+  standardHoursPerWeek          Float                     @default(40) @map("standard_hours_per_week")
+  maxHoursPerDay                Float                     @default(24) @map("max_hours_per_day")
+  graceMinutes                  Int                       @default(15) @map("grace_minutes")
+  lunchMinutes                  Int                       @default(60) @map("lunch_minutes")
+  lunchIsPaid                   Boolean                   @default(false) @map("lunch_is_paid")
+  overtimeAfterHoursPerDay      Float                     @default(8) @map("overtime_after_hours_per_day")
+  minimumOvertimeMinutes        Int                       @default(30) @map("minimum_overtime_minutes")
+  overtimeMultiplier            Float                     @default(1.25) @map("overtime_multiplier")
+  restDayMultiplier             Float                     @default(1.30) @map("rest_day_multiplier")
+  nightDifferentialMultiplier   Float                     @default(0.10) @map("night_differential_multiplier")
+  nightDifferentialStart        String                    @default("22:00") @map("night_differential_start")
+  nightDifferentialEnd          String                    @default("06:00") @map("night_differential_end")
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@map("attendance_policies")
+}
+
+model Shift {
+  id                            String                    @id @default(uuid())
+  name                          String
+  startTime                     String                    @map("start_time")
+  endTime                       String                    @map("end_time")
+  breakMinutes                  Int                       @default(60) @map("break_minutes")
+  graceMinutes                  Int?                      @map("grace_minutes")
+  crossesMidnight               Boolean                   @default(false) @map("crosses_midnight")
+  isFlexible                    Boolean                   @default(false) @map("is_flexible")
+  color                         String?                   @default("#6B7280")
+  isActive                      Boolean                   @default(true) @map("is_active")
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  scheduleDays                  WeeklyScheduleDay[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("shifts")
+}
+
+model WeeklySchedule {
+  id                            String                    @id @default(uuid())
+  name                          String
+  isDefault                     Boolean                   @default(false) @map("is_default")
+  isActive                      Boolean                   @default(true) @map("is_active")
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  days                          WeeklyScheduleDay[]
+  teamAssignments               TeamScheduleAssignment[]
+  employeeAssignments           EmployeeScheduleAssignment[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("weekly_schedules")
+}
+
+model WeeklyScheduleDay {
+  id                            String                    @id @default(uuid())
+
+  weeklyScheduleId              String                    @map("weekly_schedule_id")
+  weeklySchedule                WeeklySchedule            @relation(fields: [weeklyScheduleId], references: [id], onDelete: Cascade)
+
+  dayOfWeek                     DayOfWeek                 @map("day_of_week")
+  isWorkingDay                  Boolean                   @default(true) @map("is_working_day")
+  expectedSource                AttendanceSource?         @map("expected_source")
+
+  // When false, lateness is not recorded for this day (e.g. a flexible WFH day).
+  trackLateness                 Boolean                   @default(true) @map("track_lateness")
+
+  shiftId                       String?                   @map("shift_id")
+  shift                         Shift?                    @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([weeklyScheduleId, dayOfWeek])
+  @@index([weeklyScheduleId])
+  @@map("weekly_schedule_days")
+}
+
+model Holiday {
+  id                            String                    @id @default(uuid())
+  name                          String
+  date                          DateTime                  @map("date")
+  type                          HolidayType               @default(REGULAR)
+  isRecurring                   Boolean                   @default(false) @map("is_recurring")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, date, name])
+  @@index([organizationId])
+  @@index([organizationId, date])
+  @@map("holidays")
+}
+
+model TeamScheduleAssignment {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  teamId                        String                    @unique @map("team_id")
+  team                          Team                      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  weeklyScheduleId              String                    @map("weekly_schedule_id")
+  weeklySchedule                WeeklySchedule            @relation(fields: [weeklyScheduleId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([weeklyScheduleId])
+  @@map("team_schedule_assignments")
+}
+
+model EmployeeScheduleAssignment {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId                        String                    @map("user_id")
+  user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  weeklyScheduleId              String                    @map("weekly_schedule_id")
+  weeklySchedule                WeeklySchedule            @relation(fields: [weeklyScheduleId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("employee_schedule_assignments")
 }
 
 enum FaceProfileStatus {
@@ -665,13 +900,10 @@ enum TimesheetEntryStatus {
 }
 
 enum TimesheetWorkType {
-  OFFICE
-  OFFICE_DIRECT_WORK
-  FIELD
-  WFH
+  REGULAR
+  REST_DAY
   LEAVE
   OFFSET
-  HOLIDAY
 }
 
 enum TimesheetAuditAction {
@@ -684,6 +916,8 @@ enum TimesheetAuditAction {
   LOCKED_PERIOD
   UNLOCKED_PERIOD
   EXPORTED
+}
+
 enum AttendanceSource {
   OFFICE
   FIELD
@@ -704,4 +938,20 @@ enum AttendanceOrigin {
   BIOMETRICS
   MANUAL
   AUTO
+}
+
+enum HolidayType {
+  REGULAR
+  SPECIAL_NON_WORKING
+  SPECIAL_WORKING
+}
+
+enum DayOfWeek {
+  SUNDAY
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
 }

@@ -7,16 +7,23 @@ import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/pag
 import { CreateTicketDTO } from './dto/create-ticket.dto';
 import { UpdateTicketDTO } from './dto/update-ticket.dto';
 import { GetAllTicketsQueryDTO } from './dto/get-all-tickets-query.dto';
+import { GetTicketFacetsQueryDTO } from './dto/get-ticket-facets-query.dto';
 import { TicketActivityService } from './activity/ticket-activity.service';
 import {
   MAX_TICKET_NUMBER_RETRIES,
+  TICKET_DETAIL_INCLUDE,
   TICKET_INCLUDE,
   TICKET_NUMBER_MAX,
   TICKET_NUMBER_MIN,
   TICKET_SORTABLE_FIELDS,
+  TICKET_VIEW_CATEGORIES,
+  TicketDetail,
+  TicketFacets,
   TicketSortField,
   TicketStats,
+  TicketView,
   TicketWithRelations,
+  serializeTicketDetail,
 } from './constants/ticket.constants';
 
 @Injectable()
@@ -30,25 +37,18 @@ export class TicketsService {
     query: GetAllTicketsQueryDTO,
     organizationId: string,
   ): Promise<PaginatedResponse<TicketWithRelations>> {
-    const { page, limit, ticketStatusId, priority, categoryId, assigneeId, search, includeArchived } = query;
+    const { page, limit, ticketStatusId, priority, teamId, categoryId, assigneeId, search, includeArchived, view } = query;
 
     const orderBy = this.buildOrderBy(query.sortField, query.sortOrder);
 
     const where: Prisma.TicketsWhereInput = {
       organizationId,
       ...(includeArchived ? {} : { isArchived: false }),
-      ...(ticketStatusId ? { ticketStatusId } : {}),
-      ...(priority ? { priority } : {}),
-      ...(categoryId ? { categoryId } : {}),
-      ...(assigneeId ? { assignees: { some: { memberId: assigneeId } } } : {}),
-      ...(search
-        ? {
-            OR: [
-              { title: { contains: search, mode: 'insensitive' } },
-              { description: { contains: search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      ...this.buildViewWhere(view),
+      ...(ticketStatusId?.length ? { ticketStatusId: { in: ticketStatusId } } : {}),
+      ...(priority?.length ? { priority: { in: priority } } : {}),
+      ...this.buildScopeWhere({ teamId, categoryId, assigneeId }),
+      ...this.buildSearchWhere(search),
     };
 
     const [tickets, total] = await Promise.all([
@@ -65,6 +65,17 @@ export class TicketsService {
     return { data: tickets, meta: buildPaginationMeta(total, page, limit) };
   }
 
+  async getTicketById(id: string, organizationId: string): Promise<TicketDetail> {
+    const ticket = await this.prisma.tickets.findFirst({
+      where: { id, organizationId },
+      include: TICKET_DETAIL_INCLUDE,
+    });
+    if (!ticket) {
+      throw new NotFoundException('Ticket not found in this organization.');
+    }
+    return serializeTicketDetail(ticket);
+  }
+
   async getTicketStats(organizationId: string): Promise<TicketStats> {
     const baseWhere: Prisma.TicketsWhereInput = { organizationId, isArchived: false };
 
@@ -78,6 +89,41 @@ export class TicketsService {
     ]);
 
     return { total, urgent, high, overdue };
+  }
+
+  async getFacets(query: GetTicketFacetsQueryDTO, organizationId: string): Promise<TicketFacets> {
+    const { search, includeArchived, view, teamId, categoryId, assigneeId } = query;
+
+    // Context shared by every count: org + archived scope + the active search and
+    // scope filters (team/category/assignee), so badge counts match the list. Only
+    // the status/priority selections are omitted, so each option's badge shows what
+    // picking it would yield.
+    const contextWhere: Prisma.TicketsWhereInput = {
+      organizationId,
+      ...(includeArchived ? {} : { isArchived: false }),
+      ...this.buildScopeWhere({ teamId, categoryId, assigneeId }),
+      ...this.buildSearchWhere(search),
+    };
+
+    // Status/priority badges reflect the current view, so they match the list.
+    const viewWhere: Prisma.TicketsWhereInput = { ...contextWhere, ...this.buildViewWhere(view) };
+
+    const [backlog, active, closed, all, statusGroups, priorityGroups] = await Promise.all([
+      this.prisma.tickets.count({ where: { ...contextWhere, ...this.buildViewWhere('backlog') } }),
+      this.prisma.tickets.count({ where: { ...contextWhere, ...this.buildViewWhere('active') } }),
+      this.prisma.tickets.count({ where: { ...contextWhere, ...this.buildViewWhere('closed') } }),
+      this.prisma.tickets.count({ where: contextWhere }),
+      this.prisma.tickets.groupBy({ by: ['ticketStatusId'], where: viewWhere, _count: { _all: true } }),
+      this.prisma.tickets.groupBy({ by: ['priority'], where: viewWhere, _count: { _all: true } }),
+    ]);
+
+    return {
+      views: { backlog, active, closed, all },
+      statuses: statusGroups
+        .filter((group): group is typeof group & { ticketStatusId: string } => group.ticketStatusId !== null)
+        .map((group) => ({ ticketStatusId: group.ticketStatusId, count: group._count._all })),
+      priorities: priorityGroups.map((group) => ({ priority: group.priority, count: group._count._all })),
+    };
   }
 
   async createTicket(
@@ -148,7 +194,7 @@ export class TicketsService {
     data: UpdateTicketDTO,
     organizationId: string,
     userId?: string,
-  ): Promise<TicketWithRelations> {
+  ): Promise<TicketDetail> {
     const existing = await this.prisma.tickets.findFirst({
       where: { id, organizationId },
       select: {
@@ -166,8 +212,12 @@ export class TicketsService {
     this.assertDueDateNotPastOnChange(data.dueDate, existing.dueDate);
     await this.validateReferences(data, organizationId);
 
+    const { assigneeIds, relatedTicketIds, ...ticketData } = data;
+    if (relatedTicketIds !== undefined) {
+      await this.validateRelatedTickets(id, relatedTicketIds, organizationId);
+    }
+
     const actorMemberId = await this.activity.resolveMemberId(organizationId, userId);
-    const { assigneeIds, ...ticketData } = data;
 
     return this.prisma.$transaction(async (tx) => {
       await tx.tickets.update({
@@ -186,13 +236,59 @@ export class TicketsService {
         }
       }
 
+      if (relatedTicketIds !== undefined) {
+        await this.syncTicketRelations(tx, id, relatedTicketIds);
+      }
+
       await this.recordUpdateActivities(tx, id, actorMemberId, existing, data, assigneeIds);
 
-      return tx.tickets.findUniqueOrThrow({
+      const updated = await tx.tickets.findUniqueOrThrow({
         where: { id },
-        include: TICKET_INCLUDE,
+        include: TICKET_DETAIL_INCLUDE,
       });
+      return serializeTicketDetail(updated);
     });
+  }
+
+  /** Reconcile a ticket's links to exactly `relatedTicketIds`, keeping the mirror
+   *  row on each partner in sync so relations stay symmetric on both sides. */
+  private async syncTicketRelations(
+    tx: Prisma.TransactionClient,
+    ticketId: string,
+    relatedTicketIds: string[],
+  ): Promise<void> {
+    const desired = new Set([...new Set(relatedTicketIds)].filter((relatedId) => relatedId !== ticketId));
+
+    const current = await tx.ticketRelation.findMany({
+      where: { ticketId },
+      select: { relatedTicketId: true },
+    });
+    const currentIds = new Set(current.map((relation) => relation.relatedTicketId));
+
+    const toRemove = [...currentIds].filter((relatedId) => !desired.has(relatedId));
+    const toAdd = [...desired].filter((relatedId) => !currentIds.has(relatedId));
+
+    if (toRemove.length > 0) {
+      // Drop both directions of each removed pair.
+      await tx.ticketRelation.deleteMany({
+        where: {
+          OR: [
+            { ticketId, relatedTicketId: { in: toRemove } },
+            { relatedTicketId: ticketId, ticketId: { in: toRemove } },
+          ],
+        },
+      });
+    }
+
+    if (toAdd.length > 0) {
+      await tx.ticketRelation.createMany({
+        data: toAdd.flatMap((relatedId) => [
+          { ticketId, relatedTicketId: relatedId },
+          { ticketId: relatedId, relatedTicketId: ticketId },
+        ]),
+        skipDuplicates: true,
+      });
+    }
   }
 
   private async recordUpdateActivities(
@@ -288,6 +384,61 @@ export class TicketsService {
         throw new NotFoundException('Project not found in this organization.');
       }
     }
+  }
+
+  private async validateRelatedTickets(
+    ticketId: string,
+    relatedTicketIds: string[],
+    organizationId: string,
+  ): Promise<void> {
+    const uniqueIds = [...new Set(relatedTicketIds)];
+    if (uniqueIds.includes(ticketId)) {
+      throw new BadRequestException('A ticket cannot be related to itself.');
+    }
+    if (uniqueIds.length === 0) {
+      return;
+    }
+    const count = await this.prisma.tickets.count({
+      where: { id: { in: uniqueIds }, organizationId },
+    });
+    if (count !== uniqueIds.length) {
+      throw new NotFoundException('One or more related tickets not found in this organization.');
+    }
+  }
+
+  /** Restrict to the statuses a board view covers; `all`/undefined adds nothing.
+   *  Tickets without a status never match a view filter (only "All" shows them). */
+  private buildViewWhere(view: TicketView | undefined): Prisma.TicketsWhereInput {
+    if (!view || view === 'all') {
+      return {};
+    }
+    return { ticketStatus: { is: { category: { in: TICKET_VIEW_CATEGORIES[view] } } } };
+  }
+
+  /** Scope filters shared by the ticket list and its facet counts, so both agree
+   *  on which tickets are in view. Absent filters contribute nothing. */
+  private buildScopeWhere(scope: {
+    teamId?: string[];
+    categoryId?: string;
+    assigneeId?: string;
+  }): Prisma.TicketsWhereInput {
+    return {
+      ...(scope.teamId?.length ? { teamId: { in: scope.teamId } } : {}),
+      ...(scope.categoryId ? { categoryId: scope.categoryId } : {}),
+      ...(scope.assigneeId ? { assignees: { some: { memberId: scope.assigneeId } } } : {}),
+    };
+  }
+
+  private buildSearchWhere(search: string | undefined): Prisma.TicketsWhereInput {
+    if (!search) {
+      return {};
+    }
+    return {
+      OR: [
+        { title: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ],
+    };
   }
 
   private buildOrderBy(
