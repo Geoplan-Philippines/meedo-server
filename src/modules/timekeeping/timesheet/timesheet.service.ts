@@ -1057,7 +1057,6 @@ export class TimesheetService {
           ${searchTerm}::text IS NULL
           OR c.customer_name ILIKE '%' || ${searchTerm} || '%'
           OR p.work_order_number ILIKE '%' || ${searchTerm} || '%'
-          OR p.client_id IS NULL
         )
     `;
   }

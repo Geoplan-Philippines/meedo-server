@@ -1,11 +1,17 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
-import type { Project } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
 import { WorkOrder, ProjectInput, ApptivoResponse } from './types/project.type';
 import { ClientsService } from '../clients/clients.service';
+
+const PROJECT_INCLUDE = {
+  client: true,
+} satisfies Prisma.ProjectInclude;
+
+export type ProjectWithClient = Prisma.ProjectGetPayload<{ include: typeof PROJECT_INCLUDE }>;
 
 @Injectable()
 export class ProjectsService {
@@ -16,7 +22,7 @@ export class ProjectsService {
     private readonly clientsService: ClientsService,
   ) {}
 
-  async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string): Promise<PaginatedResponse<Project>> {
+  async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string): Promise<PaginatedResponse<ProjectWithClient>> {
     const { page, limit, clientId } = query;
 
     const where = { organizationId, ...(clientId ? { clientId } : {}) };
@@ -27,7 +33,7 @@ export class ProjectsService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
-        include: { client: true },
+        include: PROJECT_INCLUDE,
       }),
       this.prisma.project.count({ where }),
     ]);
@@ -60,16 +66,19 @@ export class ProjectsService {
 
     const projects = workOrders.map((wo) => normalizeProject(wo, clientMap));
 
+    const validProjects: typeof projects = [];
     for (let i = 0; i < projects.length; i++) {
       if (!projects[i].clientId) {
         this.logger.warn(
-          `Work order "${workOrders[i].workOrderNumber}" (customer: "${workOrders[i].customerName || 'unknown'}") could not be linked to a client — apptivoId "${workOrders[i].customerId}" not found in client map. The project will be created without a client.`,
+          `Work order "${workOrders[i].workOrderNumber}" (customer: "${workOrders[i].customerName || 'unknown'}") could not be linked to a client — apptivoId "${workOrders[i].customerId}" not found in client map. Skipping project sync.`,
         );
+      } else {
+        validProjects.push(projects[i]);
       }
     }
-    const apptivoIds = projects.map((p) => p.apptivoId);
+    const apptivoIds = validProjects.map((p) => p.apptivoId);
 
-    const upserts = projects.map(({ apptivoId, clientId, ...data }) =>
+    const upserts = validProjects.map(({ apptivoId, clientId, ...data }) =>
       this.prisma.project.upsert({
         where: { organizationId_apptivoId: { organizationId, apptivoId } },
         update: { ...data, clientId },
@@ -89,7 +98,7 @@ export class ProjectsService {
     const results = await this.prisma.$transaction([...upserts, purge]);
     const deleted = (results.at(-1) as { count: number }).count;
 
-    return { synced: projects.length, deleted };
+    return { synced: validProjects.length, deleted };
   }
 
   private async fetchApptivoWorkOrders(): Promise<WorkOrder[]> {

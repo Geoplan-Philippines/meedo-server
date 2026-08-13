@@ -129,7 +129,7 @@ describe('ProjectsService', () => {
     ];
 
     beforeEach(() => {
-      mockClientsService.getClientMap.mockResolvedValue(new Map());
+      mockClientsService.getClientMap.mockResolvedValue(new Map([['client-apptivo-1', 'client-db-1']]));
       mockClientsService.syncClientsFromApptivo.mockResolvedValue({ synced: 0, deleted: 0 });
     });
 
@@ -203,7 +203,7 @@ describe('ProjectsService', () => {
       );
     });
 
-    it('sets clientId to null when client not in map', async () => {
+    it('skips projects when client not in map', async () => {
       mockClientsService.getClientMap.mockResolvedValue(new Map());
 
       (global.fetch as jest.Mock).mockResolvedValue({
@@ -211,15 +211,11 @@ describe('ProjectsService', () => {
         json: jest.fn().mockResolvedValue({ data: mockWorkOrders }),
       });
 
-      mockPrismaService.$transaction.mockResolvedValue([mockProject, { count: 0 }]);
+      mockPrismaService.$transaction.mockResolvedValue([{ count: 0 }]);
 
       await service.syncWorkOrdersFromApptivo('org-uuid-1');
 
-      expect(mockPrismaService.project.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: expect.objectContaining({ clientId: null }),
-        }),
-      );
+      expect(mockPrismaService.project.upsert).not.toHaveBeenCalled();
     });
 
     it('throws HttpException when fetch fails', async () => {
