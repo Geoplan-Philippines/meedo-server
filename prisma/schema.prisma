@@ -299,7 +299,7 @@ model NewsletterSubscriber {
 model Project {
   id                            String                    @id @default(uuid())
   workOrderNumber               String                    @map("work_order_number")
-  customerName                  String                    @map("customer_name")
+  customerName                  String                    @default("") @map("customer_name")
   status                        String
   total                         Float
   reportedDate                  DateTime?                 @map("reported_date")

@@ -119,7 +119,7 @@ function normalizeProject(
     apptivoId: String(wo.id),
     workOrderNumber: wo.workOrderNumber || '',
     customerName: wo.customerName || '',
-    status: wo.statusName || 'Unknown',
+          status: wo.statusName || 'Unknown',
     total: Number.isFinite(total) ? total : 0,
     reportedDate: date && !isNaN(date.getTime()) ? date : null,
     clientId: apptivoClientId ? (clientMap.get(apptivoClientId) ?? null) : null,
