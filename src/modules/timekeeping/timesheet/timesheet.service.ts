@@ -1149,7 +1149,7 @@ function buildTimesheetSummary(
       leaveHours: 0,
       offsetHours: 0,
       status: 'DRAFT',
-      dailyTotals: Object.fromEntries(dayKeys.map((day) => [day, 0])) as Record<string, number>,
+      dailyTotals: Object.fromEntries(dayKeys.map((day) => [day, 0])),
       projectTotals: {},
       entries: [],
     };

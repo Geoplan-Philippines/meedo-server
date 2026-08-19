@@ -52,7 +52,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         typeof response === 'object' && response !== null
           ? ((response as { message?: string | string[] }).message ??
             exception.message)
-          : (response as string);
+          : (response);
       return { status: exception.getStatus(), message };
     }
 
