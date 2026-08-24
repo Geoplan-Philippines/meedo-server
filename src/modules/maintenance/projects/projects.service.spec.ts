@@ -7,7 +7,6 @@ import { ClientsService } from '../clients/clients.service';
 const mockProject = {
   id: '111222333',
   workOrderNumber: 'IO-2026-1111',
-  customerName: 'Clark PH',
   status: 'active',
   total: 1000,
   reportedDate: null,
@@ -83,6 +82,37 @@ describe('ProjectsService', () => {
         expect.objectContaining({ skip: 20, take: 10 }),
       );
     });
+
+    it('filters by clientId when provided', async () => {
+      mockPrismaService.project.findMany.mockResolvedValue([]);
+      mockPrismaService.project.count.mockResolvedValue(0);
+
+      await service.getAllProjects({ page: 1, limit: 10, clientId: 'client-uuid-1' }, 'org-uuid-1');
+
+      expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { organizationId: 'org-uuid-1', clientId: 'client-uuid-1' },
+        }),
+      );
+      expect(mockPrismaService.project.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { organizationId: 'org-uuid-1', clientId: 'client-uuid-1' },
+        }),
+      );
+    });
+
+    it('does not filter by clientId when not provided', async () => {
+      mockPrismaService.project.findMany.mockResolvedValue([]);
+      mockPrismaService.project.count.mockResolvedValue(0);
+
+      await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1');
+
+      expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { organizationId: 'org-uuid-1' },
+        }),
+      );
+    });
   });
 
   describe('syncWorkOrdersFromApptivo', () => {
@@ -99,7 +129,7 @@ describe('ProjectsService', () => {
     ];
 
     beforeEach(() => {
-      mockClientsService.getClientMap.mockResolvedValue(new Map());
+      mockClientsService.getClientMap.mockResolvedValue(new Map([['client-apptivo-1', 'client-db-1']]));
       mockClientsService.syncClientsFromApptivo.mockResolvedValue({ synced: 0, deleted: 0 });
     });
 
@@ -129,7 +159,6 @@ describe('ProjectsService', () => {
         expect.objectContaining({
           create: expect.objectContaining({
             workOrderNumber: 'IO-2026-1111',
-            customerName: 'Clark PH',
             status: 'active',
             total: 1000,
             reportedDate: new Date('2026-01-01'),
@@ -174,7 +203,7 @@ describe('ProjectsService', () => {
       );
     });
 
-    it('sets clientId to null when client not in map', async () => {
+    it('skips projects when client not in map', async () => {
       mockClientsService.getClientMap.mockResolvedValue(new Map());
 
       (global.fetch as jest.Mock).mockResolvedValue({
@@ -182,15 +211,11 @@ describe('ProjectsService', () => {
         json: jest.fn().mockResolvedValue({ data: mockWorkOrders }),
       });
 
-      mockPrismaService.$transaction.mockResolvedValue([mockProject, { count: 0 }]);
+      mockPrismaService.$transaction.mockResolvedValue([{ count: 0 }]);
 
       await service.syncWorkOrdersFromApptivo('org-uuid-1');
 
-      expect(mockPrismaService.project.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: expect.objectContaining({ clientId: null }),
-        }),
-      );
+      expect(mockPrismaService.project.upsert).not.toHaveBeenCalled();
     });
 
     it('throws HttpException when fetch fails', async () => {

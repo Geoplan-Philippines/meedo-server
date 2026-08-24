@@ -25,9 +25,9 @@ const TIMESHEET_ENTRY_INCLUDE = {
   project: {
     select: {
       id:              true,
-      customerName:    true,
       workOrderNumber: true,
       status:          true,
+      client:          { select: { customerName: true } },
     },
   },
   approvedBy: {
@@ -48,9 +48,9 @@ const TIMESHEET_SUMMARY_ENTRY_INCLUDE = {
   project: {
     select: {
       id:              true,
-      customerName:    true,
       workOrderNumber: true,
       status:          true,
+      client:          { select: { customerName: true } },
     },
   },
   user: {
@@ -92,7 +92,7 @@ const TIMESHEET_AUDIT_LOG_INCLUDE = {
       workDate: true,
       hours: true,
       status: true,
-      project: { select: { id: true, customerName: true, workOrderNumber: true } },
+      project: { select: { id: true, workOrderNumber: true, client: { select: { customerName: true } } } },
     },
   },
 } satisfies Prisma.TimesheetAuditLogInclude;
@@ -105,6 +105,18 @@ interface TimesheetExportResult {
   buffer: Buffer;
   filename: string;
   mimeType: string;
+}
+
+interface RawProjectRow {
+  id: string;
+  work_order_number: string;
+  status: string;
+  reported_date: Date | null;
+  customer_name: string | null;
+}
+
+interface RawProjectCountRow {
+  count: bigint;
 }
 
 @Injectable()
@@ -809,35 +821,35 @@ export class TimesheetService {
   ) {
     await this.resolveMember(organizationId, userId);
     const { page, limit, search } = query;
+    const searchTerm = search || null;
+    const whereClause = this.buildProjectSearchWhere(organizationId, searchTerm);
 
-    const where: Prisma.ProjectWhereInput = {
-      organizationId,
-      ...(search
-        ? {
-            OR: [
-              { customerName: { contains: search, mode: 'insensitive' } },
-              { workOrderNumber: { contains: search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
-    };
-
-    const [projects, total] = await Promise.all([
-      this.prisma.project.findMany({
-        where,
-        select: {
-          id:              true,
-          customerName:    true,
-          workOrderNumber: true,
-          status:          true,
-          reportedDate:    true,
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: [{ customerName: 'asc' }, { workOrderNumber: 'asc' }],
-      }),
-      this.prisma.project.count({ where }),
+    const [rows, countRows] = await Promise.all([
+      this.prisma.$queryRaw<RawProjectRow[]>(Prisma.sql`
+        SELECT p.id, p.work_order_number, p.status, p.reported_date, c.customer_name
+        FROM projects p
+        LEFT JOIN clients c ON c.id = p.client_id
+        ${whereClause}
+        ORDER BY c.customer_name ASC NULLS LAST, p.work_order_number ASC
+        LIMIT ${limit} OFFSET ${(page - 1) * limit}
+      `),
+      this.prisma.$queryRaw<RawProjectCountRow[]>(Prisma.sql`
+        SELECT COUNT(*) AS count
+        FROM projects p
+        LEFT JOIN clients c ON c.id = p.client_id
+        ${whereClause}
+      `),
     ]);
+
+    const total = Number(countRows[0]?.count ?? 0);
+
+    const projects = rows.map((r) => ({
+      id: r.id,
+      workOrderNumber: r.work_order_number,
+      status: r.status,
+      reportedDate: r.reported_date,
+      client: r.customer_name !== null ? { customerName: r.customer_name } : null,
+    }));
 
     return { data: projects, meta: buildPaginationMeta(total, page, limit) };
   }
@@ -1058,6 +1070,18 @@ export class TimesheetService {
       },
     };
   }
+
+  // Used only by getProjects
+  private buildProjectSearchWhere(organizationId: string, searchTerm: string | null): Prisma.Sql {
+    return Prisma.sql`
+      WHERE p.organization_id = ${organizationId}
+        AND (
+          ${searchTerm}::text IS NULL
+          OR c.customer_name ILIKE '%' || ${searchTerm} || '%'
+          OR p.work_order_number ILIKE '%' || ${searchTerm} || '%'
+        )
+    `;
+  }
 }
 
 function parseDateOnly(value: string): Date {
@@ -1163,7 +1187,7 @@ function buildTimesheetSummary(
     const dayKey = toDateInputValue(entry.workDate);
     existing.dailyTotals[dayKey] = (existing.dailyTotals[dayKey] ?? 0) + entry.hours;
 
-    const projectKey = `${entry.project.customerName} — ${entry.project.workOrderNumber}`;
+    const projectKey = `${entry.project.client?.customerName || ''} — ${entry.project.workOrderNumber}`;
     existing.projectTotals[projectKey] = (existing.projectTotals[projectKey] ?? 0) + entry.hours;
     existing.entries.push(entry);
     employeeMap.set(key, existing);
@@ -1371,7 +1395,7 @@ function addDetailsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSummaryEn
       entry.isNightDifferential ? 'Y' : '',
       toDateInputValue(entry.workDate),
       entry.location,
-      entry.project.customerName,
+      entry.project.client?.customerName || '',
       entry.project.workOrderNumber,
       entry.task,
       entry.hours,
@@ -1428,7 +1452,7 @@ function addProjectTotalsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSum
   const totals = new Map<string, { project: string; tag: string; hours: number }>();
   for (const entry of entries) {
     const key = `${entry.project.id}:${entry.project.workOrderNumber}`;
-    const existing = totals.get(key) ?? { project: entry.project.customerName, tag: entry.project.workOrderNumber, hours: 0 };
+    const existing = totals.get(key) ?? { project: entry.project.client?.customerName || '', tag: entry.project.workOrderNumber, hours: 0 };
     existing.hours += entry.hours;
     totals.set(key, existing);
   }

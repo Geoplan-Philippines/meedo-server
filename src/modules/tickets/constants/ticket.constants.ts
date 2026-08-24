@@ -19,7 +19,11 @@ export const TICKET_USER_SELECT = {
 export const TICKET_INCLUDE = {
   ticketStatus: true,
   category: true,
-  project: true,
+  project: {
+    include: {
+      client: { select: { customerName: true } },
+    },
+  },
   team: true,
   assignees: {
     include: {

@@ -16,8 +16,8 @@ const SLA_POLICY_INCLUDE = {
   project: {
     select: {
       id:              true,
-      customerName:    true,
       workOrderNumber: true,
+      client:          { select: { customerName: true } },
     },
   },
 } satisfies Prisma.SlaPolicyInclude;

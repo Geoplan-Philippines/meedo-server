@@ -14,25 +14,31 @@ const MEMBER_PASSWORD = 'member123';
 
 const CATEGORIES = ['Hardware', 'Support', 'Customer Service'];
 const TEAMS = ['IT / System Developer', 'Business Development Group'];
+const TIMESHEET_CLIENTS = [
+  { apptivoId: 'seed-client-001', customerName: 'Geoplan Internal Operations' },
+  { apptivoId: 'seed-client-002', customerName: 'Field Survey Support' },
+  { apptivoId: 'seed-client-003', customerName: 'Client Documentation' },
+];
+
 const TIMESHEET_PROJECTS = [
   {
     apptivoId:       'local-timesheet-wo-001',
     workOrderNumber: 'WO-001',
-    customerName:    'Geoplan Internal Operations',
+    clientIndex:     0,
     status:          'Open',
     total:           0,
   },
   {
     apptivoId:       'local-timesheet-wo-002',
     workOrderNumber: 'WO-002',
-    customerName:    'Field Survey Support',
+    clientIndex:     1,
     status:          'Open',
     total:           0,
   },
   {
     apptivoId:       'local-timesheet-wo-003',
     workOrderNumber: 'WO-003',
-    customerName:    'Client Documentation',
+    clientIndex:     2,
     status:          'Open',
     total:           0,
   },
@@ -138,20 +144,33 @@ async function main() {
   }
   console.log('Teams seeded');
 
+  const clientIds: string[] = [];
+  for (const client of TIMESHEET_CLIENTS) {
+    const created = await prisma.client.upsert({
+      where: { organizationId_apptivoId: { organizationId: org.id, apptivoId: client.apptivoId } },
+      update: { customerName: client.customerName },
+      create: { ...client, organizationId: org.id },
+    });
+    clientIds.push(created.id);
+  }
+
   for (const project of TIMESHEET_PROJECTS) {
     await prisma.project.upsert({
       where: { organizationId_apptivoId: { organizationId: org.id, apptivoId: project.apptivoId } },
       update: {
         workOrderNumber: project.workOrderNumber,
-        customerName:    project.customerName,
         status:          project.status,
         total:           project.total,
-        organizationId:  org.id,
+        clientId:        clientIds[project.clientIndex],
       },
       create: {
-        ...project,
-        reportedDate:   new Date(),
-        organizationId: org.id,
+        apptivoId:       project.apptivoId,
+        workOrderNumber: project.workOrderNumber,
+        status:          project.status,
+        total:           project.total,
+        reportedDate:    new Date(),
+        clientId:        clientIds[project.clientIndex],
+        organizationId:  org.id,
       },
     });
   }
