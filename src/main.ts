@@ -38,6 +38,7 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, document);
   }
 
+  // Explicitly bind to '0.0.0.0' to ensure accessibility in containerized (Docker) and cloud deployments
   await app.listen(env.PORT, '0.0.0.0');
 }
 bootstrap();
