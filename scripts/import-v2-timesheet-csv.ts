@@ -54,7 +54,7 @@ async function main() {
 
   const projects = await prisma.project.findMany({
     where: { organizationId: organization.id },
-    select: { id: true, customerName: true, workOrderNumber: true },
+    select: { id: true, workOrderNumber: true, client: { select: { customerName: true } } },
   });
 
   const ready: Array<{
@@ -228,17 +228,19 @@ function parseLegacyDate(value: string, year: number): Date {
 }
 
 function findProject(
-  projects: Array<{ id: string; customerName: string; workOrderNumber: string }>,
+  projects: Array<{ id: string; workOrderNumber: string; client: { customerName: string } | null }>,
   projectLabel: string,
   tagLabel: string,
 ) {
   const normalizedProject = normalize(projectLabel);
   const normalizedTag = normalize(tagLabel);
 
+  const name = (p: { client: { customerName: string } | null }) => p.client?.customerName ?? '';
+
   return projects.find((project) => normalize(project.workOrderNumber) === normalizedTag)
     ?? projects.find((project) => normalize(project.workOrderNumber) === normalizedProject)
-    ?? projects.find((project) => normalize(project.customerName) === normalizedProject)
-    ?? projects.find((project) => normalize(project.customerName).includes(normalizedProject));
+    ?? projects.find((project) => normalize(name(project)) === normalizedProject)
+    ?? projects.find((project) => normalize(name(project)).includes(normalizedProject));
 }
 
 function workTypeFromLocation(location?: string): TimesheetWorkType {

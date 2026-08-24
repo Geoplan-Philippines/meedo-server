@@ -31,7 +31,7 @@ const mockEntry = {
   updatedAt:             new Date(),
   project: {
     id:              'project-1',
-    customerName:    'Geoplan',
+    client:          { customerName: 'Geoplan' },
     workOrderNumber: 'WO-001',
     status:          'Open',
   },

@@ -299,7 +299,6 @@ model NewsletterSubscriber {
 model Project {
   id                            String                    @id @default(uuid())
   workOrderNumber               String                    @map("work_order_number")
-  customerName                  String                    @map("customer_name")
   status                        String
   total                         Float
   reportedDate                  DateTime?                 @map("reported_date")
@@ -338,6 +337,7 @@ model Client {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([organizationId, apptivoId])
+  @@unique([organizationId, customerName])
   @@index([organizationId])
   @@map("clients")
 }
