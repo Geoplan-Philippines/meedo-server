@@ -27,6 +27,7 @@ const TIMESHEET_ENTRY_INCLUDE = {
       id:              true,
       workOrderNumber: true,
       status:          true,
+      customerName:    true,
       client:          { select: { customerName: true } },
     },
   },
@@ -50,6 +51,7 @@ const TIMESHEET_SUMMARY_ENTRY_INCLUDE = {
       id:              true,
       workOrderNumber: true,
       status:          true,
+      customerName:    true,
       client:          { select: { customerName: true } },
     },
   },
@@ -92,7 +94,7 @@ const TIMESHEET_AUDIT_LOG_INCLUDE = {
       workDate: true,
       hours: true,
       status: true,
-      project: { select: { id: true, workOrderNumber: true, client: { select: { customerName: true } } } },
+      project: { select: { id: true, workOrderNumber: true, customerName: true, client: { select: { customerName: true } } } },
     },
   },
 } satisfies Prisma.TimesheetAuditLogInclude;
@@ -826,11 +828,11 @@ export class TimesheetService {
 
     const [rows, countRows] = await Promise.all([
       this.prisma.$queryRaw<RawProjectRow[]>(Prisma.sql`
-        SELECT p.id, p.work_order_number, p.status, p.reported_date, c.customer_name
+        SELECT p.id, p.work_order_number, p.status, p.reported_date, COALESCE(c.customer_name, p.customer_name) AS customer_name
         FROM projects p
         LEFT JOIN clients c ON c.id = p.client_id
         ${whereClause}
-        ORDER BY c.customer_name ASC NULLS LAST, p.work_order_number ASC
+        ORDER BY COALESCE(c.customer_name, p.customer_name) ASC NULLS LAST, p.work_order_number ASC
         LIMIT ${limit} OFFSET ${(page - 1) * limit}
       `),
       this.prisma.$queryRaw<RawProjectCountRow[]>(Prisma.sql`
@@ -843,13 +845,17 @@ export class TimesheetService {
 
     const total = Number(countRows[0]?.count ?? 0);
 
-    const projects = rows.map((r) => ({
-      id: r.id,
-      workOrderNumber: r.work_order_number,
-      status: r.status,
-      reportedDate: r.reported_date,
-      client: r.customer_name !== null ? { customerName: r.customer_name } : null,
-    }));
+    const projects = rows.map((r) => {
+      const customerName = r.customer_name?.trim() || '';
+      return {
+        id: r.id,
+        workOrderNumber: r.work_order_number,
+        customerName,
+        status: r.status,
+        reportedDate: r.reported_date,
+        client: r.customer_name !== null ? { customerName: r.customer_name } : null,
+      };
+    });
 
     return { data: projects, meta: buildPaginationMeta(total, page, limit) };
   }
@@ -1077,7 +1083,7 @@ export class TimesheetService {
       WHERE p.organization_id = ${organizationId}
         AND (
           ${searchTerm}::text IS NULL
-          OR c.customer_name ILIKE '%' || ${searchTerm} || '%'
+          OR COALESCE(c.customer_name, p.customer_name) ILIKE '%' || ${searchTerm} || '%'
           OR p.work_order_number ILIKE '%' || ${searchTerm} || '%'
         )
     `;
@@ -1187,7 +1193,8 @@ function buildTimesheetSummary(
     const dayKey = toDateInputValue(entry.workDate);
     existing.dailyTotals[dayKey] = (existing.dailyTotals[dayKey] ?? 0) + entry.hours;
 
-    const projectKey = `${entry.project.client?.customerName || ''} — ${entry.project.workOrderNumber}`;
+    const projectCustomer = entry.project.customerName || entry.project.client?.customerName || '';
+    const projectKey = `${projectCustomer} — ${entry.project.workOrderNumber}`;
     existing.projectTotals[projectKey] = (existing.projectTotals[projectKey] ?? 0) + entry.hours;
     existing.entries.push(entry);
     employeeMap.set(key, existing);
@@ -1395,7 +1402,7 @@ function addDetailsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSummaryEn
       entry.isNightDifferential ? 'Y' : '',
       toDateInputValue(entry.workDate),
       entry.location,
-      entry.project.client?.customerName || '',
+      entry.project.customerName || entry.project.client?.customerName || '',
       entry.project.workOrderNumber,
       entry.task,
       entry.hours,
@@ -1452,7 +1459,8 @@ function addProjectTotalsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSum
   const totals = new Map<string, { project: string; tag: string; hours: number }>();
   for (const entry of entries) {
     const key = `${entry.project.id}:${entry.project.workOrderNumber}`;
-    const existing = totals.get(key) ?? { project: entry.project.client?.customerName || '', tag: entry.project.workOrderNumber, hours: 0 };
+    const projectCustomer = entry.project.customerName || entry.project.client?.customerName || '';
+    const existing = totals.get(key) ?? { project: projectCustomer, tag: entry.project.workOrderNumber, hours: 0 };
     existing.hours += entry.hours;
     totals.set(key, existing);
   }

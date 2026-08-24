@@ -16,6 +16,9 @@ export class ProjectResponseDTO {
   workOrderNumber!: string;
 
   @ApiProperty()
+  customerName!: string;
+
+  @ApiProperty()
   status!: string;
 
   @ApiProperty()
