@@ -18,7 +18,7 @@ export class GetTimesheetEntriesQueryDTO extends PaginationQueryDTO {
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID()
-  projectId?: string;
+  workOrderId?: string;
 
   @ApiPropertyOptional({ enum: TimesheetEntryStatus })
   @IsOptional()

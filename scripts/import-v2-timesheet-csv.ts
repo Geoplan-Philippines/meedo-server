@@ -52,7 +52,7 @@ async function main() {
 
   if (!member) throw new Error(`${user.email} is not a member of ${organization.slug}`);
 
-  const projects = await prisma.project.findMany({
+  const projects = await prisma.workOrder.findMany({
     where: { organizationId: organization.id },
     select: { id: true, workOrderNumber: true, client: { select: { customerName: true } } },
   });
@@ -81,7 +81,7 @@ async function main() {
         data: {
           organizationId: organization.id,
           userId: user.id,
-          projectId: project.id,
+          workOrderId: project.id,
           workDate: date,
           hours,
           location: row['Location']?.trim() || 'OFC - DW',

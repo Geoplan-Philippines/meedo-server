@@ -22,7 +22,7 @@ const MAX_REGULAR_HOURS_PER_DAY = 9;
 const MAX_TOTAL_HOURS_PER_DAY = 24;
 
 const TIMESHEET_ENTRY_INCLUDE = {
-  project: {
+  workOrder: {
     select: {
       id:              true,
       workOrderNumber: true,
@@ -46,7 +46,7 @@ const TIMESHEET_ENTRY_INCLUDE = {
 } satisfies Prisma.TimesheetEntryInclude;
 
 const TIMESHEET_SUMMARY_ENTRY_INCLUDE = {
-  project: {
+  workOrder: {
     select: {
       id:              true,
       workOrderNumber: true,
@@ -94,7 +94,7 @@ const TIMESHEET_AUDIT_LOG_INCLUDE = {
       workDate: true,
       hours: true,
       status: true,
-      project: { select: { id: true, workOrderNumber: true, customerName: true, client: { select: { customerName: true } } } },
+      workOrder: { select: { id: true, workOrderNumber: true, customerName: true, client: { select: { customerName: true } } } },
     },
   },
 } satisfies Prisma.TimesheetAuditLogInclude;
@@ -109,7 +109,7 @@ interface TimesheetExportResult {
   mimeType: string;
 }
 
-interface RawProjectRow {
+interface RawWorkOrderRow {
   id: string;
   work_order_number: string;
   status: string;
@@ -117,7 +117,7 @@ interface RawProjectRow {
   customer_name: string | null;
 }
 
-interface RawProjectCountRow {
+interface RawWorkOrderCountRow {
   count: bigint;
 }
 
@@ -136,7 +136,7 @@ export class TimesheetService {
     const where: Prisma.TimesheetEntryWhereInput = {
       organizationId,
       userId,
-      ...(query.projectId ? { projectId: query.projectId } : {}),
+      ...(query.workOrderId ? { workOrderId: query.workOrderId } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...this.buildWorkDateFilter(query.periodStart, query.periodEnd),
     };
@@ -161,7 +161,7 @@ export class TimesheetService {
     dto: CreateTimesheetEntryDTO,
   ): Promise<TimesheetEntryWithRelations> {
     const member = await this.resolveMember(organizationId, userId);
-    await this.ensureProjectInOrganization(dto.projectId, organizationId);
+    await this.ensureWorkOrderInOrganization(dto.workOrderId, organizationId);
     const workDate = parseDateOnly(dto.workDate);
     const hours = this.resolveEntryHours(dto.workType ?? TimesheetWorkType.REGULAR, dto.hours);
     await this.ensureDateNotLocked(organizationId, workDate);
@@ -170,7 +170,7 @@ export class TimesheetService {
     const data = {
       organizationId,
       userId: userId!,
-      projectId: dto.projectId,
+      workOrderId: dto.workOrderId,
       workDate,
       hours,
       location: dto.location?.trim() || undefined,
@@ -214,8 +214,8 @@ export class TimesheetService {
 
     this.assertCanEdit(existing.status);
 
-    if (dto.projectId) {
-      await this.ensureProjectInOrganization(dto.projectId, organizationId);
+    if (dto.workOrderId) {
+      await this.ensureWorkOrderInOrganization(dto.workOrderId, organizationId);
     }
 
     const workDate = dto.workDate !== undefined ? parseDateOnly(dto.workDate) : existing.workDate;
@@ -227,7 +227,7 @@ export class TimesheetService {
     await this.ensureDailyHoursLimit(organizationId, userId!, workDate, hours, isOvertime, entryId);
 
     const data: Prisma.TimesheetEntryUncheckedUpdateInput = {
-      ...(dto.projectId !== undefined ? { projectId: dto.projectId } : {}),
+      ...(dto.workOrderId !== undefined ? { workOrderId: dto.workOrderId } : {}),
       ...(dto.workDate !== undefined ? { workDate } : {}),
       hours,
       ...(dto.location !== undefined ? { location: dto.location.trim() || 'OFC - DW' } : {}),
@@ -824,20 +824,20 @@ export class TimesheetService {
     await this.resolveMember(organizationId, userId);
     const { page, limit, search } = query;
     const searchTerm = search || null;
-    const whereClause = this.buildProjectSearchWhere(organizationId, searchTerm);
+    const whereClause = this.buildWorkOrderSearchWhere(organizationId, searchTerm);
 
     const [rows, countRows] = await Promise.all([
-      this.prisma.$queryRaw<RawProjectRow[]>(Prisma.sql`
+      this.prisma.$queryRaw<RawWorkOrderRow[]>(Prisma.sql`
         SELECT p.id, p.work_order_number, p.status, p.reported_date, COALESCE(c.customer_name, p.customer_name) AS customer_name
-        FROM projects p
+        FROM work_orders p
         LEFT JOIN clients c ON c.id = p.client_id
         ${whereClause}
         ORDER BY COALESCE(c.customer_name, p.customer_name) ASC NULLS LAST, p.work_order_number ASC
         LIMIT ${limit} OFFSET ${(page - 1) * limit}
       `),
-      this.prisma.$queryRaw<RawProjectCountRow[]>(Prisma.sql`
+      this.prisma.$queryRaw<RawWorkOrderCountRow[]>(Prisma.sql`
         SELECT COUNT(*) AS count
-        FROM projects p
+        FROM work_orders p
         LEFT JOIN clients c ON c.id = p.client_id
         ${whereClause}
       `),
@@ -877,14 +877,14 @@ export class TimesheetService {
     return member;
   }
 
-  private async ensureProjectInOrganization(projectId: string, organizationId: string): Promise<void> {
-    const project = await this.prisma.project.findFirst({
-      where: { id: projectId, organizationId },
+  private async ensureWorkOrderInOrganization(workOrderId: string, organizationId: string): Promise<void> {
+    const workOrder = await this.prisma.workOrder.findFirst({
+      where: { id: workOrderId, organizationId },
       select: { id: true },
     });
 
-    if (!project) {
-      throw new NotFoundException('Project not found in this organization.');
+    if (!workOrder) {
+      throw new NotFoundException('Work order not found in this organization.');
     }
   }
 
@@ -1022,9 +1022,9 @@ export class TimesheetService {
       organizationId,
       workDate: { gte: periodStart, lte: periodEnd },
       ...(query.userId ? { userId: query.userId } : {}),
-      ...(query.projectId ? { projectId: query.projectId } : {}),
+      ...(query.workOrderId ? { workOrderId: query.workOrderId } : {}),
       ...(query.status ? { status: query.status } : {}),
-      ...(query.tag ? { project: { workOrderNumber: { contains: query.tag, mode: 'insensitive' } } } : {}),
+      ...(query.tag ? { workOrder: { workOrderNumber: { contains: query.tag, mode: 'insensitive' } } } : {}),
       ...(query.employee
         ? {
             user: {
@@ -1078,7 +1078,7 @@ export class TimesheetService {
   }
 
   // Used only by getProjects
-  private buildProjectSearchWhere(organizationId: string, searchTerm: string | null): Prisma.Sql {
+  private buildWorkOrderSearchWhere(organizationId: string, searchTerm: string | null): Prisma.Sql {
     return Prisma.sql`
       WHERE p.organization_id = ${organizationId}
         AND (
@@ -1193,8 +1193,8 @@ function buildTimesheetSummary(
     const dayKey = toDateInputValue(entry.workDate);
     existing.dailyTotals[dayKey] = (existing.dailyTotals[dayKey] ?? 0) + entry.hours;
 
-    const projectCustomer = entry.project.customerName || entry.project.client?.customerName || '';
-    const projectKey = `${projectCustomer} — ${entry.project.workOrderNumber}`;
+    const projectCustomer = entry.workOrder.customerName || entry.workOrder.client?.customerName || '';
+    const projectKey = `${projectCustomer} — ${entry.workOrder.workOrderNumber}`;
     existing.projectTotals[projectKey] = (existing.projectTotals[projectKey] ?? 0) + entry.hours;
     existing.entries.push(entry);
     employeeMap.set(key, existing);
@@ -1402,8 +1402,8 @@ function addDetailsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSummaryEn
       entry.isNightDifferential ? 'Y' : '',
       toDateInputValue(entry.workDate),
       entry.location,
-      entry.project.customerName || entry.project.client?.customerName || '',
-      entry.project.workOrderNumber,
+      entry.workOrder.customerName || entry.workOrder.client?.customerName || '',
+      entry.workOrder.workOrderNumber,
       entry.task,
       entry.hours,
       entry.projectDescription ?? '',
@@ -1458,9 +1458,9 @@ function addProjectTotalsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSum
 
   const totals = new Map<string, { project: string; tag: string; hours: number }>();
   for (const entry of entries) {
-    const key = `${entry.project.id}:${entry.project.workOrderNumber}`;
-    const projectCustomer = entry.project.customerName || entry.project.client?.customerName || '';
-    const existing = totals.get(key) ?? { project: projectCustomer, tag: entry.project.workOrderNumber, hours: 0 };
+    const key = `${entry.workOrder.id}:${entry.workOrder.workOrderNumber}`;
+    const projectCustomer = entry.workOrder.customerName || entry.workOrder.client?.customerName || '';
+    const existing = totals.get(key) ?? { project: projectCustomer, tag: entry.workOrder.workOrderNumber, hours: 0 };
     existing.hours += entry.hours;
     totals.set(key, existing);
   }

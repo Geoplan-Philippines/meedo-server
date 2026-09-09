@@ -114,6 +114,7 @@ model Organization {
   teams                         Team[]
   tickets                       Tickets[]
   projects                      Project[]
+  workOrders                    WorkOrder[]
   slaPolicies                   SlaPolicy[]
   timesheetEntries              TimesheetEntry[]
   timesheetPeriodLocks          TimesheetPeriodLock[]
@@ -183,6 +184,8 @@ model Member {
   ticketAssignees               TicketAssignee[]
   ticketComments                TicketComment[]
   ticketActivities              TicketActivity[]
+  ledProjects                   Project[]                 @relation("ProjectLead")
+  projectMemberships            ProjectMember[]
   approvedTimesheetEntries      TimesheetEntry[]          @relation("TimesheetEntryApprovedBy")
   rejectedTimesheetEntries      TimesheetEntry[]          @relation("TimesheetEntryRejectedBy")
   lockedTimesheetPeriods        TimesheetPeriodLock[]     @relation("TimesheetPeriodLockedBy")
@@ -296,13 +299,21 @@ model NewsletterSubscriber {
   @@map("newsletter_subscribers")
 }
 
-model Project {
+// Mirror of an Apptivo work order. Owned by the Apptivo sync: rows here are
+// created and updated from the upstream feed, never by hand. Formerly named
+// `Project`; renamed so `Project` could model our own delivery projects.
+model WorkOrder {
   id                            String                    @id @default(uuid())
   workOrderNumber               String                    @map("work_order_number")
   customerName                  String                    @default("") @map("customer_name")
   status                        String
   total                         Float
   reportedDate                  DateTime?                 @map("reported_date")
+  // Set when a work order stops appearing in the Apptivo feed. The sync used to
+  // hard-delete these, which cascaded into timesheets and tickets; it now
+  // archives instead. Cleared automatically if the work order reappears.
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+  archivedAt                    DateTime?                 @map("archived_at")
 
   apptivoId                     String                    @map("apptivo_id")
   organizationId                String                    @map("organization_id")
@@ -312,6 +323,7 @@ model Project {
   client                        Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   tickets                       Tickets[]
+  projects                      Project[]
   slaPolicies                   SlaPolicy[]
   timesheetEntries              TimesheetEntry[]
 
@@ -321,7 +333,8 @@ model Project {
   @@unique([organizationId, apptivoId])
   @@index([organizationId])
   @@index([clientId])
-  @@map("projects")
+  @@index([isArchived])
+  @@map("work_orders")
 }
 
 model Client {
@@ -332,7 +345,7 @@ model Client {
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  projects                      Project[]
+  workOrders                    WorkOrder[]
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
@@ -341,6 +354,77 @@ model Client {
   @@unique([organizationId, customerName])
   @@index([organizationId])
   @@map("clients")
+}
+
+enum ProjectState {
+  BACKLOG
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+}
+
+// A delivery project: the container tickets live in. Unlike WorkOrder this is
+// ours, so the Apptivo sync can never touch it. `workOrderId` is an optional
+// pointer for client billing context, not an ownership link.
+model Project {
+  id                            String                    @id @default(uuid())
+  name                          String
+  // Short uppercase prefix used to render ticket identifiers, e.g. "ENG" -> ENG-12.
+  key                           String
+  description                   String?
+  state                         ProjectState              @default(BACKLOG)
+  priority                      TicketPriority?
+  startDate                     DateTime?                 @map("start_date")
+  targetDate                    DateTime?                 @map("target_date")
+  // The org's catch-all project for work with no client. Exactly one per
+  // organization, enforced by a partial unique index (see migration) because
+  // Prisma cannot express a filtered constraint.
+  isInternal                    Boolean                   @default(false) @map("is_internal")
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+  // Next per-project ticket number, bumped inside the ticket-create transaction
+  // so concurrent creates cannot collide.
+  nextTicketNumber              Int                       @default(1) @map("next_ticket_number")
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  leadMemberId                  String?                   @map("lead_member_id")
+  lead                          Member?                   @relation("ProjectLead", fields: [leadMemberId], references: [id], onDelete: SetNull)
+
+  workOrderId                   String?                   @map("work_order_id")
+  workOrder                     WorkOrder?                @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+
+  members                       ProjectMember[]
+  tickets                       Tickets[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+  @@index([leadMemberId])
+  @@index([workOrderId])
+  @@index([isArchived])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id                            String                    @id @default(uuid())
+
+  projectId                     String                    @map("project_id")
+  project                       Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  memberId                      String                    @map("member_id")
+  member                        Member                    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([projectId, memberId])
+  @@index([projectId])
+  @@index([memberId])
+  @@map("project_members")
 }
 
 model Lead {
@@ -391,7 +475,8 @@ model TicketStatus {
 
 model Tickets {
   id                            String                    @id @default(uuid())
-  ticketNumber                  Int                       @map("ticket_number")
+  // Sequential within the owning project; rendered as "<project.key>-<number>".
+  number                        Int
   title                         String
   description                   String?
   priority                      TicketPriority            @default(MEDIUM)
@@ -399,12 +484,16 @@ model Tickets {
 
   organizationId                String                    @map("organization_id")
   teamId                        String?                   @map("team_id")
-  projectId                     String?                   @map("project_id")
+  projectId                     String                    @map("project_id")
+  workOrderId                   String?                   @map("work_order_id")
   categoryId                    String?                   @map("category_id")
   ticketStatusId                String?                   @map("ticket_status_id")
 
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  project                       Project?                  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  // Restrict, not Cascade: deleting a project must not silently take its tickets
+  // with it. The service archives instead, and only allows a hard delete when empty.
+  project                       Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  workOrder                     WorkOrder?                @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
   team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
   assignees                     TicketAssignee[]
   comments                      TicketComment[]
@@ -426,9 +515,10 @@ model Tickets {
   @@index([ticketStatusId])
   @@index([categoryId])
   @@index([projectId])
+  @@index([workOrderId])
   @@index([teamId])
   @@index([isArchived])
-  @@unique([organizationId, ticketNumber])
+  @@unique([projectId, number])
   @@map("tickets")
 }
 
@@ -483,8 +573,8 @@ model SlaPolicy {
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  projectId                     String?                   @map("project_id")
-  project                       Project?                  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  workOrderId                   String?                   @map("work_order_id")
+  workOrder                     WorkOrder?                @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
@@ -559,8 +649,8 @@ model TimesheetEntry {
   userId                        String                    @map("user_id")
   user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  projectId                     String                    @map("project_id")
-  project                       Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  workOrderId                   String                    @map("work_order_id")
+  workOrder                     WorkOrder                 @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
 
   workDate                      DateTime                  @map("work_date")
   hours                         Float
@@ -587,11 +677,11 @@ model TimesheetEntry {
 
   @@index([organizationId])
   @@index([userId])
-  @@index([projectId])
+  @@index([workOrderId])
   @@index([organizationId, userId, workDate])
   @@index([organizationId, workDate])
   @@index([organizationId, workDate, status])
-  @@index([organizationId, projectId, workDate])
+  @@index([organizationId, workOrderId, workDate])
   @@index([organizationId, status, workDate])
   @@index([status])
   @@map("timesheet_entries")

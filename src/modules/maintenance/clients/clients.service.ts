@@ -4,10 +4,10 @@ import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { GetAllClientsQueryDTO } from './dto/get-all-clients-query.dto';
-import { Customer, ClientInput, ApptivoResponse } from '../projects/types/project.type';
+import { Customer, ClientInput, ApptivoResponse } from '../work-orders/types/work-order.type';
 
 const CLIENT_INCLUDE = {
-  _count: { select: { projects: true } },
+  _count: { select: { workOrders: true } },
 } satisfies Prisma.ClientInclude;
 
 type ClientWithCount = Prisma.ClientGetPayload<{ include: typeof CLIENT_INCLUDE }>;

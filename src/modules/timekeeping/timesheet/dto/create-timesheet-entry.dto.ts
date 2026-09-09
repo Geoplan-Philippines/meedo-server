@@ -14,9 +14,9 @@ import {
 import { TimesheetWorkType } from '@prisma/client';
 
 export class CreateTimesheetEntryDTO {
-  @ApiProperty({ format: 'uuid', description: 'Project/work-order id from the active organization.' })
+  @ApiProperty({ format: 'uuid', description: 'Apptivo work-order id from the active organization.' })
   @IsUUID()
-  projectId!: string;
+  workOrderId!: string;
 
   @ApiProperty({ example: '2026-06-22', format: 'date' })
   @IsDateString()

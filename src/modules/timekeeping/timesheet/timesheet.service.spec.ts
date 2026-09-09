@@ -9,7 +9,7 @@ const mockEntry = {
   id:                    'entry-1',
   organizationId:        'org-1',
   userId:                'user-1',
-  projectId:             'project-1',
+  workOrderId:           'work-order-1',
   workDate:              new Date('2026-06-22T00:00:00.000Z'),
   hours:                 8,
   location:              'OFC - DW',
@@ -29,9 +29,10 @@ const mockEntry = {
   rejectionReason:       null,
   createdAt:             new Date(),
   updatedAt:             new Date(),
-  project: {
-    id:              'project-1',
+  workOrder: {
+    id:              'work-order-1',
     client:          { customerName: 'Geoplan' },
+    customerName:    'Geoplan',
     workOrderNumber: 'WO-001',
     status:          'Open',
   },
@@ -71,10 +72,13 @@ const mockPrismaService = {
   member: {
     findUnique: jest.fn(),
   },
-  project: {
+  workOrder: {
     findFirst: jest.fn(),
     findMany:  jest.fn(),
     count:     jest.fn(),
+  },
+  user: {
+    findUnique: jest.fn(),
   },
   timesheetEntry: {
     findMany:   jest.fn(),
@@ -112,7 +116,7 @@ describe('TimesheetService', () => {
     jest.resetAllMocks();
 
     mockPrismaService.member.findUnique.mockResolvedValue({ id: 'member-1', role: 'member' });
-    mockPrismaService.project.findFirst.mockResolvedValue({ id: 'project-1' });
+    mockPrismaService.workOrder.findFirst.mockResolvedValue({ id: 'work-order-1' });
     mockPrismaService.timesheetEntry.aggregate.mockResolvedValue({ _sum: { hours: 0 } });
     mockPrismaService.timesheetPeriodLock.findFirst.mockResolvedValue(null);
     mockPrismaService.timesheetPeriodLock.findUnique.mockResolvedValue(null);
@@ -146,7 +150,7 @@ describe('TimesheetService', () => {
 
   describe('createEntry', () => {
     const dto = {
-      projectId: 'project-1',
+      workOrderId: 'work-order-1',
       workDate:  '2026-06-22',
       hours:     8,
       task:      'Inspection work',
@@ -163,7 +167,7 @@ describe('TimesheetService', () => {
           data: expect.objectContaining({
             organizationId: 'org-1',
             userId:         'user-1',
-            projectId:      'project-1',
+            workOrderId:    'work-order-1',
             status:         TimesheetEntryStatus.DRAFT,
           }),
         }),
@@ -180,8 +184,8 @@ describe('TimesheetService', () => {
       await expect(service.createEntry('org-1', undefined, dto)).rejects.toThrow(ForbiddenException);
     });
 
-    it('rejects a project outside the active organization', async () => {
-      mockPrismaService.project.findFirst.mockResolvedValue(null);
+    it('rejects a work order outside the active organization', async () => {
+      mockPrismaService.workOrder.findFirst.mockResolvedValue(null);
 
       await expect(service.createEntry('org-1', 'user-1', dto)).rejects.toThrow(NotFoundException);
     });

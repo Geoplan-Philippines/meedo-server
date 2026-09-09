@@ -57,3 +57,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 /src/generated/prisma
 package-lock.json
+
+# Local project context (not for repo)
+PROJECT_STATUS.md
+CHANGELOG.md
