@@ -25,7 +25,7 @@ export class GetTimesheetSummaryQueryDTO {
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID()
-  projectId?: string;
+  workOrderId?: string;
 
   @ApiPropertyOptional({ example: 'WO-001', maxLength: 200 })
   @IsOptional()

@@ -6,7 +6,7 @@ import { TICKET_VIEWS, type TicketView } from '../constants/ticket.constants';
 
 /**
  * Context for faceted counts. Counts respect the current `view` + `search` and the
- * active scope filters (`teamId`/`categoryId`/`assigneeId`), so the numbers match
+ * active scope filters (`teamId`/`categoryId`/`assigneeId`/`projectId`), so the numbers match
  * what the list shows, but deliberately ignore the active status/priority
  * selections, so each option's badge reflects what picking it would yield.
  */
@@ -27,6 +27,10 @@ export class GetTicketFacetsQueryDTO {
   @IsOptional()
   @IsUUID()
   assigneeId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
 
   @IsOptional()
   @IsString()

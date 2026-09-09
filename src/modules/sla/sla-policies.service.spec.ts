@@ -15,10 +15,10 @@ const mockPolicy = {
   isActive:             true,
   isArchived:           false,
   organizationId:       'org-geo',
-  projectId:            null,
+  workOrderId:          null,
   createdAt:            new Date(),
   updatedAt:            new Date(),
-  project:              null,
+  workOrder:            null,
 };
 
 const mockPrismaService = {
@@ -29,7 +29,7 @@ const mockPrismaService = {
     create:    jest.fn(),
     update:    jest.fn(),
   },
-  project: {
+  workOrder: {
     findFirst: jest.fn(),
   },
 };
@@ -122,7 +122,7 @@ describe('SlaPoliciesService', () => {
       expect(result).toEqual(mockPolicy);
     });
 
-    it('throws ConflictException when duplicate org + project combo exists', async () => {
+    it('throws ConflictException when duplicate org + work order combo exists', async () => {
       mockPrismaService.slaPolicy.findFirst.mockResolvedValue(mockPolicy);
 
       await expect(service.createSlaPolicy(dto, 'org-geo')).rejects.toThrow(
@@ -130,12 +130,12 @@ describe('SlaPoliciesService', () => {
       );
     });
 
-    it('throws NotFoundException when projectId does not belong to org', async () => {
-      mockPrismaService.project.findFirst.mockResolvedValue(null);
+    it('throws NotFoundException when workOrderId does not belong to org', async () => {
+      mockPrismaService.workOrder.findFirst.mockResolvedValue(null);
       mockPrismaService.slaPolicy.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.createSlaPolicy({ ...dto, projectId: 'bad-project' }, 'org-geo'),
+        service.createSlaPolicy({ ...dto, workOrderId: 'bad-work-order' }, 'org-geo'),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -173,16 +173,16 @@ describe('SlaPoliciesService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('throws ConflictException when new projectId is already assigned to another policy', async () => {
-      const conflictingPolicy = { ...mockPolicy, id: 'sla-uuid-2', projectId: 'project-1' };
+    it('throws ConflictException when new workOrderId is already assigned to another policy', async () => {
+      const conflictingPolicy = { ...mockPolicy, id: 'sla-uuid-2', workOrderId: 'work-order-1' };
       mockPrismaService.slaPolicy.findFirst
         .mockResolvedValueOnce(mockPolicy)
         .mockResolvedValueOnce(conflictingPolicy);
 
-      mockPrismaService.project.findFirst.mockResolvedValue({ id: 'project-1' });
+      mockPrismaService.workOrder.findFirst.mockResolvedValue({ id: 'work-order-1' });
 
       await expect(
-        service.updateSlaPolicy('sla-uuid-1', { projectId: 'project-1' }, 'org-geo'),
+        service.updateSlaPolicy('sla-uuid-1', { workOrderId: 'work-order-1' }, 'org-geo'),
       ).rejects.toThrow(ConflictException);
     });
   });

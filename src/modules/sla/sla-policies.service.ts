@@ -13,7 +13,7 @@ import { UpdateSlaPolicyDTO } from './dto/update-sla-policy.dto';
 import { GetAllSlaPoliciesQueryDTO } from './dto/get-all-sla-policies-query.dto';
 
 const SLA_POLICY_INCLUDE = {
-  project: {
+  workOrder: {
     select: {
       id:              true,
       workOrderNumber: true,
@@ -32,14 +32,14 @@ export class SlaPoliciesService {
     query: GetAllSlaPoliciesQueryDTO,
     organizationId: string,
   ): Promise<PaginatedResponse<SlaPolicyWithRelations>> {
-    const { page, limit, isActive, priority, projectId } = query;
+    const { page, limit, isActive, priority, workOrderId } = query;
 
     const where: Prisma.SlaPolicyWhereInput = {
       organizationId,
       isArchived: false,
       ...(isActive !== undefined && { isActive }),
       ...(priority && { priority }),
-      ...(projectId && { projectId }),
+      ...(workOrderId && { workOrderId }),
     };
 
     const [slaPolicies, total] = await Promise.all([
@@ -82,8 +82,8 @@ export class SlaPoliciesService {
     data: CreateSlaPolicyDTO,
     organizationId: string,
   ): Promise<SlaPolicyWithRelations> {
-    await this.validateProjectReference(data.projectId, organizationId);
-    await this.assertNoDuplicate(organizationId, data.projectId ?? null);
+    await this.validateWorkOrderReference(data.workOrderId, organizationId);
+    await this.assertNoDuplicate(organizationId, data.workOrderId ?? null);
 
     return this.prisma.slaPolicy.create({
       data: {
@@ -94,7 +94,7 @@ export class SlaPoliciesService {
         businessHoursOnly:    data.businessHoursOnly ?? false,
         documentUrl:          data.documentUrl,
         organizationId,
-        projectId:            data.projectId ?? null,
+        workOrderId:          data.workOrderId ?? null,
       },
       include: SLA_POLICY_INCLUDE,
     });
@@ -111,9 +111,9 @@ export class SlaPoliciesService {
 
     if (!existing) throw new NotFoundException('SLA policy not found.');
 
-    if (data.projectId !== undefined && data.projectId !== existing.projectId) {
-      await this.validateProjectReference(data.projectId, organizationId);
-      await this.assertNoDuplicate(organizationId, data.projectId ?? null, id);
+    if (data.workOrderId !== undefined && data.workOrderId !== existing.workOrderId) {
+      await this.validateWorkOrderReference(data.workOrderId, organizationId);
+      await this.assertNoDuplicate(organizationId, data.workOrderId ?? null, id);
     }
 
     const firstResponse = data.firstResponseMinutes ?? existing.firstResponseMinutes;
@@ -180,29 +180,29 @@ export class SlaPoliciesService {
     });
   }
 
-  private async validateProjectReference(
-    projectId: string | undefined,
+  private async validateWorkOrderReference(
+    workOrderId: string | undefined,
     organizationId: string,
   ): Promise<void> {
-    if (!projectId) return;
+    if (!workOrderId) return;
 
-    const project = await this.prisma.project.findFirst({
-      where: { id: projectId, organizationId },
+    const workOrder = await this.prisma.workOrder.findFirst({
+      where: { id: workOrderId, organizationId },
       select: { id: true },
     });
 
-    if (!project) throw new NotFoundException('Project not found in this organization.');
+    if (!workOrder) throw new NotFoundException('Work order not found in this organization.');
   }
 
   private async assertNoDuplicate(
     organizationId: string,
-    projectId: string | null,
+    workOrderId: string | null,
     excludeId?: string,
   ): Promise<void> {
     const conflict = await this.prisma.slaPolicy.findFirst({
       where: {
         organizationId,
-        projectId,
+        workOrderId,
         isArchived: false,
         ...(excludeId && { id: { not: excludeId } }),
       },
@@ -211,7 +211,7 @@ export class SlaPoliciesService {
 
     if (conflict) {
       throw new ConflictException(
-        'An SLA policy already exists for this organization and project.',
+        'An SLA policy already exists for this organization and work order.',
       );
     }
   }

@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ProjectsModule } from './projects/projects.module';
+import { WorkOrdersModule } from './work-orders/work-orders.module';
 import { TicketCategoriesModule } from './ticket-categories/ticket-categories.module';
 import { ClientsModule } from './clients/clients.module';
 
@@ -7,7 +7,7 @@ import { ClientsModule } from './clients/clients.module';
   controllers: [],
   providers: [],
   imports: [
-    ProjectsModule, 
+    WorkOrdersModule,
     TicketCategoriesModule,
     ClientsModule,
   ],

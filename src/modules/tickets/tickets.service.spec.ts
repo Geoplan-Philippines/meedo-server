@@ -1,22 +1,21 @@
-import { BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { Prisma } from '@prisma/client';
 
 import { TicketsService } from './tickets.service';
 import { PrismaService } from '../../core/database/prisma.service';
 import { TicketActivityService } from './activity/ticket-activity.service';
-import { TICKET_NUMBER_MAX, TICKET_NUMBER_MIN, MAX_TICKET_NUMBER_RETRIES } from './constants/ticket.constants';
 
 const mockTicket = {
   id: '111222333',
-  ticketNumber: 123456,
+  number: 12,
   title: 'Test Ticket',
   description: null,
   priority: 'MEDIUM' as const,
   isArchived: false,
   organizationId: 'org-uuid-1',
   teamId: null,
-  projectId: null,
+  projectId: 'project-uuid-1',
+  workOrderId: null,
   categoryId: null,
   ticketStatusId: null,
   firstRespondedAt: null,
@@ -26,7 +25,8 @@ const mockTicket = {
   updatedAt: new Date(),
   ticketStatus: null,
   category: null,
-  project: null,
+  project: { id: 'project-uuid-1', name: 'Engineering', key: 'ENG', state: 'BACKLOG', isInternal: false },
+  workOrder: null,
   team: null,
   assignees: [],
   relatedTickets: [],
@@ -55,6 +55,10 @@ const mockPrismaService = {
     count: jest.fn(),
   },
   project: {
+    findFirst: jest.fn(),
+    update: jest.fn(),
+  },
+  workOrder: {
     findFirst: jest.fn(),
   },
   ticketAssignee: {
@@ -92,13 +96,25 @@ describe('TicketsService', () => {
     const dto = {
       title: 'Test Ticket',
       priority: 'MEDIUM' as const,
+      projectId: 'project-uuid-1',
     };
 
     /** Ticket creation runs inside `prisma.$transaction`; this mocks the tx client
      *  and hands back the capturing `create` mock so assertions can inspect it. */
-    const mockCreateTransaction = (create: jest.Mock) => {
-      mockPrismaService.$transaction.mockImplementation(async (fn: Function) => fn({ tickets: { create } }));
+    const mockCreateTransaction = (create: jest.Mock, nextTicketNumber = 13) => {
+      const update = jest.fn().mockResolvedValue({ nextTicketNumber });
+      mockPrismaService.$transaction.mockImplementation(async (fn: Function) =>
+        fn({ tickets: { create }, project: { update } }),
+      );
+      return update;
     };
+
+    beforeEach(() => {
+      mockPrismaService.project.findFirst.mockResolvedValue({
+        id: 'project-uuid-1',
+        isArchived: false,
+      });
+    });
 
     it('creates and returns a ticket', async () => {
       const create = jest.fn().mockResolvedValue(mockTicket);
@@ -112,10 +128,27 @@ describe('TicketsService', () => {
             title: dto.title,
             priority: dto.priority,
             organization: { connect: { id: 'org-uuid-1' } },
+            project: { connect: { id: 'project-uuid-1' } },
           }),
         }),
       );
       expect(result).toEqual(mockTicket);
+    });
+
+    it('takes the next number from the project sequence', async () => {
+      const create = jest.fn().mockResolvedValue(mockTicket);
+      const update = mockCreateTransaction(create, 13);
+
+      await service.createTicket(dto, 'org-uuid-1');
+
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'project-uuid-1' },
+          data: { nextTicketNumber: { increment: 1 } },
+        }),
+      );
+      // The counter now points at 13, so this ticket claimed 12.
+      expect(create.mock.calls[0][0].data.number).toBe(12);
     });
 
     it('deduplicates assigneeIds before creating', async () => {
@@ -133,39 +166,21 @@ describe('TicketsService', () => {
       expect(assigneeData).toHaveLength(1);
     });
 
-    it('retries on ticket number collision and eventually succeeds', async () => {
-      const collisionError = new Prisma.PrismaClientKnownRequestError('collision', {
-        code: 'P2002',
-        clientVersion: '5.0.0',
-        meta: { target: ['ticket_number'] },
+    it('rejects tickets filed against an archived project', async () => {
+      mockPrismaService.project.findFirst.mockResolvedValue({
+        id: 'project-uuid-1',
+        isArchived: true,
       });
 
-      mockPrismaService.$transaction
-        .mockRejectedValueOnce(collisionError)
-        .mockImplementationOnce(async (fn: Function) =>
-          fn({ tickets: { create: jest.fn().mockResolvedValue(mockTicket) } }),
-        );
-
-      const result = await service.createTicket(dto, 'org-uuid-1');
-
-      expect(mockPrismaService.$transaction).toHaveBeenCalledTimes(2);
-      expect(result).toEqual(mockTicket);
+      await expect(service.createTicket(dto, 'org-uuid-1')).rejects.toThrow(BadRequestException);
     });
 
-    it('throws InternalServerErrorException after max retries', async () => {
-      const collisionError = new Prisma.PrismaClientKnownRequestError('collision', {
-        code: 'P2002',
-        clientVersion: '5.0.0',
-        meta: { target: ['ticket_number'] },
-      });
+    it('throws NotFoundException when workOrderId is invalid', async () => {
+      mockPrismaService.workOrder.findFirst.mockResolvedValue(null);
 
-      mockPrismaService.$transaction.mockRejectedValue(collisionError);
-
-      await expect(service.createTicket(dto, 'org-uuid-1')).rejects.toThrow(
-        InternalServerErrorException,
-      );
-
-      expect(mockPrismaService.$transaction).toHaveBeenCalledTimes(MAX_TICKET_NUMBER_RETRIES);
+      await expect(
+        service.createTicket({ ...dto, workOrderId: 'bad-id' }, 'org-uuid-1'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('throws NotFoundException when ticketStatusId is invalid', async () => {

@@ -16,8 +16,8 @@ export class GetAllSlaPoliciesQueryDTO extends PaginationQueryDTO {
   @IsEnum(TicketPriority)
   priority?: TicketPriority;
 
-  @ApiPropertyOptional({ example: 'e9836a5c-0c38-4dcb-b2fe-1366ff9f1a6c' })
+  @ApiPropertyOptional({ description: 'Filter by work order', example: 'e9836a5c-0c38-4dcb-b2fe-1366ff9f1a6c' })
   @IsOptional()
   @IsUUID()
-  projectId?: string;
+  workOrderId?: string;
 }

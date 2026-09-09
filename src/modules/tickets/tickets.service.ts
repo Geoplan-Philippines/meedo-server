@@ -1,6 +1,5 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { Prisma, TicketActivityType, TicketPriority } from '@prisma/client';
-import { randomInt } from 'node:crypto';
 
 import { PrismaService } from '../../core/database/prisma.service';
 import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/paginated-api.response';
@@ -10,11 +9,8 @@ import { GetAllTicketsQueryDTO } from './dto/get-all-tickets-query.dto';
 import { GetTicketFacetsQueryDTO } from './dto/get-ticket-facets-query.dto';
 import { TicketActivityService } from './activity/ticket-activity.service';
 import {
-  MAX_TICKET_NUMBER_RETRIES,
   TICKET_DETAIL_INCLUDE,
   TICKET_INCLUDE,
-  TICKET_NUMBER_MAX,
-  TICKET_NUMBER_MIN,
   TICKET_SORTABLE_FIELDS,
   TICKET_VIEW_CATEGORIES,
   TicketDetail,
@@ -23,6 +19,7 @@ import {
   TicketStats,
   TicketView,
   TicketWithRelations,
+  parseTicketKey,
   serializeTicketDetail,
 } from './constants/ticket.constants';
 
@@ -37,7 +34,7 @@ export class TicketsService {
     query: GetAllTicketsQueryDTO,
     organizationId: string,
   ): Promise<PaginatedResponse<TicketWithRelations>> {
-    const { page, limit, ticketStatusId, priority, teamId, categoryId, assigneeId, search, includeArchived, view } = query;
+    const { page, limit, ticketStatusId, priority, teamId, categoryId, assigneeId, projectId, search, includeArchived, view } = query;
 
     const orderBy = this.buildOrderBy(query.sortField, query.sortOrder);
 
@@ -47,7 +44,7 @@ export class TicketsService {
       ...this.buildViewWhere(view),
       ...(ticketStatusId?.length ? { ticketStatusId: { in: ticketStatusId } } : {}),
       ...(priority?.length ? { priority: { in: priority } } : {}),
-      ...this.buildScopeWhere({ teamId, categoryId, assigneeId }),
+      ...this.buildScopeWhere({ teamId, categoryId, assigneeId, projectId }),
       ...this.buildSearchWhere(search),
     };
 
@@ -92,7 +89,7 @@ export class TicketsService {
   }
 
   async getFacets(query: GetTicketFacetsQueryDTO, organizationId: string): Promise<TicketFacets> {
-    const { search, includeArchived, view, teamId, categoryId, assigneeId } = query;
+    const { search, includeArchived, view, teamId, categoryId, assigneeId, projectId } = query;
 
     // Context shared by every count: org + archived scope + the active search and
     // scope filters (team/category/assignee), so badge counts match the list. Only
@@ -101,7 +98,7 @@ export class TicketsService {
     const contextWhere: Prisma.TicketsWhereInput = {
       organizationId,
       ...(includeArchived ? {} : { isArchived: false }),
-      ...this.buildScopeWhere({ teamId, categoryId, assigneeId }),
+      ...this.buildScopeWhere({ teamId, categoryId, assigneeId, projectId }),
       ...this.buildSearchWhere(search),
     };
 
@@ -137,56 +134,103 @@ export class TicketsService {
     const uniqueAssigneeIds = data.assigneeIds ? [...new Set(data.assigneeIds)] : [];
     const actorMemberId = await this.activity.resolveMemberId(organizationId, userId);
 
-    let ticket: TicketWithRelations | null = null;
-    for (let attempt = 0; attempt < MAX_TICKET_NUMBER_RETRIES; attempt++) {
-      try {
-        // Create the ticket and its CREATED activity atomically so the audit
-        // trail can never start without the opening event (and a failed activity
-        // insert rolls back the orphan ticket instead of leaving it behind).
-        ticket = await this.prisma.$transaction(async (tx) => {
-          const created = await tx.tickets.create({
-            data: {
-              ticketNumber: this.generateTicketNumber(),
-              title: data.title,
-              description: data.description,
-              priority: data.priority,
-              dueDate: data.dueDate,
-              organization: { connect: { id: organizationId } },
-              ticketStatus: data.ticketStatusId ? { connect: { id: data.ticketStatusId } } : undefined,
-              category: data.categoryId ? { connect: { id: data.categoryId } } : undefined,
-              project: data.projectId ? { connect: { id: data.projectId } } : undefined,
-              team: data.teamId ? { connect: { id: data.teamId } } : undefined,
-              assignees: uniqueAssigneeIds.length
-                ? { createMany: { data: uniqueAssigneeIds.map((memberId) => ({ memberId })) } }
-                : undefined,
-            },
-            include: TICKET_INCLUDE,
-          });
+    // Number allocation, the ticket and its CREATED activity share one
+    // transaction so the audit trail can never start without the opening event
+    // and a failure rolls back the reserved number instead of burning it.
+    return this.prisma.$transaction(async (tx) => {
+      const number = await this.allocateTicketNumber(tx, data.projectId);
 
-          await this.activity.record(tx, {
-            ticketId: created.id,
-            actorMemberId,
-            type: TicketActivityType.CREATED,
-          });
+      const created = await tx.tickets.create({
+        data: {
+          number,
+          title: data.title,
+          description: data.description,
+          priority: data.priority,
+          dueDate: data.dueDate,
+          organization: { connect: { id: organizationId } },
+          project: { connect: { id: data.projectId } },
+          workOrder: data.workOrderId ? { connect: { id: data.workOrderId } } : undefined,
+          ticketStatus: data.ticketStatusId ? { connect: { id: data.ticketStatusId } } : undefined,
+          category: data.categoryId ? { connect: { id: data.categoryId } } : undefined,
+          team: data.teamId ? { connect: { id: data.teamId } } : undefined,
+          assignees: uniqueAssigneeIds.length
+            ? { createMany: { data: uniqueAssigneeIds.map((memberId) => ({ memberId })) } }
+            : undefined,
+        },
+        include: TICKET_INCLUDE,
+      });
 
-          return created;
-        });
-        break;
-      } catch (error) {
-        if (this.isTicketNumberCollision(error)) {
-          continue;
-        }
-        throw error;
-      }
+      await this.activity.record(tx, {
+        ticketId: created.id,
+        actorMemberId,
+        type: TicketActivityType.CREATED,
+      });
+
+      return created;
+    });
+  }
+
+  async archiveTicket(id: string, organizationId: string, userId?: string): Promise<TicketDetail> {
+    return this.setTicketArchived(id, organizationId, true, userId);
+  }
+
+  async restoreTicket(id: string, organizationId: string, userId?: string): Promise<TicketDetail> {
+    return this.setTicketArchived(id, organizationId, false, userId);
+  }
+
+  /**
+   * Hard delete. Archiving is the reversible option and what the UI offers by
+   * default; this exists for genuine mistakes. Comments, activity, assignees and
+   * relation rows cascade from the schema.
+   */
+  async deleteTicket(id: string, organizationId: string): Promise<void> {
+    const existing = await this.prisma.tickets.findFirst({
+      where: { id, organizationId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Ticket not found in this organization.');
     }
 
-    if (!ticket) {
-      throw new InternalServerErrorException(
-        'Failed to generate a unique ticket number. Please try again.',
+    await this.prisma.tickets.delete({ where: { id } });
+  }
+
+  private async setTicketArchived(
+    id: string,
+    organizationId: string,
+    isArchived: boolean,
+    userId?: string,
+  ): Promise<TicketDetail> {
+    const existing = await this.prisma.tickets.findFirst({
+      where: { id, organizationId },
+      select: { id: true, isArchived: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Ticket not found in this organization.');
+    }
+    if (existing.isArchived === isArchived) {
+      throw new BadRequestException(
+        isArchived ? 'Ticket is already archived.' : 'Ticket is not archived.',
       );
     }
 
-    return ticket;
+    const actorMemberId = await this.activity.resolveMemberId(organizationId, userId);
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.tickets.update({ where: { id }, data: { isArchived } });
+
+      await this.activity.record(tx, {
+        ticketId: id,
+        actorMemberId,
+        type: isArchived ? TicketActivityType.ARCHIVED : TicketActivityType.RESTORED,
+      });
+
+      const updated = await tx.tickets.findUniqueOrThrow({
+        where: { id },
+        include: TICKET_DETAIL_INCLUDE,
+      });
+      return serializeTicketDetail(updated);
+    });
   }
 
   async updateTicket(
@@ -199,6 +243,7 @@ export class TicketsService {
       where: { id, organizationId },
       select: {
         id: true,
+        projectId: true,
         ticketStatusId: true,
         priority: true,
         dueDate: true,
@@ -219,10 +264,21 @@ export class TicketsService {
 
     const actorMemberId = await this.activity.resolveMemberId(organizationId, userId);
 
+    // Numbers are only unique within a project, so a ticket moving to another
+    // project takes a fresh number from its new home. Its old identifier is not
+    // reused, matching how the rest of the sequence behaves.
+    const movingToProject =
+      ticketData.projectId !== undefined && ticketData.projectId !== existing.projectId
+        ? ticketData.projectId
+        : null;
+
     return this.prisma.$transaction(async (tx) => {
       await tx.tickets.update({
         where: { id, organizationId },
-        data: ticketData,
+        data: {
+          ...ticketData,
+          ...(movingToProject ? { number: await this.allocateTicketNumber(tx, movingToProject) } : {}),
+        },
       });
 
       if (assigneeIds !== undefined) {
@@ -378,10 +434,23 @@ export class TicketsService {
     if (data.projectId) {
       const project = await this.prisma.project.findFirst({
         where: { id: data.projectId, organizationId },
-        select: { id: true },
+        select: { id: true, isArchived: true },
       });
       if (!project) {
         throw new NotFoundException('Project not found in this organization.');
+      }
+      if (project.isArchived) {
+        throw new BadRequestException('Cannot file tickets against an archived project.');
+      }
+    }
+
+    if (data.workOrderId) {
+      const workOrder = await this.prisma.workOrder.findFirst({
+        where: { id: data.workOrderId, organizationId },
+        select: { id: true },
+      });
+      if (!workOrder) {
+        throw new NotFoundException('Work order not found in this organization.');
       }
     }
   }
@@ -421,11 +490,13 @@ export class TicketsService {
     teamId?: string[];
     categoryId?: string;
     assigneeId?: string;
+    projectId?: string;
   }): Prisma.TicketsWhereInput {
     return {
       ...(scope.teamId?.length ? { teamId: { in: scope.teamId } } : {}),
       ...(scope.categoryId ? { categoryId: scope.categoryId } : {}),
       ...(scope.assigneeId ? { assignees: { some: { memberId: scope.assigneeId } } } : {}),
+      ...(scope.projectId ? { projectId: scope.projectId } : {}),
     };
   }
 
@@ -433,12 +504,22 @@ export class TicketsService {
     if (!search) {
       return {};
     }
-    return {
-      OR: [
-        { title: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-      ],
-    };
+
+    const OR: Prisma.TicketsWhereInput[] = [
+      { title: { contains: search, mode: 'insensitive' } },
+      { description: { contains: search, mode: 'insensitive' } },
+    ];
+
+    // Let people paste a ticket identifier straight into the search box.
+    const key = parseTicketKey(search);
+    if (key) {
+      OR.push({
+        number: key.number,
+        ...(key.projectKey ? { project: { is: { key: key.projectKey } } } : {}),
+      });
+    }
+
+    return { OR };
   }
 
   private buildOrderBy(
@@ -477,18 +558,20 @@ export class TicketsService {
     this.assertDueDateNotPast(dueDate);
   }
 
-  private generateTicketNumber(): number {
-    return randomInt(TICKET_NUMBER_MIN, TICKET_NUMBER_MAX + 1);
-  }
-
-  private isTicketNumberCollision(error: unknown): boolean {
-    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
-      return false;
-    }
-    // meta.target may be a string (constraint name) or string[] (field/column names)
-    // depending on the connector/version; match either against the ticket-number unique.
-    const target = error.meta?.target;
-    const haystack = Array.isArray(target) ? target.join(',') : String(target ?? '');
-    return haystack.toLowerCase().includes('ticket_number') || haystack.includes('ticketNumber');
+  /**
+   * Reserves the next number in the project's sequence. The UPDATE takes a row
+   * lock on the project, so concurrent creates serialize here rather than
+   * racing to collide on the (projectId, number) unique.
+   */
+  private async allocateTicketNumber(
+    tx: Prisma.TransactionClient,
+    projectId: string,
+  ): Promise<number> {
+    const { nextTicketNumber } = await tx.project.update({
+      where: { id: projectId },
+      data: { nextTicketNumber: { increment: 1 } },
+      select: { nextTicketNumber: true },
+    });
+    return nextTicketNumber - 1;
   }
 }

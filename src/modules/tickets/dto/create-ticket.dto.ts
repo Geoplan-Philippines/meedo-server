@@ -39,9 +39,15 @@ export class CreateTicketDTO {
   @IsUUID()
   categoryId?: string;
 
+  // Required: every ticket lives in a project. Work with no client belongs in
+  // the organization's internal project.
+  @IsUUID()
+  projectId!: string;
+
+  // Optional Apptivo work order, for client/billing context.
   @IsOptional()
   @IsUUID()
-  projectId?: string;
+  workOrderId?: string;
 
   @IsOptional()
   @IsUUID()

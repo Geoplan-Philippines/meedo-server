@@ -1,8 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 class ClientCountDTO {
-  @ApiProperty({ example: 3, description: 'Number of projects linked to this client' })
-  projects!: number;
+  @ApiProperty({ example: 3, description: 'Number of work orders linked to this client' })
+  workOrders!: number;
 }
 
 export class ClientResponseDTO {

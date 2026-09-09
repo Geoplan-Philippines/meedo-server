@@ -155,7 +155,7 @@ async function main() {
   }
 
   for (const project of TIMESHEET_PROJECTS) {
-    await prisma.project.upsert({
+    await prisma.workOrder.upsert({
       where: { organizationId_apptivoId: { organizationId: org.id, apptivoId: project.apptivoId } },
       update: {
         workOrderNumber: project.workOrderNumber,
@@ -174,7 +174,7 @@ async function main() {
       },
     });
   }
-  console.log('Timesheet demo projects seeded');
+  console.log('Timesheet demo work orders seeded');
 
   console.log('Done.');
   console.log(`Admin login -> ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);

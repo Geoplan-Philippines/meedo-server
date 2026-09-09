@@ -1,9 +1,5 @@
 import { Prisma, TicketPriority, TicketStatusCategory } from "@prisma/client";
 
-export const TICKET_NUMBER_MIN = 100000;
-export const TICKET_NUMBER_MAX = 999999;
-export const MAX_TICKET_NUMBER_RETRIES = 5;
-
 export const TICKET_TITLE_MAX_LENGTH = 200;
 export const TICKET_DESCRIPTION_MAX_LENGTH = 5000;
 export const TICKET_COMMENT_MAX_LENGTH = 5000;
@@ -16,14 +12,28 @@ export const TICKET_USER_SELECT = {
   image: true,
 } satisfies Prisma.UserSelect;
 
+/** Just enough of the owning project to render a ticket's "ENG-12" identifier. */
+export const TICKET_PROJECT_SELECT = {
+  id: true,
+  name: true,
+  key: true,
+  state: true,
+  isInternal: true,
+} satisfies Prisma.ProjectSelect;
+
+/** Optional Apptivo linkage, kept for client/billing context on client-facing tickets. */
+export const TICKET_WORK_ORDER_SELECT = {
+  id: true,
+  workOrderNumber: true,
+  customerName: true,
+  client: { select: { customerName: true } },
+} satisfies Prisma.WorkOrderSelect;
+
 export const TICKET_INCLUDE = {
   ticketStatus: true,
   category: true,
-  project: {
-    include: {
-      client: { select: { customerName: true } },
-    },
-  },
+  project: { select: TICKET_PROJECT_SELECT },
+  workOrder: { select: TICKET_WORK_ORDER_SELECT },
   team: true,
   assignees: {
     include: {
@@ -39,8 +49,9 @@ export type TicketWithRelations = Prisma.TicketsGetPayload<{ include: typeof TIC
 /** Lightweight summary of a linked ticket, embedded on the detail response. */
 export const TICKET_RELATION_SELECT = {
   id: true,
-  ticketNumber: true,
+  number: true,
   title: true,
+  project: { select: { key: true } },
   ticketStatus: { select: { id: true, name: true, color: true } },
 } satisfies Prisma.TicketsSelect;
 
@@ -66,6 +77,20 @@ export type TicketDetail = Omit<TicketWithDetailRelations, 'relatedTickets'> & {
 export function serializeTicketDetail(ticket: TicketWithDetailRelations): TicketDetail {
   const { relatedTickets, ...rest } = ticket;
   return { ...rest, relatedTickets: relatedTickets.map((relation) => relation.relatedTicket) };
+}
+
+/** Human-facing ticket identifier, e.g. "ENG-12". */
+export function formatTicketKey(projectKey: string, number: number): string {
+  return `${projectKey}-${number}`;
+}
+
+/** Parses "ENG-12" / "eng 12" / "12" into the parts a lookup can filter on. */
+export function parseTicketKey(input: string): { projectKey: string | null; number: number } | null {
+  const match = input.trim().match(/^([a-zA-Z][a-zA-Z0-9]*)?[\s-]*(\d+)$/);
+  if (!match) {
+    return null;
+  }
+  return { projectKey: match[1]?.toUpperCase() ?? null, number: Number(match[2]) };
 }
 
 export const COMMENT_INCLUDE = {
@@ -97,7 +122,7 @@ export const ACTIVITY_INCLUDE = {
 
 export type ActivityWithActor = Prisma.TicketActivityGetPayload<{ include: typeof ACTIVITY_INCLUDE }>;
 
-export const TICKET_SORTABLE_FIELDS = ['title', 'priority', 'dueDate', 'createdAt', 'ticketNumber'] as const;
+export const TICKET_SORTABLE_FIELDS = ['title', 'priority', 'dueDate', 'createdAt', 'number'] as const;
 export type TicketSortField = (typeof TICKET_SORTABLE_FIELDS)[number];
 
 export interface TicketStats {

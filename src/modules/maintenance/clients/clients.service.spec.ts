@@ -10,7 +10,7 @@ const mockClient = {
   organizationId: 'org-uuid-1',
   createdAt: new Date(),
   updatedAt: new Date(),
-  _count: { projects: 0 },
+  _count: { workOrders: 0 },
 };
 
 const mockPrismaService = {
@@ -41,14 +41,14 @@ describe('ClientsService', () => {
   });
 
   describe('getAllClients', () => {
-    it('returns paginated clients with project count', async () => {
+    it('returns paginated clients with work order count', async () => {
       mockPrismaService.client.findMany.mockResolvedValue([mockClient]);
       mockPrismaService.client.count.mockResolvedValue(1);
 
       const result = await service.getAllClients({ page: 1, limit: 10 }, 'org-uuid-1');
 
       expect(result.data).toEqual([mockClient]);
-      expect(result.data[0]._count.projects).toBe(0);
+      expect(result.data[0]._count.workOrders).toBe(0);
       expect(result.meta.total).toBe(1);
       expect(result.meta.lastPage).toBe(1);
     });
@@ -69,7 +69,7 @@ describe('ClientsService', () => {
       await service.getAllClients({ page: 3, limit: 10 }, 'org-uuid-1');
 
       expect(mockPrismaService.client.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ skip: 20, take: 10, include: { _count: { select: { projects: true } } } }),
+        expect.objectContaining({ skip: 20, take: 10, include: { _count: { select: { workOrders: true } } } }),
       );
     });
   });

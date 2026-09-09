@@ -35,6 +35,10 @@ export class GetAllTicketsQueryDTO extends PaginationQueryDTO {
   assigneeId?: string;
 
   @IsOptional()
+  @IsUUID()
+  projectId?: string;
+
+  @IsOptional()
   @IsString()
   search?: string;
 
