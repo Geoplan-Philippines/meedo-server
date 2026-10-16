@@ -45,7 +45,7 @@ export class TicketsService {
       organizationId,
       ...(includeArchived ? {} : { isArchived: false }),
       ...this.buildViewWhere(view),
-      ...(ticketStatusId?.length ? { ticketStatusId: { in: ticketStatusId } } : {}),
+      ...(query.noStatus ? { ticketStatusId: null } : ticketStatusId?.length ? { ticketStatusId: { in: ticketStatusId } } : {}),
       ...(priority?.length ? { priority: { in: priority } } : {}),
       ...this.buildScopeWhere({ teamId, categoryId, assigneeId }),
       ...this.buildSearchWhere(search),
@@ -95,9 +95,9 @@ export class TicketsService {
     const { search, includeArchived, view, teamId, categoryId, assigneeId } = query;
 
     // Context shared by every count: org + archived scope + the active search and
-    // scope filters (team/category/assignee), so badge counts match the list. Only
-    // the status/priority selections are omitted, so each option's badge shows what
-    // picking it would yield.
+    // scope filters (team/category/assignee), so badge counts match the list.
+    // Optional board priority selections scope status totals below; priority
+    // option counts themselves continue to omit the priority selection.
     const contextWhere: Prisma.TicketsWhereInput = {
       organizationId,
       ...(includeArchived ? {} : { isArchived: false }),
@@ -113,12 +113,16 @@ export class TicketsService {
       this.prisma.tickets.count({ where: { ...contextWhere, ...this.buildViewWhere('active') } }),
       this.prisma.tickets.count({ where: { ...contextWhere, ...this.buildViewWhere('closed') } }),
       this.prisma.tickets.count({ where: contextWhere }),
-      this.prisma.tickets.groupBy({ by: ['ticketStatusId'], where: viewWhere, _count: { _all: true } }),
+      this.prisma.tickets.groupBy({ by: ['ticketStatusId'], where: {
+        ...viewWhere,
+        ...(query.priority?.length ? { priority: { in: query.priority } } : {}),
+      }, _count: { _all: true } }),
       this.prisma.tickets.groupBy({ by: ['priority'], where: viewWhere, _count: { _all: true } }),
     ]);
 
     return {
       views: { backlog, active, closed, all },
+      noStatusCount: statusGroups.find((group) => group.ticketStatusId === null)?._count._all ?? 0,
       statuses: statusGroups
         .filter((group): group is typeof group & { ticketStatusId: string } => group.ticketStatusId !== null)
         .map((group) => ({ ticketStatusId: group.ticketStatusId, count: group._count._all })),
@@ -200,6 +204,7 @@ export class TicketsService {
       select: {
         id: true,
         ticketStatusId: true,
+        resolvedAt: true,
         priority: true,
         dueDate: true,
         assignees: { select: { memberId: true } },
@@ -220,9 +225,20 @@ export class TicketsService {
     const actorMemberId = await this.activity.resolveMemberId(organizationId, userId);
 
     return this.prisma.$transaction(async (tx) => {
+      // Only a status transition maintains resolution time; ordinary edits and
+      // terminal-to-terminal moves preserve the original timestamp.
+      let resolvedAt: Date | null | undefined;
+      if (data.ticketStatusId !== undefined && data.ticketStatusId !== existing.ticketStatusId) {
+        const status = data.ticketStatusId ? await tx.ticketStatus.findFirst({
+          where: { id: data.ticketStatusId, organizationId },
+          select: { category: true },
+        }) : null;
+        const terminal = status?.category === 'COMPLETED' || status?.category === 'CANCELED';
+        resolvedAt = terminal ? existing.resolvedAt ?? new Date() : null;
+      }
       await tx.tickets.update({
         where: { id, organizationId },
-        data: ticketData,
+        data: { ...ticketData, ...(resolvedAt !== undefined ? { resolvedAt } : {}) },
       });
 
       if (assigneeIds !== undefined) {
@@ -444,7 +460,10 @@ export class TicketsService {
   private buildOrderBy(
     sortField: string | undefined,
     sortOrder: 'asc' | 'desc' | undefined,
-  ): Prisma.TicketsOrderByWithRelationInput {
+  ): Prisma.TicketsOrderByWithRelationInput | Prisma.TicketsOrderByWithRelationInput[] {
+    if (sortField === 'board') {
+      return [{ priority: 'desc' }, { updatedAt: 'desc' }, { id: 'asc' }];
+    }
     const field = (TICKET_SORTABLE_FIELDS as readonly string[]).includes(sortField ?? '')
       ? (sortField as TicketSortField)
       : 'createdAt';

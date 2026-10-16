@@ -97,7 +97,7 @@ export const ACTIVITY_INCLUDE = {
 
 export type ActivityWithActor = Prisma.TicketActivityGetPayload<{ include: typeof ACTIVITY_INCLUDE }>;
 
-export const TICKET_SORTABLE_FIELDS = ['title', 'priority', 'dueDate', 'createdAt', 'ticketNumber'] as const;
+export const TICKET_SORTABLE_FIELDS = ['title', 'priority', 'dueDate', 'createdAt', 'ticketNumber', 'board'] as const;
 export type TicketSortField = (typeof TICKET_SORTABLE_FIELDS)[number];
 
 export interface TicketStats {
@@ -124,6 +124,7 @@ export const TICKET_VIEW_CATEGORIES: Record<Exclude<TicketView, 'all'>, TicketSt
 
 /** Faceted counts powering the view tabs and the filter menu badges. */
 export interface TicketFacets {
+  noStatusCount: number;
   views: Record<TicketView, number>;
   statuses: { ticketStatusId: string; count: number }[];
   priorities: { priority: TicketPriority; count: number }[];

@@ -8,6 +8,11 @@ import { TICKET_SORTABLE_FIELDS, TICKET_VIEWS, type TicketSortField, type Ticket
 
 export class GetAllTicketsQueryDTO extends PaginationQueryDTO {
   @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  noStatus?: boolean;
+
+  @IsOptional()
   @IsIn(TICKET_VIEWS)
   view?: TicketView;
 

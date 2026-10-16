@@ -210,6 +210,19 @@ describe('TicketsService', () => {
   });
 
   describe('getAllTickets', () => {
+    it('filters no-status tickets and orders board pages by priority then update time', async () => {
+      mockPrismaService.tickets.findMany.mockResolvedValue([]);
+      mockPrismaService.tickets.count.mockResolvedValue(0);
+      await service.getAllTickets({ page: 2, limit: 20, noStatus: true, sortField: 'board',
+        view: 'all', teamId: ['team-1'], assigneeId: 'member-1', search: 'pump', priority: ['HIGH'] }, 'org-uuid-1');
+      expect(mockPrismaService.tickets.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        skip: 20, take: 20,
+        where: expect.objectContaining({ organizationId: 'org-uuid-1', isArchived: false, ticketStatusId: null,
+          teamId: { in: ['team-1'] }, priority: { in: ['HIGH'] }, assignees: { some: { memberId: 'member-1' } } }),
+        orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }, { id: 'asc' }],
+      }));
+    });
+
     it('returns paginated tickets', async () => {
       mockPrismaService.tickets.findMany.mockResolvedValue([mockTicket]);
       mockPrismaService.tickets.count.mockResolvedValue(1);
@@ -244,6 +257,52 @@ describe('TicketsService', () => {
   });
 
   describe('updateTicket', () => {
+    describe('resolution time', () => {
+      beforeEach(() => {
+        mockPrismaService.tickets.findUniqueOrThrow.mockResolvedValue(mockTicket);
+      });
+
+      it.each(['COMPLETED', 'CANCELED'])('sets resolvedAt on entering %s and records the status activity', async category => {
+        mockPrismaService.tickets.findFirst.mockResolvedValue({ ...mockTicket, ticketStatusId: 'open' });
+        mockPrismaService.ticketStatus.findFirst.mockResolvedValue({ id: 'terminal', category });
+        const before = Date.now();
+        await service.updateTicket(mockTicket.id, { ticketStatusId: 'terminal' }, mockTicket.organizationId);
+        const data = mockPrismaService.tickets.update.mock.calls[0][0].data;
+        expect(data.resolvedAt).toBeInstanceOf(Date);
+        expect(data.resolvedAt.getTime()).toBeGreaterThanOrEqual(before);
+        expect(mockActivityService.record).toHaveBeenCalledWith(mockPrismaService, expect.objectContaining({
+          type: 'STATUS_CHANGED', meta: { from: 'open', to: 'terminal' },
+        }));
+      });
+
+      it.each(['STARTED', null])('clears resolvedAt on moving back out to %s', async category => {
+        mockPrismaService.tickets.findFirst.mockResolvedValue({ ...mockTicket, ticketStatusId: 'done', resolvedAt: new Date() });
+        mockPrismaService.ticketStatus.findFirst.mockResolvedValue({ id: 'open', category });
+        await service.updateTicket(mockTicket.id, { ticketStatusId: category ? 'open' : null }, mockTicket.organizationId);
+        expect(mockPrismaService.tickets.update).toHaveBeenCalledWith(expect.objectContaining({
+          data: expect.objectContaining({ resolvedAt: null }),
+        }));
+      });
+
+      it('preserves resolvedAt between terminal statuses', async () => {
+        const resolvedAt = new Date('2026-10-01');
+        mockPrismaService.tickets.findFirst.mockResolvedValue({ ...mockTicket, ticketStatusId: 'done', resolvedAt });
+        mockPrismaService.ticketStatus.findFirst.mockResolvedValue({ id: 'canceled', category: 'CANCELED' });
+        await service.updateTicket(mockTicket.id, { ticketStatusId: 'canceled' }, mockTicket.organizationId);
+        expect(mockPrismaService.tickets.update).toHaveBeenCalledWith(expect.objectContaining({
+          data: { ticketStatusId: 'canceled', resolvedAt },
+        }));
+      });
+
+      it('does not change resolvedAt on an unrelated edit or unchanged status', async () => {
+        mockPrismaService.tickets.findFirst.mockResolvedValue({ ...mockTicket, ticketStatusId: 'done', resolvedAt: new Date() });
+        await service.updateTicket(mockTicket.id, { title: 'Updated' }, mockTicket.organizationId);
+        expect(mockPrismaService.tickets.update.mock.calls[0][0].data).toEqual({ title: 'Updated' });
+        mockPrismaService.ticketStatus.findFirst.mockResolvedValue({ id: 'done' });
+        await service.updateTicket(mockTicket.id, { ticketStatusId: 'done' }, mockTicket.organizationId);
+        expect(mockPrismaService.tickets.update.mock.calls[1][0].data).toEqual({ ticketStatusId: 'done' });
+      });
+    });
     const existingTicket = {
       id: 'ticket-uuid-1',
       ticketStatusId: null,
@@ -353,6 +412,15 @@ describe('TicketsService', () => {
   });
 
   describe('getFacets', () => {
+    it('scopes board column counts by priority without changing priority-option counts', async () => {
+      mockPrismaService.tickets.count.mockResolvedValue(0);
+      mockPrismaService.tickets.groupBy.mockResolvedValue([]);
+      await service.getFacets({ priority: ['HIGH'] }, 'org-uuid-1');
+      expect(mockPrismaService.tickets.groupBy).toHaveBeenCalledWith({ by: ['ticketStatusId'],
+        where: { organizationId: 'org-uuid-1', isArchived: false, priority: { in: ['HIGH'] } }, _count: { _all: true } });
+      expect(mockPrismaService.tickets.groupBy).toHaveBeenCalledWith({ by: ['priority'],
+        where: { organizationId: 'org-uuid-1', isArchived: false }, _count: { _all: true } });
+    });
     it('scopes every count by team/category/assignee so badges match the list', async () => {
       mockPrismaService.tickets.count.mockResolvedValue(0);
       mockPrismaService.tickets.groupBy.mockResolvedValue([]);
@@ -401,6 +469,7 @@ describe('TicketsService', () => {
       const result = await service.getFacets({}, 'org-uuid-1');
 
       expect(result).toEqual({
+        noStatusCount: 2,
         views: { backlog: 1, active: 2, closed: 3, all: 10 },
         statuses: [{ ticketStatusId: 'st-1', count: 3 }],
         priorities: [{ priority: 'HIGH', count: 4 }],
