@@ -1,3 +1,13 @@
-import { PaginationQueryDTO } from 'src/common/dto/pagination-query.dto';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsIn, IsOptional } from 'class-validator';
+import { ArchivableQueryDTO } from '../../projects/dto/archivable-query.dto';
 
-export class GetAllClientsQueryDTO extends PaginationQueryDTO {}
+export const CLIENT_SORT_FIELDS = ['customerName', 'projectCount', 'createdAt'] as const;
+export type ClientSortField = (typeof CLIENT_SORT_FIELDS)[number];
+
+export class GetAllClientsQueryDTO extends ArchivableQueryDTO {
+  @ApiPropertyOptional({ enum: CLIENT_SORT_FIELDS, default: 'createdAt' })
+  @IsOptional()
+  @IsIn(CLIENT_SORT_FIELDS)
+  sortField?: ClientSortField;
+}

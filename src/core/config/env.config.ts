@@ -22,6 +22,8 @@ const schema = z.object({
   APPTIVO_API_KEY: z.string().min(1),
   APPTIVO_API_ACCESS_KEY: z.string().min(1),
   APPTIVO_CUSTOMERS_API_RESOURCE: z.string().url().default('https://api2.apptivo.com/app/dao/v6/customers?a=getAll'),
+  // Max 500-record pages per Apptivo list fetch. Reaching it with records left fails the sync.
+  APPTIVO_SYNC_MAX_PAGES: z.coerce.number().int().positive().default(20),
   CLOUDINARY_API_KEY_SECRET: z.string().min(1),
   CLOUDINARY_API_KEY: z.string().min(1),
   CLOUDINARY_CLOUD_NAME: z.string().min(1),

@@ -125,6 +125,7 @@ model Organization {
   teamScheduleAssignments       TeamScheduleAssignment[]
   employeeScheduleAssignments   EmployeeScheduleAssignment[]
   clients                       Client[]
+  maintenanceAuditLogs          MaintenanceAuditLog[]
 
   @@map("organizations")
 }
@@ -188,6 +189,7 @@ model Member {
   lockedTimesheetPeriods        TimesheetPeriodLock[]     @relation("TimesheetPeriodLockedBy")
   unlockedTimesheetPeriods      TimesheetPeriodLock[]     @relation("TimesheetPeriodUnlockedBy")
   timesheetAuditLogs            TimesheetAuditLog[]       @relation("TimesheetAuditActor")
+  maintenanceAuditLogs          MaintenanceAuditLog[]
 
   @@unique([organizationId, userId])
   @@index([organizationId])
@@ -303,10 +305,22 @@ model Project {
   status                        String
   total                         Float
   reportedDate                  DateTime?                 @map("reported_date")
+  // Read-only Apptivo copies refreshed on every sync: subject of the source sales quote
+  // and the work order's fromObjectRefId.
+  quoteSubject                  String?                   @map("quote_subject")
+  apptivoQuoteRefId             String?                   @map("apptivo_quote_ref_id")
+  // Admin-owned; the Apptivo sync never writes these. Shown name: displayName,
+  // else quoteSubject, else workOrderNumber. clientLocked stops the sync from
+  // replacing a client that was set by hand.
+  displayName                   String?                   @map("display_name")
+  clientLocked                  Boolean                   @default(false) @map("client_locked")
 
   apptivoId                     String                    @map("apptivo_id")
   organizationId                String                    @map("organization_id")
   clientId                      String?                   @map("client_id")
+
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+  archivedAt                    DateTime?                 @map("archived_at")
 
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   client                        Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
@@ -328,6 +342,11 @@ model Client {
   id                            String                    @id @default(uuid())
   apptivoId                     String                    @map("apptivo_id")
   customerName                  String                    @map("customer_name")
+  // Admin-owned; the Apptivo sync never writes it. Shown name: displayName, else customerName.
+  displayName                   String?                   @map("display_name")
+
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+  archivedAt                    DateTime?                 @map("archived_at")
 
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -338,7 +357,6 @@ model Client {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([organizationId, apptivoId])
-  @@unique([organizationId, customerName])
   @@index([organizationId])
   @@map("clients")
 }
@@ -503,6 +521,34 @@ enum TicketActivityType {
   COMMENTED
   ARCHIVED
   RESTORED
+}
+
+enum MaintenanceAuditEntity {
+  PROJECT
+  CLIENT
+}
+
+/// Who changed which admin-owned project/client field, and when.
+/// `changes` is { field: { from, to } } for the fields that changed.
+model MaintenanceAuditLog {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  entityType                    MaintenanceAuditEntity    @map("entity_type")
+  entityId                      String                    @map("entity_id")
+
+  actorMemberId                 String?                   @map("actor_member_id")
+  actor                         Member?                   @relation(fields: [actorMemberId], references: [id], onDelete: SetNull)
+
+  changes                       Json
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+
+  @@index([organizationId, entityType, entityId])
+  @@index([actorMemberId])
+  @@map("maintenance_audit_logs")
 }
 
 model TicketComment {
