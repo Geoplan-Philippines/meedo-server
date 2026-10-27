@@ -1,4 +1,8 @@
 import { Prisma, TicketPriority, TicketStatusCategory } from "@prisma/client";
+import type { TicketSla } from "../../sla/sla-state";
+
+/** A ticket response with its SLA state, calculated on read; null when no policy applies. */
+export type WithSla<T> = T & { sla: TicketSla | null };
 
 export const TICKET_NUMBER_MIN = 100000;
 export const TICKET_NUMBER_MAX = 999999;
@@ -21,7 +25,7 @@ export const TICKET_INCLUDE = {
   category: true,
   project: {
     include: {
-      client: { select: { customerName: true } },
+      client: { select: { customerName: true, displayName: true } },
     },
   },
   team: true,

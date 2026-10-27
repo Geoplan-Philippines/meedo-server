@@ -23,8 +23,17 @@ import {
   TicketStats,
   TicketView,
   TicketWithRelations,
+  WithSla,
   serializeTicketDetail,
 } from './constants/ticket.constants';
+import { assertProjectAssignable } from '../maintenance/projects/utils/assert-project-assignable';
+import {
+  ACTIVE_SLA_POLICY_WHERE,
+  SLA_POLICY_RULE_SELECT,
+  SlaPolicyRule,
+  SlaTicketFields,
+  computeTicketSla,
+} from '../sla/sla-state';
 
 @Injectable()
 export class TicketsService {
@@ -36,8 +45,8 @@ export class TicketsService {
   async getAllTickets(
     query: GetAllTicketsQueryDTO,
     organizationId: string,
-  ): Promise<PaginatedResponse<TicketWithRelations>> {
-    const { page, limit, ticketStatusId, priority, teamId, categoryId, assigneeId, search, includeArchived, view } = query;
+  ): Promise<PaginatedResponse<WithSla<TicketWithRelations>>> {
+    const { page, limit, ticketStatusId, priority, teamId, categoryId, assigneeId, projectId, search, includeArchived, view } = query;
 
     const orderBy = this.buildOrderBy(query.sortField, query.sortOrder);
 
@@ -47,11 +56,11 @@ export class TicketsService {
       ...this.buildViewWhere(view),
       ...(query.noStatus ? { ticketStatusId: null } : ticketStatusId?.length ? { ticketStatusId: { in: ticketStatusId } } : {}),
       ...(priority?.length ? { priority: { in: priority } } : {}),
-      ...this.buildScopeWhere({ teamId, categoryId, assigneeId }),
+      ...this.buildScopeWhere({ teamId, categoryId, assigneeId, projectId }),
       ...this.buildSearchWhere(search),
     };
 
-    const [tickets, total] = await Promise.all([
+    const [tickets, total, policies] = await Promise.all([
       this.prisma.tickets.findMany({
         where,
         include: TICKET_INCLUDE,
@@ -60,20 +69,24 @@ export class TicketsService {
         orderBy,
       }),
       this.prisma.tickets.count({ where }),
+      this.loadSlaPolicies(organizationId),
     ]);
 
-    return { data: tickets, meta: buildPaginationMeta(total, page, limit) };
+    return { data: this.withSla(tickets, policies), meta: buildPaginationMeta(total, page, limit) };
   }
 
-  async getTicketById(id: string, organizationId: string): Promise<TicketDetail> {
-    const ticket = await this.prisma.tickets.findFirst({
-      where: { id, organizationId },
-      include: TICKET_DETAIL_INCLUDE,
-    });
+  async getTicketById(id: string, organizationId: string): Promise<WithSla<TicketDetail>> {
+    const [ticket, policies] = await Promise.all([
+      this.prisma.tickets.findFirst({
+        where: { id, organizationId },
+        include: TICKET_DETAIL_INCLUDE,
+      }),
+      this.loadSlaPolicies(organizationId),
+    ]);
     if (!ticket) {
       throw new NotFoundException('Ticket not found in this organization.');
     }
-    return serializeTicketDetail(ticket);
+    return this.withSla([serializeTicketDetail(ticket)], policies)[0];
   }
 
   async getTicketStats(organizationId: string): Promise<TicketStats> {
@@ -92,16 +105,16 @@ export class TicketsService {
   }
 
   async getFacets(query: GetTicketFacetsQueryDTO, organizationId: string): Promise<TicketFacets> {
-    const { search, includeArchived, view, teamId, categoryId, assigneeId } = query;
+    const { search, includeArchived, view, teamId, categoryId, assigneeId, projectId } = query;
 
     // Context shared by every count: org + archived scope + the active search and
-    // scope filters (team/category/assignee), so badge counts match the list.
+    // scope filters (team/category/assignee/project), so badge counts match the list.
     // Optional board priority selections scope status totals below; priority
     // option counts themselves continue to omit the priority selection.
     const contextWhere: Prisma.TicketsWhereInput = {
       organizationId,
       ...(includeArchived ? {} : { isArchived: false }),
-      ...this.buildScopeWhere({ teamId, categoryId, assigneeId }),
+      ...this.buildScopeWhere({ teamId, categoryId, assigneeId, projectId }),
       ...this.buildSearchWhere(search),
     };
 
@@ -134,9 +147,9 @@ export class TicketsService {
     data: CreateTicketDTO,
     organizationId: string,
     userId?: string,
-  ): Promise<TicketWithRelations> {
+  ): Promise<WithSla<TicketWithRelations>> {
     this.assertDueDateNotPast(data.dueDate);
-    await this.validateReferences(data, organizationId);
+    await this.validateReferences(data, organizationId, null);
 
     const uniqueAssigneeIds = data.assigneeIds ? [...new Set(data.assigneeIds)] : [];
     const actorMemberId = await this.activity.resolveMemberId(organizationId, userId);
@@ -155,6 +168,8 @@ export class TicketsService {
               description: data.description,
               priority: data.priority,
               dueDate: data.dueDate,
+              // First response = first assignment to an employee.
+              firstRespondedAt: uniqueAssigneeIds.length > 0 ? new Date() : undefined,
               organization: { connect: { id: organizationId } },
               ticketStatus: data.ticketStatusId ? { connect: { id: data.ticketStatusId } } : undefined,
               category: data.categoryId ? { connect: { id: data.categoryId } } : undefined,
@@ -190,7 +205,7 @@ export class TicketsService {
       );
     }
 
-    return ticket;
+    return this.withSla([ticket], await this.loadSlaPolicies(organizationId))[0];
   }
 
   async updateTicket(
@@ -198,15 +213,17 @@ export class TicketsService {
     data: UpdateTicketDTO,
     organizationId: string,
     userId?: string,
-  ): Promise<TicketDetail> {
+  ): Promise<WithSla<TicketDetail>> {
     const existing = await this.prisma.tickets.findFirst({
       where: { id, organizationId },
       select: {
         id: true,
         ticketStatusId: true,
         resolvedAt: true,
+        firstRespondedAt: true,
         priority: true,
         dueDate: true,
+        projectId: true,
         assignees: { select: { memberId: true } },
       },
     });
@@ -215,7 +232,7 @@ export class TicketsService {
     }
 
     this.assertDueDateNotPastOnChange(data.dueDate, existing.dueDate);
-    await this.validateReferences(data, organizationId);
+    await this.validateReferences(data, organizationId, existing.projectId);
 
     const { assigneeIds, relatedTicketIds, ...ticketData } = data;
     if (relatedTicketIds !== undefined) {
@@ -223,8 +240,15 @@ export class TicketsService {
     }
 
     const actorMemberId = await this.activity.resolveMemberId(organizationId, userId);
+    // First response = first assignment to an employee; later reassignments keep it. Only a
+    // save that actually adds an assignee counts, so re-sending an unchanged list on an
+    // older ticket (assigned before this was tracked) doesn't stamp it with "now".
+    const currentAssigneeIds = new Set(existing.assignees.map((assignee) => assignee.memberId));
+    const addsAssignee = assigneeIds?.some((memberId) => !currentAssigneeIds.has(memberId)) ?? false;
+    const firstRespondedAt = !existing.firstRespondedAt && addsAssignee ? new Date() : undefined;
+    const policies = await this.loadSlaPolicies(organizationId);
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       // Only a status transition maintains resolution time; ordinary edits and
       // terminal-to-terminal moves preserve the original timestamp.
       let resolvedAt: Date | null | undefined;
@@ -238,7 +262,11 @@ export class TicketsService {
       }
       await tx.tickets.update({
         where: { id, organizationId },
-        data: { ...ticketData, ...(resolvedAt !== undefined ? { resolvedAt } : {}) },
+        data: {
+          ...ticketData,
+          ...(resolvedAt !== undefined ? { resolvedAt } : {}),
+          ...(firstRespondedAt ? { firstRespondedAt } : {}),
+        },
       });
 
       if (assigneeIds !== undefined) {
@@ -258,12 +286,26 @@ export class TicketsService {
 
       await this.recordUpdateActivities(tx, id, actorMemberId, existing, data, assigneeIds);
 
-      const updated = await tx.tickets.findUniqueOrThrow({
+      return tx.tickets.findUniqueOrThrow({
         where: { id },
         include: TICKET_DETAIL_INCLUDE,
       });
-      return serializeTicketDetail(updated);
     });
+
+    return this.withSla([serializeTicketDetail(updated)], policies)[0];
+  }
+
+  /** Active SLA policies of the organization; small enough to load once per request. */
+  private loadSlaPolicies(organizationId: string): Promise<SlaPolicyRule[]> {
+    return this.prisma.slaPolicy.findMany({
+      where: { organizationId, ...ACTIVE_SLA_POLICY_WHERE },
+      select: SLA_POLICY_RULE_SELECT,
+    });
+  }
+
+  private withSla<T extends SlaTicketFields>(tickets: T[], policies: SlaPolicyRule[]): WithSla<T>[] {
+    const now = new Date();
+    return tickets.map((ticket) => ({ ...ticket, sla: computeTicketSla(ticket, policies, now) }));
   }
 
   /** Reconcile a ticket's links to exactly `relatedTicketIds`, keeping the mirror
@@ -347,9 +389,11 @@ export class TicketsService {
     }
   }
 
+  /** `currentProjectId` is the ticket's project before this save (null on create). */
   private async validateReferences(
     data: Partial<CreateTicketDTO>,
     organizationId: string,
+    currentProjectId: string | null,
   ): Promise<void> {
     if (data.ticketStatusId) {
       const status = await this.prisma.ticketStatus.findFirst({
@@ -392,13 +436,7 @@ export class TicketsService {
     }
 
     if (data.projectId) {
-      const project = await this.prisma.project.findFirst({
-        where: { id: data.projectId, organizationId },
-        select: { id: true },
-      });
-      if (!project) {
-        throw new NotFoundException('Project not found in this organization.');
-      }
+      await assertProjectAssignable(this.prisma, data.projectId, organizationId, currentProjectId);
     }
   }
 
@@ -437,10 +475,12 @@ export class TicketsService {
     teamId?: string[];
     categoryId?: string;
     assigneeId?: string;
+    projectId?: string;
   }): Prisma.TicketsWhereInput {
     return {
       ...(scope.teamId?.length ? { teamId: { in: scope.teamId } } : {}),
       ...(scope.categoryId ? { categoryId: scope.categoryId } : {}),
+      ...(scope.projectId ? { projectId: scope.projectId } : {}),
       ...(scope.assigneeId ? { assignees: { some: { memberId: scope.assigneeId } } } : {}),
     };
   }

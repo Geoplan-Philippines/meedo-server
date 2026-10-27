@@ -35,6 +35,11 @@ export class GetAllTicketsQueryDTO extends PaginationQueryDTO {
   @IsUUID()
   categoryId?: string;
 
+  /** Only tickets on this project (the sidebar's client > project > tickets path). */
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
+
   @IsOptional()
   @IsUUID()
   assigneeId?: string;
