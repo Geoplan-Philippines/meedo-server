@@ -393,20 +393,21 @@ export class TimesheetService {
     const member = await this.resolveMember(organizationId, userId);
     this.ensureAdminMember(member.role);
 
-    const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds);
-    this.ensureNoSelfApproval(entries, userId!);
-
-    const approvableEntries = entries.filter(
-      (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
-    );
-    if (approvableEntries.length === 0) {
-      throw new BadRequestException('No timesheet entries available to approve.');
-    }
-
-    const approvedAt = new Date();
-    const ids = approvableEntries.map((entry) => entry.id);
-
     return this.prisma.$transaction(async (tx) => {
+      const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds, tx);
+      this.ensureNoSelfApproval(entries, userId!);
+      await this.ensureEntriesNotLocked(tx, organizationId, entries);
+
+      const approvableEntries = entries.filter(
+        (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
+      );
+      if (approvableEntries.length === 0) {
+        throw new BadRequestException('No timesheet entries available to approve.');
+      }
+
+      const approvedAt = new Date();
+      const ids = approvableEntries.map((entry) => entry.id);
+
       await tx.timesheetEntry.updateMany({
         where: { id: { in: ids }, organizationId, status: { in: [TimesheetEntryStatus.SUBMITTED, TimesheetEntryStatus.DRAFT] } },
         data: {
@@ -462,20 +463,21 @@ export class TimesheetService {
       throw new BadRequestException('Rejection reason is required.');
     }
 
-    const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds);
-    this.ensureNoSelfApproval(entries, userId!);
-
-    const rejectableEntries = entries.filter(
-      (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
-    );
-    if (rejectableEntries.length === 0) {
-      throw new BadRequestException('No timesheet entries available to reject.');
-    }
-
-    const rejectedAt = new Date();
-    const ids = rejectableEntries.map((entry) => entry.id);
-
     return this.prisma.$transaction(async (tx) => {
+      const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds, tx);
+      this.ensureNoSelfApproval(entries, userId!);
+      await this.ensureEntriesNotLocked(tx, organizationId, entries);
+
+      const rejectableEntries = entries.filter(
+        (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
+      );
+      if (rejectableEntries.length === 0) {
+        throw new BadRequestException('No timesheet entries available to reject.');
+      }
+
+      const rejectedAt = new Date();
+      const ids = rejectableEntries.map((entry) => entry.id);
+
       await tx.timesheetEntry.updateMany({
         where: { id: { in: ids }, organizationId, status: { in: [TimesheetEntryStatus.SUBMITTED, TimesheetEntryStatus.DRAFT] } },
         data: {
@@ -642,6 +644,7 @@ export class TimesheetService {
     const now = new Date();
 
     return this.prisma.$transaction(async (tx) => {
+      await this.lockPeriodChanges(tx, organizationId);
       const existing = await tx.timesheetPeriodLock.findUnique({
         where: {
           organizationId_periodStart_periodEnd: {
@@ -715,6 +718,7 @@ export class TimesheetService {
     const now = new Date();
 
     return this.prisma.$transaction(async (tx) => {
+      await this.lockPeriodChanges(tx, organizationId);
       const existing = await tx.timesheetPeriodLock.findUnique({
         where: {
           organizationId_periodStart_periodEnd: {
@@ -1038,9 +1042,56 @@ export class TimesheetService {
     };
   }
 
-  private async findApprovalTargetEntries(organizationId: string, entryIds: string[]): Promise<TimesheetSummaryEntry[]> {
+  /** Serialize bulk decisions with lock/unlock, including periods that have no row yet. */
+  private async lockPeriodChanges(tx: Prisma.TransactionClient, organizationId: string): Promise<void> {
+    await tx.$queryRaw(Prisma.sql`
+      SELECT id FROM organizations WHERE id = ${organizationId} FOR UPDATE
+    `);
+  }
+
+  private async ensureEntriesNotLocked(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    entries: TimesheetSummaryEntry[],
+  ): Promise<void> {
+    if (entries.length === 0) return;
+
+    const lock = await tx.timesheetPeriodLock.findFirst({
+      where: {
+        organizationId,
+        isLocked: true,
+        OR: entries.map((entry) => ({
+          periodStart: { lte: entry.workDate },
+          periodEnd: { gte: entry.workDate },
+        })),
+      },
+      select: { periodStart: true, periodEnd: true },
+      orderBy: [{ periodStart: 'asc' }, { periodEnd: 'asc' }],
+    });
+
+    if (lock) {
+      throw new ForbiddenException(
+        `This timesheet period is locked (${toDateInputValue(lock.periodStart)} to ${toDateInputValue(lock.periodEnd)}).`,
+      );
+    }
+  }
+
+  private async findApprovalTargetEntries(
+    organizationId: string,
+    entryIds: string[],
+    tx: Prisma.TransactionClient,
+  ): Promise<TimesheetSummaryEntry[]> {
+    await this.lockPeriodChanges(tx, organizationId);
     const uniqueIds = [...new Set(entryIds)];
-    const entries = await this.prisma.timesheetEntry.findMany({
+    if (uniqueIds.length === 0) return [];
+
+    // Prevent a concurrent edit from moving a selected entry after its date is checked.
+    await tx.$queryRaw(Prisma.sql`
+      SELECT id FROM timesheet_entries
+      WHERE organization_id = ${organizationId} AND id IN (${Prisma.join(uniqueIds)})
+      ORDER BY id FOR UPDATE
+    `);
+    const entries = await tx.timesheetEntry.findMany({
       where: { organizationId, id: { in: uniqueIds } },
       include: TIMESHEET_SUMMARY_ENTRY_INCLUDE,
       orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }],
@@ -1129,6 +1180,11 @@ function auditLogMatchesPeriod(log: TimesheetAuditLogWithRelations, periodStart:
   return snapshots.some((snapshot) => {
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return false;
     const value = snapshot as Record<string, unknown>;
+    const workDate = value['workDate'];
+    if (typeof workDate === 'string' || workDate instanceof Date) {
+      const date = new Date(workDate);
+      if (!Number.isNaN(date.getTime()) && date >= periodStart && date <= periodEnd) return true;
+    }
     return dateValueMatches(value['periodStart'], periodStart) && dateValueMatches(value['periodEnd'], periodEnd);
   });
 }

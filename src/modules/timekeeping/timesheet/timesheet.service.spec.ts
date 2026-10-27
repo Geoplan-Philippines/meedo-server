@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { TimesheetEntryStatus, TimesheetWorkType } from '@prisma/client';
+import { Prisma, TimesheetEntryStatus, TimesheetWorkType } from '@prisma/client';
 
 import { PrismaService } from '../../../core/database/prisma.service';
 import { TimesheetService } from './timesheet.service';
@@ -50,6 +50,7 @@ const mockSummaryEntry = {
 };
 
 const mockTx = {
+  $queryRaw: jest.fn(),
   timesheetEntry: {
     create:     jest.fn(),
     update:     jest.fn(),
@@ -58,6 +59,7 @@ const mockTx = {
     findMany:   jest.fn(),
   },
   timesheetPeriodLock: {
+    findFirst:  jest.fn(),
     findUnique: jest.fn(),
     upsert:     jest.fn(),
   },
@@ -116,6 +118,8 @@ describe('TimesheetService', () => {
     mockPrismaService.timesheetEntry.aggregate.mockResolvedValue({ _sum: { hours: 0 } });
     mockPrismaService.timesheetPeriodLock.findFirst.mockResolvedValue(null);
     mockPrismaService.timesheetPeriodLock.findUnique.mockResolvedValue(null);
+    mockTx.$queryRaw.mockResolvedValue([]);
+    mockTx.timesheetPeriodLock.findFirst.mockResolvedValue(null);
     mockPrismaService.$transaction.mockImplementation((callback: (tx: typeof mockTx) => unknown) => callback(mockTx));
   });
 
@@ -383,7 +387,9 @@ describe('TimesheetService', () => {
       mockPrismaService.timesheetEntry.findMany.mockResolvedValue([mockSummaryEntry]);
       mockTx.timesheetEntry.updateMany.mockResolvedValue({ count: 1 });
       mockTx.timesheetAuditLog.createMany.mockResolvedValue({ count: 1 });
-      mockTx.timesheetEntry.findMany.mockResolvedValue([{ ...mockSummaryEntry, status: TimesheetEntryStatus.APPROVED }]);
+      mockTx.timesheetEntry.findMany
+        .mockResolvedValueOnce([mockSummaryEntry])
+        .mockResolvedValue([{ ...mockSummaryEntry, status: TimesheetEntryStatus.APPROVED }]);
 
       const result = await service.bulkApproveEntries('org-1', 'admin-user', { entryIds: ['entry-1'] });
 
@@ -406,7 +412,7 @@ describe('TimesheetService', () => {
 
     it('prevents approvers from approving their own entries', async () => {
       mockPrismaService.member.findUnique.mockResolvedValue({ id: 'approver-1', role: 'admin' });
-      mockPrismaService.timesheetEntry.findMany.mockResolvedValue([{ ...mockSummaryEntry, userId: 'admin-user' }]);
+      mockTx.timesheetEntry.findMany.mockResolvedValue([{ ...mockSummaryEntry, userId: 'admin-user' }]);
 
       await expect(service.bulkApproveEntries('org-1', 'admin-user', { entryIds: ['entry-1'] })).rejects.toThrow(
         ForbiddenException,
@@ -423,6 +429,197 @@ describe('TimesheetService', () => {
         reason:   '   ',
       })).rejects.toThrow(BadRequestException);
     });
+  });
+
+  describe.each(['approve', 'reject'] as const)('bulk %s period protection', (action) => {
+    const period = {
+      organizationId: 'org-1',
+      isLocked: true,
+      periodStart: new Date('2026-06-22T00:00:00.000Z'),
+      periodEnd: new Date('2026-06-28T23:59:59.999Z'),
+    };
+    let activePeriod: typeof period | null;
+
+    const decide = (entryIds = ['entry-1']) => action === 'approve'
+      ? service.bulkApproveEntries('org-1', 'admin-user', { entryIds })
+      : service.bulkRejectEntries('org-1', 'admin-user', { entryIds, reason: '  Missing details  ' });
+
+    const selectEntries = (entries: typeof mockSummaryEntry[]) => {
+      const status = action === 'approve' ? TimesheetEntryStatus.APPROVED : TimesheetEntryStatus.REJECTED;
+      mockTx.timesheetEntry.findMany
+        .mockResolvedValueOnce(entries)
+        .mockResolvedValue(entries.map((entry) => ({ ...entry, status })));
+    };
+
+    beforeEach(() => {
+      activePeriod = { ...period };
+      mockPrismaService.member.findUnique.mockResolvedValue({ id: 'approver-1', role: 'admin' });
+      mockTx.timesheetEntry.updateMany.mockResolvedValue({ count: 1 });
+      mockTx.timesheetAuditLog.createMany.mockResolvedValue({ count: 1 });
+      // Apply the overlap predicate as the database would, including org/active scoping.
+      mockTx.timesheetPeriodLock.findFirst.mockImplementation((args: Prisma.TimesheetPeriodLockFindFirstArgs) => {
+        const where = args.where as {
+          organizationId: string;
+          isLocked: boolean;
+          OR: { periodStart: { lte: Date }; periodEnd: { gte: Date } }[];
+        };
+        const matches = activePeriod && activePeriod.organizationId === where.organizationId
+          && activePeriod.isLocked === where.isLocked
+          && where.OR.some((clause) => activePeriod!.periodStart <= clause.periodStart.lte
+            && activePeriod!.periodEnd >= clause.periodEnd.gte);
+        return Promise.resolve(matches ? activePeriod : null);
+      });
+    });
+
+    it('blocks the whole mixed request before any entry or audit write and names the locked range', async () => {
+      selectEntries([
+        { ...mockSummaryEntry, id: 'outside', workDate: new Date('2026-06-29') },
+        mockSummaryEntry,
+      ]);
+
+      await expect(decide(['outside', 'entry-1'])).rejects.toThrow(
+        new ForbiddenException('This timesheet period is locked (2026-06-22 to 2026-06-28).'),
+      );
+
+      expect(mockTx.timesheetEntry.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.timesheetAuditLog.createMany).not.toHaveBeenCalled();
+      expect(mockTx.timesheetAuditLog.create).not.toHaveBeenCalled();
+      expect(mockPrismaService.timesheetPeriodLock.findFirst).not.toHaveBeenCalled();
+      expect(mockPrismaService.timesheetEntry.findMany).not.toHaveBeenCalled();
+    });
+
+    it('writes the decision and matching audit rows outside a locked period', async () => {
+      selectEntries([{ ...mockSummaryEntry, workDate: new Date('2026-06-29') }]);
+
+      const result = await decide();
+
+      const status = action === 'approve' ? TimesheetEntryStatus.APPROVED : TimesheetEntryStatus.REJECTED;
+      expect(result.entries).toEqual([expect.objectContaining({ status })]);
+      expect(mockTx.timesheetEntry.updateMany.mock.calls).toMatchObject([[{
+        data: action === 'approve'
+          ? { status, approvedByMemberId: 'approver-1' }
+          : { status, rejectedByMemberId: 'approver-1', rejectionReason: 'Missing details' },
+      }]]);
+      expect(mockTx.timesheetAuditLog.createMany.mock.calls).toMatchObject([[{
+        data: [{
+          action: action === 'approve' ? 'APPROVED' : 'REJECTED',
+          before: { status: TimesheetEntryStatus.SUBMITTED },
+          after: { status },
+        }],
+      }]]);
+    });
+
+    it('does not treat an unselected locked date between selected dates as an overlap', async () => {
+      selectEntries([
+        { ...mockSummaryEntry, id: 'before', workDate: new Date('2026-06-21') },
+        { ...mockSummaryEntry, id: 'after', workDate: new Date('2026-06-29') },
+      ]);
+
+      await decide(['before', 'after']);
+
+      expect(mockTx.timesheetEntry.updateMany).toHaveBeenCalled();
+      expect(mockTx.timesheetAuditLog.createMany).toHaveBeenCalledWith({ data: [expect.any(Object), expect.any(Object)] });
+    });
+
+    it.each([period.periodStart, period.periodEnd])('includes the lock boundary %s', async (workDate) => {
+      selectEntries([{ ...mockSummaryEntry, workDate }]);
+
+      await expect(decide()).rejects.toThrow(ForbiddenException);
+
+      expect(mockTx.timesheetEntry.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.timesheetAuditLog.createMany).not.toHaveBeenCalled();
+    });
+
+    it.each(['unlocked', 'other organization'])('ignores a period from %s', async (kind) => {
+      activePeriod = { ...period, ...(kind === 'unlocked' ? { isLocked: false } : { organizationId: 'org-2' }) };
+      selectEntries([mockSummaryEntry]);
+
+      await decide();
+
+      expect(mockTx.timesheetEntry.updateMany).toHaveBeenCalled();
+    });
+
+    it('still permits draft decisions when no period is locked', async () => {
+      activePeriod = null;
+      selectEntries([{ ...mockSummaryEntry, status: TimesheetEntryStatus.DRAFT }]);
+
+      await decide();
+
+      expect(mockTx.timesheetEntry.updateMany).toHaveBeenCalled();
+      expect(mockTx.timesheetAuditLog.createMany.mock.calls).toMatchObject([[{
+        data: [{ before: { status: TimesheetEntryStatus.DRAFT } }],
+      }]]);
+    });
+
+    it.each([0, 1])('waits for database row lock %s before checking dates or writing', async (lockIndex) => {
+      activePeriod = null;
+      selectEntries([mockSummaryEntry]);
+      let release!: (rows: unknown[]) => void;
+      let requested!: () => void;
+      const lockRequested = new Promise<void>((resolve) => { requested = resolve; });
+      for (let index = 0; index < lockIndex; index++) mockTx.$queryRaw.mockResolvedValueOnce([]);
+      mockTx.$queryRaw.mockImplementationOnce(() => {
+        requested();
+        return new Promise<unknown[]>((resolve) => { release = resolve; });
+      });
+
+      const decision = decide();
+      await lockRequested;
+      expect(mockTx.timesheetEntry.findMany).not.toHaveBeenCalled();
+      expect(mockTx.timesheetPeriodLock.findFirst).not.toHaveBeenCalled();
+      expect(mockTx.timesheetEntry.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.timesheetAuditLog.createMany).not.toHaveBeenCalled();
+
+      release([]);
+      await decision;
+      const [organizationSql, entrySql] = mockTx.$queryRaw.mock.calls.map(([query]: [Prisma.Sql]) => query);
+      expect(organizationSql.text).toContain('FROM organizations');
+      expect(organizationSql.text).toContain('FOR UPDATE');
+      expect(organizationSql.values).toEqual(['org-1']);
+      expect(entrySql.text).toContain('FROM timesheet_entries');
+      expect(entrySql.text).toContain('ORDER BY id FOR UPDATE');
+      expect(entrySql.values).toEqual(['org-1', 'entry-1']);
+      expect(mockTx.timesheetEntry.updateMany).toHaveBeenCalled();
+    });
+
+    it('keeps the self-decision ban', async () => {
+      activePeriod = null;
+      selectEntries([{ ...mockSummaryEntry, userId: 'admin-user' }]);
+
+      await expect(decide()).rejects.toThrow('Approvers cannot approve or reject their own timesheet entries.');
+
+      expect(mockTx.timesheetEntry.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.timesheetAuditLog.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  it.each(['lock', 'unlock'] as const)('coordinates %s with bulk decisions before reading or changing periods', async (action) => {
+    mockPrismaService.member.findUnique.mockResolvedValue({ id: 'owner-member', role: 'owner' });
+    mockTx.timesheetPeriodLock.upsert.mockResolvedValue({ id: 'period-1' });
+    let release!: (rows: unknown[]) => void;
+    let requested!: () => void;
+    const lockRequested = new Promise<void>((resolve) => { requested = resolve; });
+    mockTx.$queryRaw.mockImplementationOnce(() => {
+      requested();
+      return new Promise<unknown[]>((resolve) => { release = resolve; });
+    });
+    const range = { periodStart: '2026-06-22', periodEnd: '2026-06-28' };
+
+    const mutation = action === 'lock'
+      ? service.lockPeriod('org-1', 'owner-user', range)
+      : service.unlockPeriod('org-1', 'owner-user', { ...range, reason: 'Correction' });
+    await lockRequested;
+    expect(mockTx.timesheetPeriodLock.findUnique).not.toHaveBeenCalled();
+    expect(mockTx.timesheetPeriodLock.upsert).not.toHaveBeenCalled();
+    expect(mockTx.timesheetAuditLog.create).not.toHaveBeenCalled();
+
+    release([]);
+    await mutation;
+    const [query] = mockTx.$queryRaw.mock.calls[0] as [Prisma.Sql];
+    expect(query.text).toContain('FROM organizations');
+    expect(query.text).toContain('FOR UPDATE');
+    expect(query.values).toEqual(['org-1']);
+    expect(mockTx.timesheetPeriodLock.upsert).toHaveBeenCalled();
   });
 
   describe('lockPeriod', () => {
@@ -528,6 +725,47 @@ describe('TimesheetService', () => {
   });
 
   describe('getAuditLogs', () => {
+    const range = { periodStart: '2026-06-22', periodEnd: '2026-06-28' };
+
+    it('includes before/after work dates at both edges plus existing lock/export range matches', async () => {
+      mockPrismaService.member.findUnique.mockResolvedValue({ id: 'admin-member', role: 'admin' });
+      const logs = [
+        { id: 'created', before: null, after: { workDate: '2026-06-22T00:00:00.000Z' } },
+        { id: 'deleted', before: { workDate: '2026-06-28T23:59:59.999Z' }, after: null },
+        { id: 'moved-out', before: { workDate: '2026-06-25' }, after: { workDate: '2026-07-01' } },
+        { id: 'moved-in', before: { workDate: '2026-06-01' }, after: { workDate: '2026-06-23' } },
+        { id: 'locked', before: null, after: range },
+        { id: 'unlocked', before: range, after: null },
+        { id: 'exported', before: null, after: { periodStart: '2026-06-22T00:00:00.000Z', periodEnd: '2026-06-28T23:59:59.999Z' } },
+        { id: 'outside', before: { workDate: '2026-06-21' }, after: { workDate: '2026-06-29' } },
+        { id: 'other-range', before: null, after: { periodStart: '2026-06-21', periodEnd: '2026-06-29' } },
+        { id: 'null', before: null, after: null },
+        { id: 'malformed', before: [], after: { workDate: 'invalid' } },
+        { id: 'invalid-types', before: { workDate: null }, after: { workDate: 1 } },
+      ];
+      mockPrismaService.timesheetAuditLog.findMany.mockResolvedValue(logs);
+
+      const result = await service.getAuditLogs('org-1', 'admin-user', { ...range, page: 1, limit: 10 });
+
+      expect(result.data.map((log) => log.id)).toEqual(logs.slice(0, 7).map((log) => log.id));
+      expect(result.meta.total).toBe(7);
+    });
+
+    it('paginates after matching entry snapshots and counts only matching logs', async () => {
+      mockPrismaService.member.findUnique.mockResolvedValue({ id: 'admin-member', role: 'admin' });
+      mockPrismaService.timesheetAuditLog.findMany.mockResolvedValue([
+        { id: 'outside', before: null, after: { workDate: '2026-07-01' } },
+        { id: 'first', before: null, after: { workDate: '2026-06-23' } },
+        { id: 'second', before: { workDate: '2026-06-24' }, after: null },
+      ]);
+
+      const result = await service.getAuditLogs('org-1', 'admin-user', { ...range, page: 2, limit: 1 });
+
+      expect(result.data.map((log) => log.id)).toEqual(['second']);
+      expect(result.meta.total).toBe(2);
+      expect(result.meta.lastPage).toBe(2);
+    });
+
     it('returns paginated audit logs for admins', async () => {
       mockPrismaService.member.findUnique.mockResolvedValue({ id: 'admin-member', role: 'admin' });
       mockPrismaService.timesheetAuditLog.findMany.mockResolvedValue([{ id: 'audit-1', action: 'LOCKED_PERIOD' }]);
