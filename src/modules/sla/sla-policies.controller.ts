@@ -54,7 +54,7 @@ export class SlaPoliciesController {
   @Post()
   @ApiOperation({ summary: 'Create a new SLA policy' })
   @ApiResponse({ status: 201, description: 'SLA policy created' })
-  @ApiResponse({ status: 409, description: 'Policy already exists for this org and project' })
+  @ApiResponse({ status: 409, description: 'A policy already exists for this org, project and priority' })
   async createSlaPolicy(
     @Body() body: CreateSlaPolicyDTO,
     @CurrentOrganizationId() organizationId: string,
