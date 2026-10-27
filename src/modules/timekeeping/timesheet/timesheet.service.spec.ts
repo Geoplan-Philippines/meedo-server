@@ -193,6 +193,13 @@ describe('TimesheetService', () => {
       await expect(service.createEntry('org-1', 'user-1', dto)).rejects.toThrow(NotFoundException);
     });
 
+    it('rejects an archived project with 400', async () => {
+      mockPrismaService.project.findFirst.mockResolvedValue({ id: 'project-1', isArchived: true });
+
+      await expect(service.createEntry('org-1', 'user-1', dto)).rejects.toThrow(BadRequestException);
+      expect(mockTx.timesheetEntry.create).not.toHaveBeenCalled();
+    });
+
     it('rejects entries that push the daily total above 24 hours', async () => {
       mockPrismaService.timesheetEntry.aggregate.mockResolvedValue({ _sum: { hours: 20 } });
 
@@ -223,6 +230,27 @@ describe('TimesheetService', () => {
         }),
       );
       expect(result.hours).toBe(6);
+    });
+
+    it('rejects moving an entry onto an archived project with 400', async () => {
+      mockPrismaService.timesheetEntry.findFirst.mockResolvedValue(mockEntry);
+      mockPrismaService.project.findFirst.mockResolvedValue({ id: 'project-archived', isArchived: true });
+
+      await expect(
+        service.updateEntry('entry-1', 'org-1', 'user-1', { projectId: 'project-archived' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockTx.timesheetEntry.update).not.toHaveBeenCalled();
+    });
+
+    it('still saves an entry already on an archived project when the project is unchanged', async () => {
+      mockPrismaService.timesheetEntry.findFirst.mockResolvedValue(mockEntry);
+      mockPrismaService.project.findFirst.mockResolvedValue({ id: 'project-1', isArchived: true });
+      mockTx.timesheetEntry.update.mockResolvedValue({ ...mockEntry, hours: 6 });
+      mockTx.timesheetAuditLog.create.mockResolvedValue({ id: 'audit-1' });
+
+      await service.updateEntry('entry-1', 'org-1', 'user-1', { projectId: 'project-1', hours: 6 });
+
+      expect(mockTx.timesheetEntry.update).toHaveBeenCalled();
     });
 
     it('does not allow access to another user entry', async () => {

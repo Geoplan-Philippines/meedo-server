@@ -17,6 +17,8 @@ import { LockTimesheetPeriodDTO } from './dto/lock-timesheet-period.dto';
 import { SubmitTimesheetWeekDTO } from './dto/submit-timesheet-week.dto';
 import { UnlockTimesheetPeriodDTO } from './dto/unlock-timesheet-period.dto';
 import { UpdateTimesheetEntryDTO } from './dto/update-timesheet-entry.dto';
+import { assertProjectAssignable } from '../../maintenance/projects/utils/assert-project-assignable';
+import { CLIENT_DISPLAY_NAME_SQL, PROJECT_DISPLAY_NAME_SQL } from '../../maintenance/projects/utils/display-name';
 
 const MAX_REGULAR_HOURS_PER_DAY = 9;
 const MAX_TOTAL_HOURS_PER_DAY = 24;
@@ -28,7 +30,10 @@ const TIMESHEET_ENTRY_INCLUDE = {
       workOrderNumber: true,
       status:          true,
       customerName:    true,
-      client:          { select: { customerName: true } },
+      displayName:     true,
+      quoteSubject:    true,
+      isArchived:      true,
+      client:          { select: { customerName: true, displayName: true } },
     },
   },
   approvedBy: {
@@ -52,7 +57,10 @@ const TIMESHEET_SUMMARY_ENTRY_INCLUDE = {
       workOrderNumber: true,
       status:          true,
       customerName:    true,
-      client:          { select: { customerName: true } },
+      displayName:     true,
+      quoteSubject:    true,
+      isArchived:      true,
+      client:          { select: { customerName: true, displayName: true } },
     },
   },
   user: {
@@ -111,9 +119,12 @@ interface TimesheetExportResult {
 
 interface RawProjectRow {
   id: string;
+  name: string;
   work_order_number: string;
+  quote_subject: string | null;
   status: string;
   reported_date: Date | null;
+  is_archived: boolean;
   customer_name: string | null;
 }
 
@@ -161,7 +172,7 @@ export class TimesheetService {
     dto: CreateTimesheetEntryDTO,
   ): Promise<TimesheetEntryWithRelations> {
     const member = await this.resolveMember(organizationId, userId);
-    await this.ensureProjectInOrganization(dto.projectId, organizationId);
+    await this.ensureProjectInOrganization(dto.projectId, organizationId, null);
     const workDate = parseDateOnly(dto.workDate);
     const hours = this.resolveEntryHours(dto.workType ?? TimesheetWorkType.REGULAR, dto.hours);
     await this.ensureDateNotLocked(organizationId, workDate);
@@ -215,7 +226,7 @@ export class TimesheetService {
     this.assertCanEdit(existing.status);
 
     if (dto.projectId) {
-      await this.ensureProjectInOrganization(dto.projectId, organizationId);
+      await this.ensureProjectInOrganization(dto.projectId, organizationId, existing.projectId);
     }
 
     const workDate = dto.workDate !== undefined ? parseDateOnly(dto.workDate) : existing.workDate;
@@ -826,17 +837,20 @@ export class TimesheetService {
     query: GetTimesheetProjectsQueryDTO,
   ) {
     await this.resolveMember(organizationId, userId);
-    const { page, limit, search } = query;
+    const { page, limit, search, includeArchived } = query;
     const searchTerm = search || null;
-    const whereClause = this.buildProjectSearchWhere(organizationId, searchTerm);
+    const whereClause = this.buildProjectSearchWhere(organizationId, searchTerm, includeArchived ?? false);
 
     const [rows, countRows] = await Promise.all([
       this.prisma.$queryRaw<RawProjectRow[]>(Prisma.sql`
-        SELECT p.id, p.work_order_number, p.status, p.reported_date, COALESCE(c.customer_name, p.customer_name) AS customer_name
+        SELECT
+          p.id, p.work_order_number, p.status, p.reported_date, p.quote_subject, p.is_archived,
+          ${PROJECT_DISPLAY_NAME_SQL} AS name,
+          COALESCE(${CLIENT_DISPLAY_NAME_SQL}, NULLIF(p.customer_name, '')) AS customer_name
         FROM projects p
         LEFT JOIN clients c ON c.id = p.client_id
         ${whereClause}
-        ORDER BY COALESCE(c.customer_name, p.customer_name) ASC NULLS LAST, p.work_order_number ASC
+        ORDER BY COALESCE(${CLIENT_DISPLAY_NAME_SQL}, NULLIF(p.customer_name, '')) ASC NULLS LAST, name ASC, p.work_order_number ASC
         LIMIT ${limit} OFFSET ${(page - 1) * limit}
       `),
       this.prisma.$queryRaw<RawProjectCountRow[]>(Prisma.sql`
@@ -853,10 +867,13 @@ export class TimesheetService {
       const customerName = r.customer_name?.trim() || '';
       return {
         id: r.id,
+        name: r.name,
         workOrderNumber: r.work_order_number,
+        quoteSubject: r.quote_subject,
         customerName,
         status: r.status,
         reportedDate: r.reported_date,
+        isArchived: r.is_archived,
         client: r.customer_name !== null ? { customerName: r.customer_name } : null,
       };
     });
@@ -881,15 +898,13 @@ export class TimesheetService {
     return member;
   }
 
-  private async ensureProjectInOrganization(projectId: string, organizationId: string): Promise<void> {
-    const project = await this.prisma.project.findFirst({
-      where: { id: projectId, organizationId },
-      select: { id: true },
-    });
-
-    if (!project) {
-      throw new NotFoundException('Project not found in this organization.');
-    }
+  /** 404 outside the org; 400 for an archived project unless the entry already uses it. */
+  private async ensureProjectInOrganization(
+    projectId: string,
+    organizationId: string,
+    currentProjectId: string | null,
+  ): Promise<void> {
+    await assertProjectAssignable(this.prisma, projectId, organizationId, currentProjectId);
   }
 
   private async ensureDateNotLocked(organizationId: string, workDate: Date): Promise<void> {
@@ -1128,13 +1143,17 @@ export class TimesheetService {
     };
   }
 
-  // Used only by getProjects
-  private buildProjectSearchWhere(organizationId: string, searchTerm: string | null): Prisma.Sql {
+  // Used only by getProjects. Archived projects are left out unless includeArchived
+  // (the approval filter needs them to find entries already logged against them).
+  private buildProjectSearchWhere(organizationId: string, searchTerm: string | null, includeArchived: boolean): Prisma.Sql {
     return Prisma.sql`
       WHERE p.organization_id = ${organizationId}
+        AND (${includeArchived} OR p.is_archived = false)
         AND (
           ${searchTerm}::text IS NULL
-          OR COALESCE(c.customer_name, p.customer_name) ILIKE '%' || ${searchTerm} || '%'
+          OR COALESCE(${CLIENT_DISPLAY_NAME_SQL}, p.customer_name) ILIKE '%' || ${searchTerm} || '%'
+          OR ${PROJECT_DISPLAY_NAME_SQL} ILIKE '%' || ${searchTerm} || '%'
+          OR p.quote_subject ILIKE '%' || ${searchTerm} || '%'
           OR p.work_order_number ILIKE '%' || ${searchTerm} || '%'
         )
     `;
