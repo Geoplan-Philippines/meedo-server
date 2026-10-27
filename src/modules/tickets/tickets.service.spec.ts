@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { TicketsService } from './tickets.service';
 import { PrismaService } from '../../core/database/prisma.service';
 import { TicketActivityService } from './activity/ticket-activity.service';
+import { TicketDepartmentAccessService } from './access/ticket-department-access.service';
 import { TICKET_NUMBER_MAX, TICKET_NUMBER_MIN, MAX_TICKET_NUMBER_RETRIES } from './constants/ticket.constants';
 
 const mockTicket = {
@@ -72,6 +73,11 @@ const mockActivityService = {
   record: jest.fn(),
 };
 
+// Existing business-rule cases exercise an authorized administrator. The access
+// matrix is tested with real membership resolution in tickets-department.spec.ts.
+const access = new TicketDepartmentAccessService(mockPrismaService as unknown as PrismaService);
+const resolveScope = jest.spyOn(access, 'resolve');
+
 describe('TicketsService', () => {
   let service: TicketsService;
 
@@ -81,11 +87,14 @@ describe('TicketsService', () => {
         TicketsService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: TicketActivityService, useValue: mockActivityService },
+        { provide: TicketDepartmentAccessService, useValue: access },
       ],
     }).compile();
 
     service = module.get<TicketsService>(TicketsService);
     jest.resetAllMocks();
+    resolveScope.mockResolvedValue({ organizationId: 'org-uuid-1', userId: 'admin-user',
+      memberId: 'admin-member', role: 'admin', isAdmin: true, teamIds: [] });
     mockPrismaService.$transaction.mockImplementation((fn: Function) => fn(mockPrismaService));
     mockActivityService.resolveMemberId.mockResolvedValue(undefined);
     mockActivityService.record.mockResolvedValue(undefined);
@@ -321,7 +330,7 @@ describe('TicketsService', () => {
         service.updateTicket('missing-id', { title: 'Updated' }, 'org-uuid-1'),
       ).rejects.toThrow(NotFoundException);
 
-      expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
+      expect(mockPrismaService.tickets.update).not.toHaveBeenCalled();
     });
 
     it('updates ticket and syncs assignees in a transaction', async () => {
@@ -331,6 +340,7 @@ describe('TicketsService', () => {
       mockPrismaService.$transaction.mockImplementation(async (fn: Function) => {
         return fn({
           tickets: {
+            findFirst: mockPrismaService.tickets.findFirst,
             update: jest.fn(),
             findUniqueOrThrow: jest.fn().mockResolvedValue(mockTicket),
           },
@@ -357,6 +367,7 @@ describe('TicketsService', () => {
       mockPrismaService.$transaction.mockImplementation(async (fn: Function) => {
         return fn({
           tickets: {
+            findFirst: mockPrismaService.tickets.findFirst,
             update: jest.fn(),
             findUniqueOrThrow: jest.fn().mockResolvedValue(mockTicket),
           },
@@ -377,6 +388,8 @@ describe('TicketsService', () => {
       mockPrismaService.$transaction.mockImplementation(async (fn: Function) => {
         return fn({
           tickets: {
+            findFirst: mockPrismaService.tickets.findFirst,
+            count: mockPrismaService.tickets.count,
             update: jest.fn(),
             findUniqueOrThrow: jest.fn().mockResolvedValue(mockTicket),
           },
@@ -411,7 +424,7 @@ describe('TicketsService', () => {
         service.updateTicket('ticket-uuid-1', { relatedTicketIds: ['ticket-uuid-1'] }, 'org-uuid-1'),
       ).rejects.toThrow(BadRequestException);
 
-      expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
+      expect(mockPrismaService.tickets.update).not.toHaveBeenCalled();
     });
   });
 

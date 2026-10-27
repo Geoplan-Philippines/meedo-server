@@ -11,7 +11,6 @@ import { GetTicketFacetsQueryDTO } from './dto/get-ticket-facets-query.dto';
 import { TicketActivityService } from './activity/ticket-activity.service';
 import {
   MAX_TICKET_NUMBER_RETRIES,
-  TICKET_DETAIL_INCLUDE,
   TICKET_INCLUDE,
   TICKET_NUMBER_MAX,
   TICKET_NUMBER_MIN,
@@ -26,6 +25,7 @@ import {
   WithSla,
   serializeTicketDetail,
 } from './constants/ticket.constants';
+import { TicketDepartmentAccessService, TicketDepartmentScope } from './access/ticket-department-access.service';
 import { assertProjectAssignable } from '../maintenance/projects/utils/assert-project-assignable';
 import {
   ACTIVE_SLA_POLICY_WHERE,
@@ -40,17 +40,20 @@ export class TicketsService {
   constructor(
     private prisma: PrismaService,
     private activity: TicketActivityService,
+    private access: TicketDepartmentAccessService,
   ) {}
 
   async getAllTickets(
     query: GetAllTicketsQueryDTO,
     organizationId: string,
+    userId?: string,
   ): Promise<PaginatedResponse<WithSla<TicketWithRelations>>> {
+    const scope = await this.access.resolve(organizationId, userId);
     const { page, limit, ticketStatusId, priority, teamId, categoryId, assigneeId, projectId, search, includeArchived, view } = query;
 
     const orderBy = this.buildOrderBy(query.sortField, query.sortOrder);
 
-    const where: Prisma.TicketsWhereInput = {
+    const where = this.access.where(scope, {
       organizationId,
       ...(includeArchived ? {} : { isArchived: false }),
       ...this.buildViewWhere(view),
@@ -58,7 +61,7 @@ export class TicketsService {
       ...(priority?.length ? { priority: { in: priority } } : {}),
       ...this.buildScopeWhere({ teamId, categoryId, assigneeId, projectId }),
       ...this.buildSearchWhere(search),
-    };
+    });
 
     const [tickets, total, policies] = await Promise.all([
       this.prisma.tickets.findMany({
@@ -75,11 +78,12 @@ export class TicketsService {
     return { data: this.withSla(tickets, policies), meta: buildPaginationMeta(total, page, limit) };
   }
 
-  async getTicketById(id: string, organizationId: string): Promise<WithSla<TicketDetail>> {
+  async getTicketById(id: string, organizationId: string, userId?: string): Promise<WithSla<TicketDetail>> {
+    const scope = await this.access.resolve(organizationId, userId);
     const [ticket, policies] = await Promise.all([
       this.prisma.tickets.findFirst({
-        where: { id, organizationId },
-        include: TICKET_DETAIL_INCLUDE,
+        where: this.access.where(scope, { id }),
+        include: this.access.detailInclude(scope),
       }),
       this.loadSlaPolicies(organizationId),
     ]);
@@ -89,8 +93,9 @@ export class TicketsService {
     return this.withSla([serializeTicketDetail(ticket)], policies)[0];
   }
 
-  async getTicketStats(organizationId: string): Promise<TicketStats> {
-    const baseWhere: Prisma.TicketsWhereInput = { organizationId, isArchived: false };
+  async getTicketStats(organizationId: string, userId?: string): Promise<TicketStats> {
+    const scope = await this.access.resolve(organizationId, userId);
+    const baseWhere = this.access.where(scope, { isArchived: false });
 
     const [total, urgent, high, overdue] = await Promise.all([
       this.prisma.tickets.count({ where: baseWhere }),
@@ -104,19 +109,20 @@ export class TicketsService {
     return { total, urgent, high, overdue };
   }
 
-  async getFacets(query: GetTicketFacetsQueryDTO, organizationId: string): Promise<TicketFacets> {
+  async getFacets(query: GetTicketFacetsQueryDTO, organizationId: string, userId?: string): Promise<TicketFacets> {
+    const scope = await this.access.resolve(organizationId, userId);
     const { search, includeArchived, view, teamId, categoryId, assigneeId, projectId } = query;
 
     // Context shared by every count: org + archived scope + the active search and
     // scope filters (team/category/assignee/project), so badge counts match the list.
     // Optional board priority selections scope status totals below; priority
     // option counts themselves continue to omit the priority selection.
-    const contextWhere: Prisma.TicketsWhereInput = {
+    const contextWhere = this.access.where(scope, {
       organizationId,
       ...(includeArchived ? {} : { isArchived: false }),
       ...this.buildScopeWhere({ teamId, categoryId, assigneeId, projectId }),
       ...this.buildSearchWhere(search),
-    };
+    });
 
     // Status/priority badges reflect the current view, so they match the list.
     const viewWhere: Prisma.TicketsWhereInput = { ...contextWhere, ...this.buildViewWhere(view) };
@@ -148,11 +154,13 @@ export class TicketsService {
     organizationId: string,
     userId?: string,
   ): Promise<WithSla<TicketWithRelations>> {
+    const scope = await this.access.resolve(organizationId, userId);
+    this.access.assertTeam(scope, data.teamId);
     this.assertDueDateNotPast(data.dueDate);
     await this.validateReferences(data, organizationId, null);
 
     const uniqueAssigneeIds = data.assigneeIds ? [...new Set(data.assigneeIds)] : [];
-    const actorMemberId = await this.activity.resolveMemberId(organizationId, userId);
+    const actorMemberId = scope.memberId;
 
     let ticket: TicketWithRelations | null = null;
     for (let attempt = 0; attempt < MAX_TICKET_NUMBER_RETRIES; attempt++) {
@@ -214,41 +222,42 @@ export class TicketsService {
     organizationId: string,
     userId?: string,
   ): Promise<WithSla<TicketDetail>> {
-    const existing = await this.prisma.tickets.findFirst({
-      where: { id, organizationId },
-      select: {
-        id: true,
-        ticketStatusId: true,
-        resolvedAt: true,
-        firstRespondedAt: true,
-        priority: true,
-        dueDate: true,
-        projectId: true,
-        assignees: { select: { memberId: true } },
-      },
-    });
-    if (!existing) {
-      throw new NotFoundException('Ticket not found in this organization.');
-    }
-
-    this.assertDueDateNotPastOnChange(data.dueDate, existing.dueDate);
-    await this.validateReferences(data, organizationId, existing.projectId);
-
-    const { assigneeIds, relatedTicketIds, ...ticketData } = data;
-    if (relatedTicketIds !== undefined) {
-      await this.validateRelatedTickets(id, relatedTicketIds, organizationId);
-    }
-
-    const actorMemberId = await this.activity.resolveMemberId(organizationId, userId);
-    // First response = first assignment to an employee; later reassignments keep it. Only a
-    // save that actually adds an assignee counts, so re-sending an unchanged list on an
-    // older ticket (assigned before this was tracked) doesn't stamp it with "now".
-    const currentAssigneeIds = new Set(existing.assignees.map((assignee) => assignee.memberId));
-    const addsAssignee = assigneeIds?.some((memberId) => !currentAssigneeIds.has(memberId)) ?? false;
-    const firstRespondedAt = !existing.firstRespondedAt && addsAssignee ? new Date() : undefined;
-    const policies = await this.loadSlaPolicies(organizationId);
-
     const updated = await this.prisma.$transaction(async (tx) => {
+      const scope = await this.access.resolve(organizationId, userId, tx);
+      const existing = await tx.tickets.findFirst({
+        where: this.access.where(scope, { id }),
+        select: {
+          id: true,
+          teamId: true,
+          ticketStatusId: true,
+          resolvedAt: true,
+          firstRespondedAt: true,
+          priority: true,
+          dueDate: true,
+          projectId: true,
+          assignees: { select: { memberId: true } },
+        },
+      });
+      if (!existing) {
+        throw new NotFoundException('Ticket not found in this organization.');
+      }
+      this.access.assertTeam(scope, data.teamId !== undefined ? data.teamId : existing.teamId);
+
+      this.assertDueDateNotPastOnChange(data.dueDate, existing.dueDate);
+      await this.validateReferences(data, organizationId, existing.projectId);
+
+      const { assigneeIds, relatedTicketIds, ...ticketData } = data;
+      if (relatedTicketIds !== undefined) {
+        await this.validateRelatedTickets(id, relatedTicketIds, scope, tx);
+      }
+
+      const actorMemberId = scope.memberId;
+      // First response = first assignment to an employee; later reassignments keep it. Only a
+      // save that actually adds an assignee counts, so re-sending an unchanged list on an
+      // older ticket (assigned before this was tracked) doesn't stamp it with "now".
+      const currentAssigneeIds = new Set(existing.assignees.map((assignee) => assignee.memberId));
+      const addsAssignee = assigneeIds?.some((memberId) => !currentAssigneeIds.has(memberId)) ?? false;
+      const firstRespondedAt = !existing.firstRespondedAt && addsAssignee ? new Date() : undefined;
       // Only a status transition maintains resolution time; ordinary edits and
       // terminal-to-terminal moves preserve the original timestamp.
       let resolvedAt: Date | null | undefined;
@@ -261,7 +270,7 @@ export class TicketsService {
         resolvedAt = terminal ? existing.resolvedAt ?? new Date() : null;
       }
       await tx.tickets.update({
-        where: { id, organizationId },
+        where: { ...this.access.where(scope), id },
         data: {
           ...ticketData,
           ...(resolvedAt !== undefined ? { resolvedAt } : {}),
@@ -281,18 +290,18 @@ export class TicketsService {
       }
 
       if (relatedTicketIds !== undefined) {
-        await this.syncTicketRelations(tx, id, relatedTicketIds);
+        await this.syncTicketRelations(tx, id, relatedTicketIds, scope);
       }
 
       await this.recordUpdateActivities(tx, id, actorMemberId, existing, data, assigneeIds);
 
       return tx.tickets.findUniqueOrThrow({
         where: { id },
-        include: TICKET_DETAIL_INCLUDE,
+        include: this.access.detailInclude(scope),
       });
     });
 
-    return this.withSla([serializeTicketDetail(updated)], policies)[0];
+    return this.withSla([serializeTicketDetail(updated)], await this.loadSlaPolicies(organizationId))[0];
   }
 
   /** Active SLA policies of the organization; small enough to load once per request. */
@@ -314,11 +323,13 @@ export class TicketsService {
     tx: Prisma.TransactionClient,
     ticketId: string,
     relatedTicketIds: string[],
+    scope: TicketDepartmentScope,
   ): Promise<void> {
     const desired = new Set([...new Set(relatedTicketIds)].filter((relatedId) => relatedId !== ticketId));
 
     const current = await tx.ticketRelation.findMany({
-      where: { ticketId },
+      // Hidden relations are preserved when a member replaces their visible links.
+      where: { ticketId, relatedTicket: this.access.where(scope) },
       select: { relatedTicketId: true },
     });
     const currentIds = new Set(current.map((relation) => relation.relatedTicketId));
@@ -443,7 +454,8 @@ export class TicketsService {
   private async validateRelatedTickets(
     ticketId: string,
     relatedTicketIds: string[],
-    organizationId: string,
+    scope: TicketDepartmentScope,
+    client: Prisma.TransactionClient,
   ): Promise<void> {
     const uniqueIds = [...new Set(relatedTicketIds)];
     if (uniqueIds.includes(ticketId)) {
@@ -452,8 +464,8 @@ export class TicketsService {
     if (uniqueIds.length === 0) {
       return;
     }
-    const count = await this.prisma.tickets.count({
-      where: { id: { in: uniqueIds }, organizationId },
+    const count = await client.tickets.count({
+      where: this.access.where(scope, { id: { in: uniqueIds } }),
     });
     if (count !== uniqueIds.length) {
       throw new NotFoundException('One or more related tickets not found in this organization.');

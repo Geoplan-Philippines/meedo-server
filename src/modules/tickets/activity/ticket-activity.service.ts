@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Prisma, TicketActivityType } from '@prisma/client';
 
 import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse, buildPaginationMeta } from 'src/common/responses/paginated-api.response';
 import { PaginationQueryDTO } from 'src/common/dto/pagination-query.dto';
 import { ACTIVITY_INCLUDE, ActivityWithActor } from '../constants/ticket.constants';
+import { TicketDepartmentAccessService } from '../access/ticket-department-access.service';
 
 type ActivityClient = Pick<Prisma.TransactionClient, 'ticketActivity'>;
 
@@ -17,7 +18,7 @@ interface RecordActivityParams {
 
 @Injectable()
 export class TicketActivityService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private access: TicketDepartmentAccessService) {}
 
   async resolveMember(
     organizationId: string,
@@ -53,31 +54,25 @@ export class TicketActivityService {
     ticketId: string,
     organizationId: string,
     query: PaginationQueryDTO,
+    userId?: string,
   ): Promise<PaginatedResponse<ActivityWithActor>> {
-    await this.ensureTicketInOrg(ticketId, organizationId);
+    const scope = await this.access.resolve(organizationId, userId);
+    await this.access.assertTicket(scope, ticketId);
+    const where = { ticketId, ticket: this.access.where(scope) };
     const { page, limit } = query;
 
     const [activities, total] = await Promise.all([
       this.prisma.ticketActivity.findMany({
-        where: { ticketId },
+        where,
         include: ACTIVITY_INCLUDE,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.ticketActivity.count({ where: { ticketId } }),
+      this.prisma.ticketActivity.count({ where }),
     ]);
 
     return { data: activities, meta: buildPaginationMeta(total, page, limit) };
   }
 
-  private async ensureTicketInOrg(ticketId: string, organizationId: string): Promise<void> {
-    const ticket = await this.prisma.tickets.findFirst({
-      where: { id: ticketId, organizationId },
-      select: { id: true },
-    });
-    if (!ticket) {
-      throw new NotFoundException('Ticket not found in this organization.');
-    }
-  }
 }

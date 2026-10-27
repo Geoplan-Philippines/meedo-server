@@ -67,7 +67,8 @@ export class TicketCommentsController {
     @Param('ticketId', ParseUUIDPipe) ticketId: string,
     @Query() query: PaginationQueryDTO,
     @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') userId: string,
   ): Promise<PaginatedResponse<ActivityWithActor>> {
-    return this.ticketActivityService.getActivity(ticketId, organizationId, query);
+    return this.ticketActivityService.getActivity(ticketId, organizationId, query, userId);
   }
 }
