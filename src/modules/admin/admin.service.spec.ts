@@ -77,7 +77,10 @@ describe('AdminService', () => {
           teamId: undefined,
         },
       });
-      expect(result).toEqual({ user: mockUser, member: mockMember });
+      expect(result).toEqual({
+        user: { ...mockUser, employeeCode: null, biometricsId: null },
+        member: mockMember,
+      });
     });
 
     it('uses provided role when specified', async () => {

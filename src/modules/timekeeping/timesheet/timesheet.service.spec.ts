@@ -96,6 +96,9 @@ const mockPrismaService = {
   organization: {
     findUnique: jest.fn(),
   },
+  user: {
+    findUnique: jest.fn(),
+  },
   $transaction: jest.fn(),
 };
 
@@ -786,6 +789,7 @@ describe('TimesheetService', () => {
       mockPrismaService.member.findUnique.mockResolvedValue({ id: 'approver-1', role: 'owner' });
       mockPrismaService.timesheetEntry.findMany.mockResolvedValue([mockSummaryEntry]);
       mockPrismaService.organization.findUnique.mockResolvedValue({ id: 'org-1', name: 'Geoplan', slug: 'geoplan' });
+      mockPrismaService.user.findUnique.mockResolvedValue({ name: 'Owner', email: 'owner@example.com' });
       mockPrismaService.timesheetAuditLog.create.mockResolvedValue({ id: 'audit-1' });
 
       const result = await service.exportTimesheet('org-1', 'owner-user', {

@@ -4,6 +4,7 @@ import { AttendanceEventType, AttendanceOrigin, AttendanceSource } from '@prisma
 
 import { AttendanceService } from './attendance.service';
 import { PrismaService } from '../../core/database/prisma.service';
+import { ScheduleResolverService } from '../settings/attendance/assignments/resolver/schedule-resolver.service';
 
 const EMPLOYEE_ID = 'employee-uuid-1';
 
@@ -11,6 +12,29 @@ const EMPLOYEE_ID = 'employee-uuid-1';
 const FIRST_IN = new Date('2026-06-25T00:00:00.000Z'); // 08:00 local
 const LAST_OUT = new Date('2026-06-25T09:00:00.000Z'); // 17:00 local
 const DAY_KEY_ISO = '2026-06-24T16:00:00.000Z';
+const ORGANIZATION_ID = 'org-1';
+
+const effectiveSchedule = {
+  userId: EMPLOYEE_ID,
+  date: '2026-06-25',
+  dayOfWeek: 'THURSDAY',
+  source: 'none',
+  schedule: null,
+  isWorkingDay: null,
+  isRestDay: null,
+  expectedSource: null,
+  expectedHours: 0,
+  isFlexible: false,
+  trackLateness: true,
+  shift: null,
+  isHoliday: false,
+  policy: { graceMinutes: 15 },
+};
+
+const mockScheduleResolver = {
+  resolveEffective: jest.fn(),
+  resolveEffectiveForDates: jest.fn(),
+};
 
 const mockTx = {
   attendanceEvent: {
@@ -44,12 +68,19 @@ describe('AttendanceService', () => {
       providers: [
         AttendanceService,
         { provide: PrismaService, useValue: mockPrismaService },
+        { provide: ScheduleResolverService, useValue: mockScheduleResolver },
       ],
     }).compile();
 
     service = module.get<AttendanceService>(AttendanceService);
     jest.resetAllMocks();
-    mockPrismaService.$transaction.mockImplementation((fn: Function) => fn(mockTx));
+    mockPrismaService.$transaction.mockImplementation((fn: (tx: typeof mockTx) => unknown) => fn(mockTx));
+    mockScheduleResolver.resolveEffective.mockResolvedValue(effectiveSchedule);
+    mockScheduleResolver.resolveEffectiveForDates.mockImplementation(
+      (_organizationId: string, _employeeId: string, dates: string[]) => Promise.resolve(
+        new Map(dates.map((date) => [date, { ...effectiveSchedule, date }])),
+      ),
+    );
   });
 
   describe('recordAttendanceEvent', () => {
@@ -208,16 +239,21 @@ describe('AttendanceService', () => {
 
   describe('getMyAttendanceHistory', () => {
     it('returns paginated computed attendance for the employee', async () => {
-      const record = { id: 'att-1', employeeId: EMPLOYEE_ID, billableHours: 9 };
+      const record = {
+        id: 'att-1', employeeId: EMPLOYEE_ID, billableHours: 9,
+        date: new Date(DAY_KEY_ISO), firstIn: FIRST_IN, lastOut: LAST_OUT,
+      };
       mockPrismaService.attendance.findMany.mockResolvedValue([record]);
       mockPrismaService.attendance.count.mockResolvedValue(1);
 
-      const result = await service.getMyAttendanceHistory(EMPLOYEE_ID, { page: 1, limit: 10 });
+      const result = await service.getMyAttendanceHistory(ORGANIZATION_ID, EMPLOYEE_ID, { page: 1, limit: 10 });
 
       expect(mockPrismaService.attendance.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { employeeId: EMPLOYEE_ID }, skip: 0, take: 10 }),
       );
-      expect(result.data).toEqual([record]);
+      expect(result.data).toMatchObject([
+        { ...record, status: { status: 'no_schedule', workedHours: 9 } },
+      ]);
       expect(result.meta.total).toBe(1);
     });
 
@@ -225,7 +261,7 @@ describe('AttendanceService', () => {
       mockPrismaService.attendance.findMany.mockResolvedValue([]);
       mockPrismaService.attendance.count.mockResolvedValue(0);
 
-      await service.getMyAttendanceHistory(EMPLOYEE_ID, {
+      await service.getMyAttendanceHistory(ORGANIZATION_ID, EMPLOYEE_ID, {
         page: 1,
         limit: 10,
         fromDate: '2026-06-01',
@@ -248,13 +284,14 @@ describe('AttendanceService', () => {
       });
       mockPrismaService.attendanceEvent.findMany.mockResolvedValue(events);
 
-      const result = await service.getDailyAttendance(EMPLOYEE_ID, '2026-06-25');
+      const result = await service.getDailyAttendance(ORGANIZATION_ID, EMPLOYEE_ID, '2026-06-25');
 
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         date: new Date(DAY_KEY_ISO),
         firstIn: FIRST_IN,
         lastOut: LAST_OUT,
         billableHours: 9,
+        status: { status: 'no_schedule', workedHours: 9 },
         events,
       });
     });
@@ -263,7 +300,7 @@ describe('AttendanceService', () => {
       mockPrismaService.attendance.findUnique.mockResolvedValue(null);
       mockPrismaService.attendanceEvent.findMany.mockResolvedValue([]);
 
-      const result = await service.getDailyAttendance(EMPLOYEE_ID, '2026-06-25');
+      const result = await service.getDailyAttendance(ORGANIZATION_ID, EMPLOYEE_ID, '2026-06-25');
 
       expect(result.firstIn).toBeNull();
       expect(result.lastOut).toBeNull();

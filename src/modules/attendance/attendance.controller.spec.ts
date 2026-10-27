@@ -3,6 +3,8 @@ import { AttendanceEventType } from '@prisma/client';
 
 import { AttendanceController } from './attendance.controller';
 import { AttendanceService } from './attendance.service';
+import { BiometricSyncService } from './biometrics/biometric-sync.service';
+import { AttendanceUpdatesService } from './attendance-updates.service';
 
 const mockAttendanceService = {
   recordAttendanceEvent: jest.fn(),
@@ -17,7 +19,11 @@ describe('AttendanceController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AttendanceController],
-      providers: [{ provide: AttendanceService, useValue: mockAttendanceService }],
+      providers: [
+        { provide: AttendanceService, useValue: mockAttendanceService },
+        { provide: BiometricSyncService, useValue: {} },
+        { provide: AttendanceUpdatesService, useValue: { notify: jest.fn() } },
+      ],
     }).compile();
 
     controller = module.get<AttendanceController>(AttendanceController);
@@ -39,9 +45,9 @@ describe('AttendanceController', () => {
     const summary = { date: new Date(), firstIn: null, lastOut: null, billableHours: null, events: [] };
     mockAttendanceService.getDailyAttendance.mockResolvedValue(summary);
 
-    const result = await controller.getMyDailyAttendance('employee-1', '2026-06-25');
+    const result = await controller.getMyDailyAttendance('org-1', 'employee-1', '2026-06-25');
 
-    expect(mockAttendanceService.getDailyAttendance).toHaveBeenCalledWith('employee-1', '2026-06-25');
+    expect(mockAttendanceService.getDailyAttendance).toHaveBeenCalledWith('org-1', 'employee-1', '2026-06-25');
     expect(result).toBe(summary);
   });
 });
