@@ -126,6 +126,7 @@ model Organization {
   employeeScheduleAssignments   EmployeeScheduleAssignment[]
   clients                       Client[]
   maintenanceAuditLogs          MaintenanceAuditLog[]
+  newsletterCampaigns           NewsletterCampaign[]
 
   @@map("organizations")
 }
@@ -190,6 +191,7 @@ model Member {
   unlockedTimesheetPeriods      TimesheetPeriodLock[]     @relation("TimesheetPeriodUnlockedBy")
   timesheetAuditLogs            TimesheetAuditLog[]       @relation("TimesheetAuditActor")
   maintenanceAuditLogs          MaintenanceAuditLog[]
+  newsletterCampaigns           NewsletterCampaign[]
 
   @@unique([organizationId, userId])
   @@index([organizationId])
@@ -296,6 +298,29 @@ model NewsletterSubscriber {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@map("newsletter_subscribers")
+}
+
+enum NewsletterCampaignStatus {
+  DRAFT
+  ARCHIVED
+}
+
+model NewsletterCampaign {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                          String                    @db.VarChar(200)
+  subject                       String                    @db.VarChar(200)
+  body                          String                    @db.Text
+  status                        NewsletterCampaignStatus  @default(DRAFT)
+  createdByMemberId             String?                   @map("created_by_member_id")
+  createdByMember               Member?                   @relation(fields: [createdByMemberId], references: [id], onDelete: SetNull)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId, status])
+  @@map("newsletter_campaigns")
 }
 
 model Project {
