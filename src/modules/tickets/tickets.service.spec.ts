@@ -1,3 +1,4 @@
+import { NotificationsService } from '../notifications/notifications.service';
 import { BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
@@ -83,7 +84,7 @@ describe('TicketsService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
+      providers: [{ provide: NotificationsService, useValue: { ticketEvent: jest.fn() } },
         TicketsService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: TicketActivityService, useValue: mockActivityService },
@@ -288,10 +289,10 @@ describe('TicketsService', () => {
         }));
       });
 
-      it.each(['STARTED', null])('clears resolvedAt on moving back out to %s', async category => {
+      it.each(['STARTED', 'BACKLOG'])('clears resolvedAt on moving back out to %s', async category => {
         mockPrismaService.tickets.findFirst.mockResolvedValue({ ...mockTicket, ticketStatusId: 'done', resolvedAt: new Date() });
         mockPrismaService.ticketStatus.findFirst.mockResolvedValue({ id: 'open', category });
-        await service.updateTicket(mockTicket.id, { ticketStatusId: category ? 'open' : null }, mockTicket.organizationId);
+        await service.updateTicket(mockTicket.id, { ticketStatusId: 'open' }, mockTicket.organizationId);
         expect(mockPrismaService.tickets.update).toHaveBeenCalledWith(expect.objectContaining({
           data: expect.objectContaining({ resolvedAt: null }),
         }));

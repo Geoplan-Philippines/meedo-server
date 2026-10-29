@@ -1,4 +1,6 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { NotificationsService } from '../../notifications/notifications.service';
+import { NOTIFICATION_TYPES } from '../../notifications/notification.types';
 import { Prisma, TicketActivityType } from '@prisma/client';
 
 import { PrismaService } from '../../../core/database/prisma.service';
@@ -16,10 +18,12 @@ export type CommentThreadItem = CommentWithPermissions & { replies: CommentWithP
 
 @Injectable()
 export class TicketCommentsService {
+  private readonly logger = new Logger(TicketCommentsService.name);
   constructor(
     private prisma: PrismaService,
     private activity: TicketActivityService,
     private access: TicketDepartmentAccessService,
+    private notifications: NotificationsService,
   ) {}
 
   async getComments(
@@ -68,7 +72,7 @@ export class TicketCommentsService {
     userId: string | undefined,
     dto: CreateTicketCommentDTO,
   ): Promise<CommentThreadItem> {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const scope = await this.access.resolve(organizationId, userId, tx);
       await this.access.assertTicket(scope, ticketId, tx);
       const authorMemberId = scope.memberId;
@@ -111,6 +115,9 @@ export class TicketCommentsService {
       // comment/reply has no replies of its own yet.
       return { ...comment, canModify: true, replies: [] };
     });
+    try { await this.notifications.ticketEvent(ticketId, organizationId, userId, NOTIFICATION_TYPES.ticketComment); }
+    catch { this.logger.warn('Comment notification failed after commit.'); }
+    return result;
   }
 
   async updateComment(

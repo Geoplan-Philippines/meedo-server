@@ -45,7 +45,7 @@ export class TicketDepartmentAccessService {
 
   where(scope: TicketDepartmentScope, filter: Prisma.TicketsWhereInput = {}): Prisma.TicketsWhereInput {
     if (scope.isAdmin) return { ...filter, organizationId: scope.organizationId };
-    return { AND: [{ organizationId: scope.organizationId, teamId: { in: [...scope.teamIds] } }, filter] };
+    return { AND: [{ organizationId: scope.organizationId, OR: [{ teamId: { in: [...scope.teamIds] } }, { createdById: scope.userId }] }, filter] };
   }
 
   async assertTicket(scope: TicketDepartmentScope, id: string, client: AccessClient = this.prisma): Promise<void> {
@@ -70,7 +70,7 @@ export class TicketDepartmentAccessService {
   sql(scope: TicketDepartmentScope): Prisma.Sql {
     const organization = Prisma.sql`t.organization_id = ${scope.organizationId}`;
     if (scope.isAdmin) return organization;
-    if (!scope.teamIds.length) return Prisma.sql`${organization} AND FALSE`;
-    return Prisma.sql`${organization} AND t.team_id IN (${Prisma.join([...scope.teamIds])})`;
+    if (!scope.teamIds.length) return Prisma.sql`${organization} AND t.created_by_id = ${scope.userId}`;
+    return Prisma.sql`${organization} AND (t.team_id IN (${Prisma.join([...scope.teamIds])}) OR t.created_by_id = ${scope.userId})`;
   }
 }

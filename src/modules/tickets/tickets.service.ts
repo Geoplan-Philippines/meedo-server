@@ -1,4 +1,6 @@
-import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NOTIFICATION_TYPES } from '../notifications/notification.types';
 import { Prisma, TicketActivityType, TicketPriority } from '@prisma/client';
 import { randomInt } from 'node:crypto';
 
@@ -37,10 +39,12 @@ import {
 
 @Injectable()
 export class TicketsService {
+  private readonly logger = new Logger(TicketsService.name);
   constructor(
     private prisma: PrismaService,
     private activity: TicketActivityService,
     private access: TicketDepartmentAccessService,
+    private notifications: NotificationsService,
   ) {}
 
   async getAllTickets(
@@ -155,11 +159,15 @@ export class TicketsService {
     userId?: string,
   ): Promise<WithSla<TicketWithRelations>> {
     const scope = await this.access.resolve(organizationId, userId);
-    this.access.assertTeam(scope, data.teamId);
+    if (scope.isAdmin || data.teamId) this.access.assertTeam(scope, data.teamId);
+    if (!scope.isAdmin) {
+      await this.assertMemberProject(data.projectId, organizationId, scope.userId);
+      if (data.assigneeIds?.some(id => id !== scope.memberId)) throw new ForbiddenException('Members can assign their own tickets only to themselves.');
+    }
     this.assertDueDateNotPast(data.dueDate);
     await this.validateReferences(data, organizationId, null);
 
-    const uniqueAssigneeIds = data.assigneeIds ? [...new Set(data.assigneeIds)] : [];
+    const uniqueAssigneeIds = data.assigneeIds?.length ? [...new Set(data.assigneeIds)] : scope.isAdmin ? [] : [scope.memberId];
     const actorMemberId = scope.memberId;
 
     let ticket: TicketWithRelations | null = null;
@@ -179,6 +187,7 @@ export class TicketsService {
               // First response = first assignment to an employee.
               firstRespondedAt: uniqueAssigneeIds.length > 0 ? new Date() : undefined,
               organization: { connect: { id: organizationId } },
+              createdBy: { connect: { id: scope.userId } },
               ticketStatus: data.ticketStatusId ? { connect: { id: data.ticketStatusId } } : undefined,
               category: data.categoryId ? { connect: { id: data.categoryId } } : undefined,
               project: data.projectId ? { connect: { id: data.projectId } } : undefined,
@@ -213,6 +222,7 @@ export class TicketsService {
       );
     }
 
+    await this.notify(ticket.id, organizationId, userId, NOTIFICATION_TYPES.ticketAssigned, uniqueAssigneeIds);
     return this.withSla([ticket], await this.loadSlaPolicies(organizationId))[0];
   }
 
@@ -222,6 +232,8 @@ export class TicketsService {
     organizationId: string,
     userId?: string,
   ): Promise<WithSla<TicketDetail>> {
+    let newAssigneeIds: string[] = [];
+    let statusChanged = false;
     const updated = await this.prisma.$transaction(async (tx) => {
       const scope = await this.access.resolve(organizationId, userId, tx);
       const existing = await tx.tickets.findFirst({
@@ -229,6 +241,7 @@ export class TicketsService {
         select: {
           id: true,
           teamId: true,
+          createdById: true,
           ticketStatusId: true,
           resolvedAt: true,
           firstRespondedAt: true,
@@ -241,7 +254,12 @@ export class TicketsService {
       if (!existing) {
         throw new NotFoundException('Ticket not found in this organization.');
       }
-      this.access.assertTeam(scope, data.teamId !== undefined ? data.teamId : existing.teamId);
+      if (!scope.isAdmin) {
+        if (existing.createdById !== scope.userId) throw new ForbiddenException('Members can edit only tickets they created.');
+        await this.assertMemberProject(data.projectId !== undefined ? data.projectId : existing.projectId, organizationId, scope.userId);
+        if (data.assigneeIds?.some(memberId => memberId !== scope.memberId)) throw new ForbiddenException('Members can assign their own tickets only to themselves.');
+      }
+      if (scope.isAdmin || existing.teamId || (data.teamId !== undefined && data.teamId !== existing.teamId)) this.access.assertTeam(scope, data.teamId !== undefined ? data.teamId : existing.teamId);
 
       this.assertDueDateNotPastOnChange(data.dueDate, existing.dueDate);
       await this.validateReferences(data, organizationId, existing.projectId);
@@ -256,6 +274,8 @@ export class TicketsService {
       // save that actually adds an assignee counts, so re-sending an unchanged list on an
       // older ticket (assigned before this was tracked) doesn't stamp it with "now".
       const currentAssigneeIds = new Set(existing.assignees.map((assignee) => assignee.memberId));
+      newAssigneeIds = [...new Set(data.assigneeIds ?? [])].filter(memberId => !currentAssigneeIds.has(memberId));
+      statusChanged = data.ticketStatusId !== undefined && data.ticketStatusId !== existing.ticketStatusId;
       const addsAssignee = assigneeIds?.some((memberId) => !currentAssigneeIds.has(memberId)) ?? false;
       const firstRespondedAt = !existing.firstRespondedAt && addsAssignee ? new Date() : undefined;
       // Only a status transition maintains resolution time; ordinary edits and
@@ -301,7 +321,20 @@ export class TicketsService {
       });
     });
 
+    if (newAssigneeIds.length) await this.notify(id, organizationId, userId, NOTIFICATION_TYPES.ticketAssigned, newAssigneeIds);
+    if (statusChanged) await this.notify(id, organizationId, userId, NOTIFICATION_TYPES.ticketStatusChanged);
     return this.withSla([serializeTicketDetail(updated)], await this.loadSlaPolicies(organizationId))[0];
+  }
+
+  private async assertMemberProject(projectId: string | null | undefined, organizationId: string, userId: string) {
+    if (!projectId) return;
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, organizationId, members: { some: { organizationId, userId } } }, select: { id: true } });
+    if (!project) throw new ForbiddenException('Choose a project you are a member of, or create the ticket without a project.');
+  }
+
+  private async notify(...args: Parameters<NotificationsService['ticketEvent']>) {
+    try { await this.notifications.ticketEvent(...args); }
+    catch { this.logger.warn('Ticket notification failed after commit.'); }
   }
 
   /** Active SLA policies of the organization; small enough to load once per request. */
@@ -559,7 +592,7 @@ export class TicketsService {
     // meta.target may be a string (constraint name) or string[] (field/column names)
     // depending on the connector/version; match either against the ticket-number unique.
     const target = error.meta?.target;
-    const haystack = Array.isArray(target) ? target.join(',') : String(target ?? '');
+    const haystack = typeof target === 'string' ? target : Array.isArray(target) ? target.filter((value): value is string => typeof value === 'string').join(',') : '';
     return haystack.toLowerCase().includes('ticket_number') || haystack.includes('ticketNumber');
   }
 }

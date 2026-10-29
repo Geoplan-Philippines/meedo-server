@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma, TimesheetEntryStatus, TimesheetWorkType } from '@prisma/client';
 
 import { PrismaService } from '../../../core/database/prisma.service';
+import { NotificationsService } from '../../notifications/notifications.service';
 import { TimesheetService } from './timesheet.service';
 
 const mockEntry = {
@@ -52,25 +53,26 @@ const mockSummaryEntry = {
 const mockTx = {
   $queryRaw: jest.fn(),
   timesheetEntry: {
-    create:     jest.fn(),
-    update:     jest.fn(),
+    create:     jest.fn<Promise<unknown>, [Record<string, unknown>]>(),
+    update:     jest.fn<Promise<unknown>, [Record<string, unknown>]>(),
     delete:     jest.fn(),
-    updateMany: jest.fn(),
+    updateMany: jest.fn<Promise<unknown>, [Record<string, unknown>]>(),
     findMany:   jest.fn(),
   },
   timesheetPeriodLock: {
     findFirst:  jest.fn(),
     findUnique: jest.fn(),
-    upsert:     jest.fn(),
+    upsert:     jest.fn<Promise<unknown>, [Record<string, unknown>]>(),
   },
   timesheetAuditLog: {
-    create:     jest.fn(),
-    createMany: jest.fn(),
+    create:     jest.fn<Promise<unknown>, [Record<string, unknown>]>(),
+    createMany: jest.fn<Promise<unknown>, [Record<string, unknown>]>(),
   },
 };
 
 const mockPrismaService = {
   member: {
+    findMany: jest.fn().mockResolvedValue([]),
     findUnique: jest.fn(),
   },
   project: {
@@ -79,7 +81,7 @@ const mockPrismaService = {
     count:     jest.fn(),
   },
   timesheetEntry: {
-    findMany:   jest.fn(),
+    findMany:   jest.fn<Promise<unknown>, [Record<string, unknown>]>(),
     findFirst:  jest.fn(),
     count:      jest.fn(),
     aggregate:  jest.fn(),
@@ -89,7 +91,7 @@ const mockPrismaService = {
     findUnique: jest.fn(),
   },
   timesheetAuditLog: {
-    create:   jest.fn(),
+    create:   jest.fn<Promise<unknown>, [Record<string, unknown>]>(),
     findMany: jest.fn(),
     count:    jest.fn(),
   },
@@ -109,6 +111,7 @@ describe('TimesheetService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         TimesheetService,
+        { provide: NotificationsService, useValue: { createMany: jest.fn().mockResolvedValue([]) } },
         { provide: PrismaService, useValue: mockPrismaService },
       ],
     }).compile();
@@ -133,11 +136,9 @@ describe('TimesheetService', () => {
 
       const result = await service.getEntries('org-1', 'user-1', { page: 1, limit: 10 });
 
-      expect(mockPrismaService.timesheetEntry.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ organizationId: 'org-1', userId: 'user-1' }),
-        }),
-      );
+      expect(mockPrismaService.timesheetEntry.findMany.mock.calls[0][0]).toMatchObject({
+        where: { organizationId: 'org-1', userId: 'user-1' },
+      });
       expect(result.data).toEqual([mockEntry]);
       expect(result.meta.total).toBe(1);
     });
@@ -165,21 +166,17 @@ describe('TimesheetService', () => {
 
       const result = await service.createEntry('org-1', 'user-1', dto);
 
-      expect(mockTx.timesheetEntry.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+      expect(mockTx.timesheetEntry.create.mock.calls[0][0]).toMatchObject({
+          data: {
             organizationId: 'org-1',
             userId:         'user-1',
             projectId:      'project-1',
             status:         TimesheetEntryStatus.DRAFT,
-          }),
-        }),
-      );
-      expect(mockTx.timesheetAuditLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ action: 'CREATED', actorMemberId: 'member-1' }),
-        }),
-      );
+          },
+      });
+      expect(mockTx.timesheetAuditLog.create.mock.calls[0][0]).toMatchObject({
+        data: { action: 'CREATED', actorMemberId: 'member-1' },
+      });
       expect(result).toEqual(mockEntry);
     });
 
@@ -294,16 +291,14 @@ describe('TimesheetService', () => {
 
       const result = await service.updateEntry('entry-1', 'org-1', 'user-1', { hours: 6 });
 
-      expect(mockTx.timesheetEntry.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+      expect(mockTx.timesheetEntry.update.mock.calls[0][0]).toMatchObject({
+          data: {
             status:             TimesheetEntryStatus.DRAFT,
             rejectedAt:         null,
             rejectedByMemberId: null,
             rejectionReason:    null,
-          }),
-        }),
-      );
+          },
+      });
       expect(result.status).toBe(TimesheetEntryStatus.DRAFT);
       expect(result.rejectedAt).toBeNull();
       expect(result.rejectedByMemberId).toBeNull();
@@ -319,9 +314,7 @@ describe('TimesheetService', () => {
 
       await service.deleteEntry('entry-1', 'org-1', 'user-1');
 
-      expect(mockTx.timesheetAuditLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ action: 'DELETED' }) }),
-      );
+      expect(mockTx.timesheetAuditLog.create.mock.calls[0][0]).toMatchObject({ data: { action: 'DELETED' } });
       expect(mockTx.timesheetEntry.delete).toHaveBeenCalledWith({ where: { id: 'entry-1' } });
     });
 
@@ -352,6 +345,13 @@ describe('TimesheetService', () => {
   });
 
   describe('submitWeek', () => {
+    it.each([
+      '2026-10-27T15:59:59Z', '2026-10-27T16:00:00Z',
+    ])('requires Manila calendar keys rather than a midnight instant in submission at %s', async instant => {
+      await expect(service.submitWeek('org-1', 'user-1', {
+        periodStart: instant, periodEnd: '2026-10-28',
+      })).rejects.toThrow('calendar date');
+    });
     it('submits all draft entries in the selected week and audits each row', async () => {
       mockPrismaService.timesheetEntry.findMany.mockResolvedValue([mockEntry]);
       mockTx.timesheetEntry.updateMany.mockResolvedValue({ count: 1 });
@@ -363,15 +363,10 @@ describe('TimesheetService', () => {
         periodEnd:   '2026-06-28',
       });
 
-      expect(mockTx.timesheetEntry.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ id: { in: ['entry-1'] } }),
-          data:  expect.objectContaining({ status: TimesheetEntryStatus.SUBMITTED }),
-        }),
-      );
-      expect(mockTx.timesheetAuditLog.createMany).toHaveBeenCalledWith(
-        expect.objectContaining({ data: [expect.objectContaining({ action: 'SUBMITTED' })] }),
-      );
+      expect(mockTx.timesheetEntry.updateMany.mock.calls[0][0]).toMatchObject({
+        where: { id: { in: ['entry-1'] } }, data: { status: TimesheetEntryStatus.SUBMITTED },
+      });
+      expect(mockTx.timesheetAuditLog.createMany.mock.calls[0][0]).toMatchObject({ data: [{ action: 'SUBMITTED' }] });
       expect(result.submittedCount).toBe(1);
     });
 
@@ -385,6 +380,16 @@ describe('TimesheetService', () => {
     });
   });
 
+  it('keeps summary, lock, export and entry filters on date keys across Manila midnight', async () => {
+    mockPrismaService.member.findUnique.mockResolvedValue({ id: 'owner-member', role: 'owner' });
+    const period = { periodStart: '2026-10-27T16:00:00Z', periodEnd: '2026-10-28' };
+    await expect(service.getSummary('org-1', 'user-1', period)).rejects.toThrow('calendar date');
+    await expect(service.getPeriodLock('org-1', 'user-1', period)).rejects.toThrow('calendar date');
+    await expect(service.lockPeriod('org-1', 'user-1', period)).rejects.toThrow('calendar date');
+    await expect(service.exportTimesheet('org-1', 'user-1', period)).rejects.toThrow('calendar date');
+    await expect(service.getEntries('org-1', 'user-1', { page: 1, limit: 10, ...period })).rejects.toThrow('calendar date');
+  });
+
   describe('getSummary', () => {
     it('allows admins to view organization summary totals', async () => {
       mockPrismaService.member.findUnique.mockResolvedValue({ id: 'member-1', role: 'admin' });
@@ -395,11 +400,7 @@ describe('TimesheetService', () => {
         periodEnd:   '2026-06-28',
       });
 
-      expect(mockPrismaService.timesheetEntry.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ organizationId: 'org-1' }),
-        }),
-      );
+      expect(mockPrismaService.timesheetEntry.findMany.mock.calls[0][0]).toMatchObject({ where: { organizationId: 'org-1' } });
       expect(result.totalEmployees).toBe(1);
       expect(result.employees[0].status).toBe('PENDING');
     });
@@ -424,14 +425,10 @@ describe('TimesheetService', () => {
 
       const result = await service.bulkApproveEntries('org-1', 'admin-user', { entryIds: ['entry-1'] });
 
-      expect(mockTx.timesheetEntry.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: TimesheetEntryStatus.APPROVED, approvedByMemberId: 'approver-1' }),
-        }),
-      );
-      expect(mockTx.timesheetAuditLog.createMany).toHaveBeenCalledWith(
-        expect.objectContaining({ data: [expect.objectContaining({ action: 'APPROVED' })] }),
-      );
+      expect(mockTx.timesheetEntry.updateMany.mock.calls[0][0]).toMatchObject({
+        data: { status: TimesheetEntryStatus.APPROVED, approvedByMemberId: 'approver-1' },
+      });
+      expect(mockTx.timesheetAuditLog.createMany.mock.calls[0][0]).toMatchObject({ data: [{ action: 'APPROVED' }] });
       expect(result.approvedCount).toBe(1);
     });
 
@@ -441,13 +438,11 @@ describe('TimesheetService', () => {
       );
     });
 
-    it('prevents approvers from approving their own entries', async () => {
+    it('allows admin self-approval and marks the audit snapshot', async () => {
       mockPrismaService.member.findUnique.mockResolvedValue({ id: 'approver-1', role: 'admin' });
       mockTx.timesheetEntry.findMany.mockResolvedValue([{ ...mockSummaryEntry, userId: 'admin-user' }]);
-
-      await expect(service.bulkApproveEntries('org-1', 'admin-user', { entryIds: ['entry-1'] })).rejects.toThrow(
-        ForbiddenException,
-      );
+      await expect(service.bulkApproveEntries('org-1', 'admin-user', { entryIds: ['entry-1'] })).resolves.toHaveProperty('approvedCount', 1);
+      expect(mockTx.timesheetAuditLog.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: [expect.objectContaining({ after: expect.objectContaining({ selfApproval: true }) as unknown })] }));
     });
   });
 
@@ -572,7 +567,7 @@ describe('TimesheetService', () => {
 
     it('still permits draft decisions when no period is locked', async () => {
       activePeriod = null;
-      selectEntries([{ ...mockSummaryEntry, status: TimesheetEntryStatus.DRAFT }]);
+      selectEntries([{ ...mockSummaryEntry, status: TimesheetEntryStatus.DRAFT } as unknown as typeof mockSummaryEntry]);
 
       await decide();
 
@@ -613,14 +608,13 @@ describe('TimesheetService', () => {
       expect(mockTx.timesheetEntry.updateMany).toHaveBeenCalled();
     });
 
-    it('keeps the self-decision ban', async () => {
+    it('allows admin self-decisions while retaining period protection', async () => {
       activePeriod = null;
       selectEntries([{ ...mockSummaryEntry, userId: 'admin-user' }]);
 
-      await expect(decide()).rejects.toThrow('Approvers cannot approve or reject their own timesheet entries.');
-
-      expect(mockTx.timesheetEntry.updateMany).not.toHaveBeenCalled();
-      expect(mockTx.timesheetAuditLog.createMany).not.toHaveBeenCalled();
+      await expect(decide()).resolves.toBeDefined();
+      expect(mockTx.timesheetEntry.updateMany).toHaveBeenCalled();
+      expect(mockTx.timesheetAuditLog.createMany).toHaveBeenCalled();
     });
   });
 
@@ -681,15 +675,11 @@ describe('TimesheetService', () => {
         periodEnd:   '2026-06-28',
       });
 
-      expect(mockTx.timesheetPeriodLock.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          create: expect.objectContaining({ isLocked: true, lockedByMemberId: 'owner-member' }),
-          update: expect.objectContaining({ isLocked: true, lockedByMemberId: 'owner-member' }),
-        }),
-      );
-      expect(mockTx.timesheetAuditLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ action: 'LOCKED_PERIOD' }) }),
-      );
+      expect(mockTx.timesheetPeriodLock.upsert.mock.calls[0][0]).toMatchObject({
+        create: { isLocked: true, lockedByMemberId: 'owner-member' },
+        update: { isLocked: true, lockedByMemberId: 'owner-member' },
+      });
+      expect(mockTx.timesheetAuditLog.create.mock.calls[0][0]).toMatchObject({ data: { action: 'LOCKED_PERIOD' } });
       expect(result).toEqual(lockedPeriod);
     });
 
@@ -732,15 +722,11 @@ describe('TimesheetService', () => {
         reason:      'Correction window',
       });
 
-      expect(mockTx.timesheetPeriodLock.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          create: expect.objectContaining({ isLocked: false, unlockReason: 'Correction window' }),
-          update: expect.objectContaining({ isLocked: false, unlockReason: 'Correction window' }),
-        }),
-      );
-      expect(mockTx.timesheetAuditLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ action: 'UNLOCKED_PERIOD' }) }),
-      );
+      expect(mockTx.timesheetPeriodLock.upsert.mock.calls[0][0]).toMatchObject({
+        create: { isLocked: false, unlockReason: 'Correction window' },
+        update: { isLocked: false, unlockReason: 'Correction window' },
+      });
+      expect(mockTx.timesheetAuditLog.create.mock.calls[0][0]).toMatchObject({ data: { action: 'UNLOCKED_PERIOD' } });
       expect(result).toEqual(unlockedPeriod);
     });
 
@@ -828,9 +814,7 @@ describe('TimesheetService', () => {
       expect(result.filename).toBe('timesheet-geoplan-2026-06-22-to-2026-06-28.xlsx');
       expect(result.mimeType).toContain('spreadsheetml');
       expect(result.buffer.length).toBeGreaterThan(0);
-      expect(mockPrismaService.timesheetAuditLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ action: 'EXPORTED' }) }),
-      );
+      expect(mockPrismaService.timesheetAuditLog.create.mock.calls[0][0]).toMatchObject({ data: { action: 'EXPORTED' } });
     });
   });
 });

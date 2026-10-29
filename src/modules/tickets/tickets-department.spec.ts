@@ -1,3 +1,4 @@
+import { NotificationsService } from '../notifications/notifications.service';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../core/database/prisma.service';
 import { TicketDepartmentAccessService } from './access/ticket-department-access.service';
@@ -120,7 +121,7 @@ describe('Ticket department access across service surfaces', () => {
   }
 
   function ticket(id: string, teamId: string | null, organizationId = 'org'): Row {
-    return { id, teamId, organizationId, title: id, ticketNumber: 123456, priority: 'HIGH',
+    return { id, teamId, organizationId, createdById: id === 'a-ticket' ? 'u' : null, title: id, ticketNumber: 123456, priority: 'HIGH',
       projectId: null, ticketStatusId: null, categoryId: null, isArchived: false, assignees: [],
       resolvedAt: null, firstRespondedAt: null, dueDate: new Date('2000-01-01') };
   }
@@ -139,8 +140,8 @@ describe('Ticket department access across service surfaces', () => {
     const prisma = db as unknown as PrismaService;
     access = new TicketDepartmentAccessService(prisma);
     timeline = new TicketActivityService(prisma, access);
-    service = new TicketsService(prisma, timeline, access);
-    thread = new TicketCommentsService(prisma, timeline, access);
+    service = new TicketsService(prisma, timeline, access, { ticketEvent: jest.fn() } as unknown as NotificationsService);
+    thread = new TicketCommentsService(prisma, timeline, access, { ticketEvent: jest.fn() } as unknown as NotificationsService);
   });
 
   const surfaces = ['list', 'stats', 'facets', 'detail', 'comments', 'activity', 'create', 'update', 'add-comment', 'edit-comment', 'delete-comment'] as const;
@@ -227,7 +228,7 @@ describe('Ticket department access across service surfaces', () => {
   });
 
   it('requires a permitted create team and keeps list/POST free of related summaries', async () => {
-    for (const teamId of [undefined, 'b']) {
+    for (const teamId of ['b']) {
       await expect(service.createTicket({ title: 'Denied', teamId }, 'org', 'u')).rejects.toBeInstanceOf(ForbiddenException);
     }
     expect(db.tickets.create).not.toHaveBeenCalled();
@@ -244,6 +245,7 @@ describe('Ticket department access across service surfaces', () => {
     expect(db.tickets.update).not.toHaveBeenCalled();
     db.member.findUnique.mockClear();
     db.teamMember.findMany.mockClear();
+    tickets.find(ticket => ticket.id === 'a-ticket')!.createdById = 'multi';
     const result = await service.updateTicket('a-ticket', { teamId: 'b' }, 'org', 'multi');
     expect(result.teamId).toBe('b');
     expect(db.member.findUnique).toHaveBeenCalledTimes(1);
@@ -262,7 +264,7 @@ describe('Ticket department access across service surfaces', () => {
     expect(db.tickets.update).not.toHaveBeenCalled();
     expect(db.ticketRelation.createMany).not.toHaveBeenCalled();
     await service.updateTicket('a-ticket', { relatedTicketIds: [] }, 'org', 'u');
-    expect(db.ticketRelation.findMany.mock.calls[0][0].where).toEqual({
+    expect(((db.ticketRelation.findMany.mock.calls as unknown[][])[0][0] as { where: unknown }).where).toEqual({
       ticketId: 'a-ticket', relatedTicket: access.where(await access.resolve('org', 'u')),
     });
   });
@@ -289,7 +291,8 @@ describe('Ticket department access across service surfaces', () => {
     await thread.deleteComment('comment', 'a-ticket', 'org', 'owner');
   });
 
-  it('revokes access immediately, including an authors own comment edits/deletions, without caching', async () => {
+  it('revokes department access immediately for a non-created ticket, including an authors own comments', async () => {
+    tickets.find(ticket => ticket.id === 'a-ticket')!.createdById = 'example-other-creator';
     expect((await service.getAllTickets(page, 'org', 'u')).meta.total).toBe(1);
     teams.set('u', []);
     expect((await service.getAllTickets(page, 'org', 'u')).meta.total).toBe(0);
@@ -301,11 +304,11 @@ describe('Ticket department access across service surfaces', () => {
     expect((await service.getAllTickets(page, 'org', 'u')).data.map(t => t.id)).toEqual(['b-ticket']);
   });
 
-  it('provides parameterized raw SQL, including a deny-all empty scope, without executing it', async () => {
+  it('provides parameterized raw SQL, including own tickets in an empty department scope, without executing it', async () => {
     const member = access.sql(await access.resolve('org', 'u'));
-    expect(member.values).toEqual(['org', 'a']);
+    expect(member.values).toEqual(['org', 'a', 'u']);
     expect(member.text).not.toContain("'org'");
-    expect(access.sql(await access.resolve('org', 'empty')).text).toContain('FALSE');
+    expect(access.sql(await access.resolve('org', 'empty')).text).toContain('created_by_id');
     expect(access.sql(await access.resolve('org', 'admin')).values).toEqual(['org']);
   });
 });
