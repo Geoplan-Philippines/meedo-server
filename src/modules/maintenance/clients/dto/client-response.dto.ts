@@ -9,8 +9,8 @@ export class ClientResponseDTO {
   @ApiProperty()
   id!: string;
 
-  @ApiProperty()
-  apptivoId!: string;
+  @ApiProperty({ nullable: true, type: String })
+  apptivoId!: string | null;
 
   @ApiProperty()
   customerName!: string;

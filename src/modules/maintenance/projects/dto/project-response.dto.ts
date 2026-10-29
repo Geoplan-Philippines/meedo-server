@@ -49,8 +49,11 @@ export class ProjectResponseDTO {
   @ApiProperty({ nullable: true, type: String, description: "Apptivo work order fromObjectRefId (the source quote's record id)" })
   apptivoQuoteRefId!: string | null;
 
-  @ApiProperty()
-  apptivoId!: string;
+  @ApiProperty({ nullable: true, type: String })
+  apptivoId!: string | null;
+
+  @ApiProperty() isClosed!: boolean;
+  @ApiProperty() archivedManually!: boolean;
 
   @ApiProperty()
   organizationId!: string;

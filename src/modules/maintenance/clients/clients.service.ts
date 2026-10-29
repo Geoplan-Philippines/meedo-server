@@ -1,4 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { projectVisibility, visibleProjects } from '../projects/project-visibility';
+import { CreateClientDTO } from './dto/create-client.dto';
+import { APPTIVO_SOURCE_FILTER, isApptivoSource } from '../projects/utils/apptivo-source';
 import { MaintenanceAuditEntity, Prisma } from '@prisma/client';
 import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
@@ -45,13 +48,15 @@ export class ClientsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async getAllClients(query: GetAllClientsQueryDTO, organizationId: string): Promise<PaginatedResponse<ClientView>> {
+  async getAllClients(query: GetAllClientsQueryDTO, organizationId: string, userId?: string): Promise<PaginatedResponse<ClientView>> {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
     const { page, limit, includeArchived } = query;
     const search = query.search?.trim();
     const sortOrder = query.sortOrder ?? 'desc';
 
     const where: Prisma.ClientWhereInput = {
       organizationId,
+      ...(scope.isAdmin ? {} : { projects: { some: { organizationId, ...visibleProjects(scope) } } }),
       ...(includeArchived ? {} : { isArchived: false }),
       ...(search
         ? {
@@ -74,12 +79,12 @@ export class ClientsService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: [orderBy, { id: 'asc' }],
-        include: CLIENT_INCLUDE,
+        include: scope.isAdmin ? CLIENT_INCLUDE : { _count: { select: { projects: { where: visibleProjects(scope) } } } },
       }),
       this.prisma.client.count({ where }),
     ]);
 
-    const activeCounts = await this.countActiveProjects(clients.map((c) => c.id));
+    const activeCounts = await this.countActiveProjects(clients.map((c) => c.id), visibleProjects(scope));
 
     return {
       data: clients.map((client) => ({
@@ -106,7 +111,9 @@ export class ClientsService {
   async getClientTree(
     query: GetClientTreeQueryDTO,
     organizationId: string,
+    userId?: string,
   ): Promise<{ data: ClientTreeNode[]; meta: PaginationMeta & { unassignedProjectCount: number } }> {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
     const { page, limit } = query;
     const search = query.search?.trim() || null;
     const teamId = query.teamId ?? null;
@@ -116,6 +123,7 @@ export class ClientsService {
       FROM projects p
       WHERE p.organization_id = ${organizationId}
         AND p.is_archived = false
+        AND (${scope.isAdmin} OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.organization_id = ${organizationId} AND pm.user_id = ${scope.userId}))
         AND (${teamId}::text IS NULL OR EXISTS (
           SELECT 1 FROM tickets t WHERE t.project_id = p.id AND t.team_id = ${teamId} AND t.is_archived = false
         ))
@@ -130,7 +138,7 @@ export class ClientsService {
           OR ${CLIENT_DISPLAY_NAME_SQL} ILIKE '%' || ${search} || '%'
           OR c.customer_name ILIKE '%' || ${search} || '%')
       GROUP BY c.id
-      HAVING ((${teamId}::text IS NULL AND ${!query.hasActiveProjects}) OR COUNT(a.id) > 0)
+      HAVING ((${scope.isAdmin} AND ${teamId}::text IS NULL AND ${!query.hasActiveProjects}) OR COUNT(a.id) > 0)
     `;
 
     const [rows, totals, unassigned] = await Promise.all([
@@ -161,9 +169,10 @@ export class ClientsService {
   }
 
   /** One client by id (for breadcrumbs and page titles). */
-  async getClient(id: string, organizationId: string): Promise<ClientOption> {
+  async getClient(id: string, organizationId: string, userId?: string): Promise<ClientOption> {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
     const client = await this.prisma.client.findFirst({
-      where: { id, organizationId },
+      where: { id, organizationId, ...(scope.isAdmin ? {} : { projects: { some: { organizationId, ...visibleProjects(scope) } } }) },
       select: { id: true, customerName: true, displayName: true, isArchived: true },
     });
     if (!client) throw new NotFoundException('Client not found in this organization.');
@@ -176,9 +185,10 @@ export class ClientsService {
   }
 
   /** Every client in the organization as { id, name }, sorted by shown name, for pickers and filters. */
-  async getClientOptions(organizationId: string, includeArchived = false): Promise<ClientOption[]> {
+  async getClientOptions(organizationId: string, includeArchived = false, userId?: string): Promise<ClientOption[]> {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
     const clients = await this.prisma.client.findMany({
-      where: { organizationId, ...(includeArchived ? {} : { isArchived: false }) },
+      where: { organizationId, ...(includeArchived ? {} : { isArchived: false }), ...(scope.isAdmin ? {} : { projects: { some: { organizationId, ...visibleProjects(scope) } } }) },
       select: { id: true, customerName: true, displayName: true, isArchived: true },
     });
 
@@ -231,11 +241,11 @@ export class ClientsService {
     };
   }
 
-  private async countActiveProjects(clientIds: string[]): Promise<Map<string, number>> {
+  private async countActiveProjects(clientIds: string[], visibility: Prisma.ProjectWhereInput = {}): Promise<Map<string, number>> {
     if (clientIds.length === 0) return new Map();
     const groups = await this.prisma.project.groupBy({
       by: ['clientId'],
-      where: { clientId: { in: clientIds }, isArchived: false },
+      where: { clientId: { in: clientIds }, isArchived: false, ...visibility },
       _count: { _all: true },
     });
     return new Map(groups.map((group) => [group.clientId as string, group._count._all]));
@@ -265,10 +275,10 @@ export class ClientsService {
     }
 
     const existing = await tx.client.findMany({
-      where: { organizationId },
+      where: { organizationId, ...APPTIVO_SOURCE_FILTER, apptivoId: { not: null } },
       select: { apptivoId: true, customerName: true, isArchived: true },
     });
-    const existingByApptivoId = new Map(existing.map((c) => [c.apptivoId, c]));
+    const existingByApptivoId = new Map(existing.filter(c => isApptivoSource(c.apptivoId)).map((c) => [c.apptivoId, c]));
 
     const toCreate: Prisma.ClientCreateManyInput[] = [];
     let updated = 0;
@@ -308,7 +318,7 @@ export class ClientsService {
     }
 
     const { count: archived } = await tx.client.updateMany({
-      where: { organizationId, isArchived: false, apptivoId: { notIn: Array.from(incoming.keys()) } },
+      where: { organizationId, ...APPTIVO_SOURCE_FILTER, isArchived: false, apptivoId: { not: null, notIn: Array.from(incoming.keys()) } },
       data: archiveData(),
     });
 
@@ -326,7 +336,7 @@ export class ClientsService {
       select: { id: true, apptivoId: true, customerName: true },
     });
 
-    return new Map(clients.map((c) => [c.apptivoId, { id: c.id, customerName: c.customerName }]));
+    return new Map(clients.filter(c => c.apptivoId !== null).map((c) => [c.apptivoId!, { id: c.id, customerName: c.customerName }]));
   }
 
   /** apptivoId -> trimmed customerName ('' when missing). First occurrence wins on duplicates. */
@@ -335,7 +345,7 @@ export class ClientsService {
 
     for (const c of customers) {
       const apptivoId = c.customerId == null ? '' : String(c.customerId).trim();
-      if (apptivoId === '' || byApptivoId.has(apptivoId)) continue;
+      if (!isApptivoSource(apptivoId) || byApptivoId.has(apptivoId)) continue;
       byApptivoId.set(apptivoId, (c.customerName ?? '').trim());
     }
 
@@ -344,5 +354,11 @@ export class ClientsService {
 
   fetchApptivoCustomers(): Promise<Customer[]> {
     return fetchApptivoPages<Customer>(env.APPTIVO_CUSTOMERS_API_RESOURCE, 'customers', this.logger);
+  }
+
+  async createClient(dto: CreateClientDTO, organizationId: string, userId?: string) {
+    await resolveAdminActor(this.prisma, organizationId, userId);
+    const client = await this.prisma.client.create({ data: { organizationId, apptivoId: null, customerName: dto.name.trim(), displayName: dto.name.trim() }, include: CLIENT_INCLUDE });
+    return { ...client, name: clientDisplayName(client), projectCount: 0, activeProjectCount: 0 };
   }
 }

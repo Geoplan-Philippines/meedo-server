@@ -1,3 +1,4 @@
+import { NotificationsService } from '../notifications/notifications.service';
 import { BadRequestException, ForbiddenException, RequestMethod } from '@nestjs/common';
 import { METHOD_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
@@ -62,7 +63,7 @@ describe('Admin edits of projects and clients', () => {
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
-      providers: [ProjectsService, ClientsService, { provide: PrismaService, useValue: prisma }],
+      providers: [{ provide: NotificationsService, useValue: { create: jest.fn(), createMany: jest.fn() } }, ProjectsService, ClientsService, { provide: PrismaService, useValue: prisma }],
     }).compile();
     projects = module.get(ProjectsService);
     clients = module.get(ClientsService);

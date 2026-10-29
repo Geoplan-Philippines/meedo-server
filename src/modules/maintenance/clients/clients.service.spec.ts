@@ -22,6 +22,7 @@ const mockClient = {
 };
 
 const mockPrismaService = {
+  member: { findUnique: jest.fn() },
   client: {
     findMany: jest.fn(),
     count: jest.fn(),
@@ -53,6 +54,7 @@ describe('ClientsService', () => {
 
     service = module.get<ClientsService>(ClientsService);
     jest.resetAllMocks();
+    mockPrismaService.member.findUnique.mockResolvedValue({ id: 'example-member', role: 'admin' });
     mockPrismaService.project.groupBy.mockResolvedValue([]);
   });
 
@@ -61,7 +63,7 @@ describe('ClientsService', () => {
       mockPrismaService.client.findMany.mockResolvedValue([mockClient]);
       mockPrismaService.client.count.mockResolvedValue(1);
 
-      const result = await service.getAllClients({ page: 1, limit: 10 }, 'org-uuid-1');
+      const result = await service.getAllClients({ page: 1, limit: 10 }, 'org-uuid-1', 'example-user');
 
       expect(result.data).toEqual([
         { ...mockClient, name: 'Orica Philippines Inc.', projectCount: 0, activeProjectCount: 0 },
@@ -76,7 +78,7 @@ describe('ClientsService', () => {
       mockPrismaService.client.count.mockResolvedValue(1);
       mockPrismaService.project.groupBy.mockResolvedValue([{ clientId: mockClient.id, _count: { _all: 3 } }]);
 
-      const { data } = await service.getAllClients({ page: 1, limit: 10 }, 'org-uuid-1');
+      const { data } = await service.getAllClients({ page: 1, limit: 10 }, 'org-uuid-1', 'example-user');
 
       expect(data[0]).toMatchObject({ name: 'Orica', projectCount: 5, activeProjectCount: 3 });
     });
@@ -87,7 +89,7 @@ describe('ClientsService', () => {
 
       await service.getAllClients(
         { page: 1, limit: 10, search: 'orica', sortField: 'projectCount', sortOrder: 'desc' },
-        'org-uuid-1',
+        'org-uuid-1', 'example-user',
       );
 
       expect(mockPrismaService.client.findMany).toHaveBeenCalledWith(
@@ -109,7 +111,7 @@ describe('ClientsService', () => {
       mockPrismaService.client.findMany.mockResolvedValue([]);
       mockPrismaService.client.count.mockResolvedValue(25);
 
-      const result = await service.getAllClients({ page: 1, limit: 10 }, 'org-uuid-1');
+      const result = await service.getAllClients({ page: 1, limit: 10 }, 'org-uuid-1', 'example-user');
 
       expect(result.meta.lastPage).toBe(3);
     });
@@ -118,7 +120,7 @@ describe('ClientsService', () => {
       mockPrismaService.client.findMany.mockResolvedValue([]);
       mockPrismaService.client.count.mockResolvedValue(0);
 
-      await service.getAllClients({ page: 3, limit: 10 }, 'org-uuid-1');
+      await service.getAllClients({ page: 3, limit: 10 }, 'org-uuid-1', 'example-user');
 
       expect(mockPrismaService.client.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ skip: 20, take: 10, include: { _count: { select: { projects: true } } } }),
@@ -129,7 +131,7 @@ describe('ClientsService', () => {
       mockPrismaService.client.findMany.mockResolvedValue([]);
       mockPrismaService.client.count.mockResolvedValue(0);
 
-      await service.getAllClients({ page: 1, limit: 10 }, 'org-uuid-1');
+      await service.getAllClients({ page: 1, limit: 10 }, 'org-uuid-1', 'example-user');
 
       const where = { organizationId: 'org-uuid-1', isArchived: false };
       expect(mockPrismaService.client.findMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
@@ -140,7 +142,7 @@ describe('ClientsService', () => {
       mockPrismaService.client.findMany.mockResolvedValue([]);
       mockPrismaService.client.count.mockResolvedValue(0);
 
-      await service.getAllClients({ page: 1, limit: 10, includeArchived: true }, 'org-uuid-1');
+      await service.getAllClients({ page: 1, limit: 10, includeArchived: true }, 'org-uuid-1', 'example-user');
 
       expect(mockPrismaService.client.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { organizationId: 'org-uuid-1' } }),
@@ -364,14 +366,15 @@ describe('ClientsService', () => {
       async (value, allowEmptyClients) => {
         mockPrismaService.$queryRaw.mockResolvedValue([{ count: BigInt(0) }]);
         const query = plainToInstance(GetClientTreeQueryDTO, { page: 1, limit: 8, hasActiveProjects: value });
-        await service.getClientTree(query, 'org-uuid-1');
+        await service.getClientTree(query, 'org-uuid-1', 'example-user');
 
         const calls = mockPrismaService.$queryRaw.mock.calls as [Prisma.Sql][];
         for (const [sql] of calls.slice(0, 2)) {
           // The opt-in must apply before LIMIT and to the total, including without a team filter.
           const havingIndex = sql.strings.findIndex((part) => part.includes('HAVING'));
-          expect(sql.values[havingIndex]).toBeNull();
-          expect(sql.values[havingIndex + 1]).toBe(allowEmptyClients);
+          expect(sql.values[havingIndex]).toBe(true);
+          expect(sql.values[havingIndex + 1]).toBeNull();
+          expect(sql.values[havingIndex + 2]).toBe(allowEmptyClients);
         }
       },
     );
@@ -382,7 +385,7 @@ describe('ClientsService', () => {
         .mockResolvedValueOnce([{ count: BigInt(51) }])
         .mockResolvedValueOnce([{ count: BigInt(2) }]);
 
-      const result = await service.getClientTree({ page: 1, limit: 50 }, 'org-uuid-1');
+      const result = await service.getClientTree({ page: 1, limit: 50 }, 'org-uuid-1', 'example-user');
 
       expect(result).toEqual({
         data: [{ id: 'c1', name: 'KDDI Philippines Corp.', projectCount: 3 }],
@@ -393,7 +396,7 @@ describe('ClientsService', () => {
     it('passes the trimmed search and the Dept (team) to every query', async () => {
       mockPrismaService.$queryRaw.mockResolvedValue([{ count: BigInt(0) }]);
 
-      await service.getClientTree({ page: 2, limit: 20, search: ' kddi ', teamId: 'team-1' }, 'org-uuid-1');
+      await service.getClientTree({ page: 2, limit: 20, search: ' kddi ', teamId: 'team-1' }, 'org-uuid-1', 'example-user');
 
       const calls = mockPrismaService.$queryRaw.mock.calls as unknown[][];
       for (const call of calls) {

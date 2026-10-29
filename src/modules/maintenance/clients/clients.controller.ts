@@ -1,4 +1,6 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
+import { CreateClientDTO } from './dto/create-client.dto';
 import { ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AllowAnonymous, OrgRoles, Session } from '@thallesp/nestjs-better-auth';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
@@ -29,8 +31,9 @@ export class ClientsController {
   async getAllClients(
     @Query() query: GetAllClientsQueryDTO,
     @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') userId: string,
   ): Promise<PaginatedResponse<ClientView>> {
-    return this.clientsService.getAllClients(query, organizationId);
+    return this.clientsService.getAllClients(query, organizationId, userId);
   }
 
   @AllowAnonymous()
@@ -40,8 +43,9 @@ export class ClientsController {
   async getClientOptions(
     @Query() query: GetClientOptionsQueryDTO,
     @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') userId: string,
   ): Promise<ClientOption[]> {
-    return this.clientsService.getClientOptions(organizationId, query.includeArchived);
+    return this.clientsService.getClientOptions(organizationId, query.includeArchived, userId);
   }
 
   @AllowAnonymous()
@@ -55,8 +59,9 @@ export class ClientsController {
   async getClientTree(
     @Query() query: GetClientTreeQueryDTO,
     @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') userId: string,
   ) {
-    return this.clientsService.getClientTree(query, organizationId);
+    return this.clientsService.getClientTree(query, organizationId, userId);
   }
 
   // Keep after the static GET routes ('options' / 'tree') so ':id' doesn't capture them.
@@ -67,9 +72,15 @@ export class ClientsController {
   async getClient(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') userId: string,
   ): Promise<ClientOption> {
-    return this.clientsService.getClient(id, organizationId);
+    return this.clientsService.getClient(id, organizationId, userId);
   }
+
+  @Post()
+  @OrgRoles(['owner', 'admin'])
+  @ApiOperation({ summary: 'Create an internal client' })
+  create(@Body() dto: CreateClientDTO, @CurrentOrganizationId() org: string, @CurrentUser('id') user: string) { return this.clientsService.createClient(dto, org, user); }
 
   @Patch(':id')
   @OrgRoles(['owner', 'admin'])

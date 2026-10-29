@@ -7,6 +7,11 @@ export const PROJECT_SORT_FIELDS = ['workOrderNumber', 'quoteSubject', 'reported
 export type ProjectSortField = (typeof PROJECT_SORT_FIELDS)[number];
 
 export class GetAllProjectsQueryDTO extends ArchivableQueryDTO {
+  @ApiPropertyOptional({ default: true, description: 'Show closed projects; false hides them without blocking continued support.' })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => value === 'true' ? true : value === 'false' ? false : value)
+  @IsBoolean()
+  includeClosed?: boolean;
   @ApiPropertyOptional({ description: 'Filter by client ID' })
   @IsOptional()
   @IsUUID()

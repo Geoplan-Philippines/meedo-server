@@ -1,3 +1,4 @@
+import { NotificationsService } from '../../notifications/notifications.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpException } from '@nestjs/common';
 import { PrismaService } from '../../../core/database/prisma.service';
@@ -26,6 +27,7 @@ const mockProject = {
 };
 
 const mockPrismaService = {
+  member: { findUnique: jest.fn() },
   project: {
     findMany: jest.fn(),
     count: jest.fn(),
@@ -74,7 +76,7 @@ describe('ProjectsService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
+      providers: [{ provide: NotificationsService, useValue: { create: jest.fn(), createMany: jest.fn() } },
         ProjectsService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: ClientsService, useValue: {} },
@@ -83,6 +85,7 @@ describe('ProjectsService', () => {
 
     service = module.get<ProjectsService>(ProjectsService);
     jest.resetAllMocks();
+    mockPrismaService.member.findUnique.mockResolvedValue({ id: 'example-member', role: 'admin' });
   });
 
   describe('getAllProjects', () => {
@@ -90,7 +93,7 @@ describe('ProjectsService', () => {
       mockPrismaService.project.findMany.mockResolvedValue([mockProject]);
       mockPrismaService.project.count.mockResolvedValue(1);
 
-      const result = await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1');
+      const result = await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1', 'example-user');
 
       expect(result.data).toEqual([{ ...mockProject, name: 'Denso RTLS Dashboard Software' }]);
       expect(result.meta.total).toBe(1);
@@ -106,7 +109,7 @@ describe('ProjectsService', () => {
       ]);
       mockPrismaService.project.count.mockResolvedValue(3);
 
-      const { data } = await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1');
+      const { data } = await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1', 'example-user');
 
       expect(data.map((p) => [p.name, p.client?.name ?? null])).toEqual([
         ['RTLS Phase 2', 'Denso'],
@@ -119,7 +122,7 @@ describe('ProjectsService', () => {
       mockPrismaService.project.findMany.mockResolvedValue([]);
       mockPrismaService.project.count.mockResolvedValue(0);
 
-      await service.getAllProjects({ page: 1, limit: 10, teamId: 'team-1', unassigned: true, clientId: 'ignored' }, 'org-uuid-1');
+      await service.getAllProjects({ page: 1, limit: 10, teamId: 'team-1', unassigned: true, clientId: 'ignored' }, 'org-uuid-1', 'example-user');
 
       expect(mockPrismaService.project.count).toHaveBeenCalledWith({
         where: {
@@ -131,13 +134,13 @@ describe('ProjectsService', () => {
       });
     });
 
-    it('searches display name, quote subject and WO number, filters by status and sorts', async () => {
+    it('searches project and client names, quote subject and WO number, filters by status and sorts', async () => {
       mockPrismaService.project.findMany.mockResolvedValue([]);
       mockPrismaService.project.count.mockResolvedValue(0);
 
       await service.getAllProjects(
         { page: 1, limit: 10, search: ' denso ', status: 'Completed', sortField: 'reportedDate', sortOrder: 'asc' },
-        'org-uuid-1',
+        'org-uuid-1', 'example-user',
       );
 
       const where = {
@@ -148,6 +151,11 @@ describe('ProjectsService', () => {
           { displayName: { contains: 'denso', mode: 'insensitive' } },
           { quoteSubject: { contains: 'denso', mode: 'insensitive' } },
           { workOrderNumber: { contains: 'denso', mode: 'insensitive' } },
+          { customerName: { contains: 'denso', mode: 'insensitive' } },
+          { client: { OR: [
+            { displayName: { contains: 'denso', mode: 'insensitive' } },
+            { customerName: { contains: 'denso', mode: 'insensitive' } },
+          ] } },
         ],
       };
       expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(
@@ -160,7 +168,7 @@ describe('ProjectsService', () => {
       mockPrismaService.project.findMany.mockResolvedValue([]);
       mockPrismaService.project.count.mockResolvedValue(25);
 
-      const result = await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1');
+      const result = await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1', 'example-user');
 
       expect(result.meta.lastPage).toBe(3);
     });
@@ -169,7 +177,7 @@ describe('ProjectsService', () => {
       mockPrismaService.project.findMany.mockResolvedValue([]);
       mockPrismaService.project.count.mockResolvedValue(0);
 
-      await service.getAllProjects({ page: 3, limit: 10 }, 'org-uuid-1');
+      await service.getAllProjects({ page: 3, limit: 10 }, 'org-uuid-1', 'example-user');
 
       expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ skip: 20, take: 10 }),
@@ -180,7 +188,7 @@ describe('ProjectsService', () => {
       mockPrismaService.project.findMany.mockResolvedValue([]);
       mockPrismaService.project.count.mockResolvedValue(0);
 
-      await service.getAllProjects({ page: 1, limit: 10, clientId: 'client-uuid-1' }, 'org-uuid-1');
+      await service.getAllProjects({ page: 1, limit: 10, clientId: 'client-uuid-1' }, 'org-uuid-1', 'example-user');
 
       const where = { organizationId: 'org-uuid-1', clientId: 'client-uuid-1', isArchived: false };
       expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
@@ -191,7 +199,7 @@ describe('ProjectsService', () => {
       mockPrismaService.project.findMany.mockResolvedValue([]);
       mockPrismaService.project.count.mockResolvedValue(0);
 
-      await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1');
+      await service.getAllProjects({ page: 1, limit: 10 }, 'org-uuid-1', 'example-user');
 
       expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { organizationId: 'org-uuid-1', isArchived: false } }),
@@ -202,7 +210,7 @@ describe('ProjectsService', () => {
       mockPrismaService.project.findMany.mockResolvedValue([]);
       mockPrismaService.project.count.mockResolvedValue(0);
 
-      await service.getAllProjects({ page: 1, limit: 10, includeArchived: true }, 'org-uuid-1');
+      await service.getAllProjects({ page: 1, limit: 10, includeArchived: true }, 'org-uuid-1', 'example-user');
 
       expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { organizationId: 'org-uuid-1' } }),
@@ -220,7 +228,7 @@ describe('ProjectsService', () => {
     beforeEach(async () => {
       fake = new FakeApptivoSyncPrisma();
       const module = await Test.createTestingModule({
-        providers: [ProjectsService, ClientsService, { provide: PrismaService, useValue: fake }],
+        providers: [{ provide: NotificationsService, useValue: { create: jest.fn(), createMany: jest.fn() } }, ProjectsService, ClientsService, { provide: PrismaService, useValue: fake }],
       }).compile();
       syncService = module.get(ProjectsService);
       clientsService = module.get(ClientsService);

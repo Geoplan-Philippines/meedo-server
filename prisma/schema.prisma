@@ -25,6 +25,10 @@ model User {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   accounts                      Account[]
+  createdTickets                Tickets[]                 @relation("TicketCreator")
+  projectMemberships            ProjectMember[]
+  notifications                 Notification[]            @relation("NotificationRecipient")
+  actedNotifications            Notification[]            @relation("NotificationActor")
   attendanceEvents              AttendanceEvent[]
   attendances                   Attendance[]
   faceProfiles                  FaceProfile[]
@@ -127,6 +131,8 @@ model Organization {
   clients                       Client[]
   maintenanceAuditLogs          MaintenanceAuditLog[]
   newsletterCampaigns           NewsletterCampaign[]
+  projectMembers                ProjectMember[]
+  notifications                 Notification[]
 
   @@map("organizations")
 }
@@ -340,11 +346,13 @@ model Project {
   displayName                   String?                   @map("display_name")
   clientLocked                  Boolean                   @default(false) @map("client_locked")
 
-  apptivoId                     String                    @map("apptivo_id")
+  apptivoId                     String?                   @map("apptivo_id")
   organizationId                String                    @map("organization_id")
   clientId                      String?                   @map("client_id")
 
   isArchived                    Boolean                   @default(false) @map("is_archived")
+  isClosed                      Boolean                   @default(false) @map("is_closed")
+  archivedManually              Boolean                   @default(false) @map("archived_manually")
   archivedAt                    DateTime?                 @map("archived_at")
 
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -353,6 +361,7 @@ model Project {
   tickets                       Tickets[]
   slaPolicies                   SlaPolicy[]
   timesheetEntries              TimesheetEntry[]
+  members                       ProjectMember[]
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
@@ -365,7 +374,7 @@ model Project {
 
 model Client {
   id                            String                    @id @default(uuid())
-  apptivoId                     String                    @map("apptivo_id")
+  apptivoId                     String?                   @map("apptivo_id")
   customerName                  String                    @map("customer_name")
   // Admin-owned; the Apptivo sync never writes it. Shown name: displayName, else customerName.
   displayName                   String?                   @map("display_name")
@@ -384,6 +393,43 @@ model Client {
   @@unique([organizationId, apptivoId])
   @@index([organizationId])
   @@map("clients")
+}
+
+model ProjectMember {
+  id                            String                    @id @default(uuid())
+  projectId                     String                    @map("project_id")
+  userId                        String                    @map("user_id")
+  organizationId                String                    @map("organization_id")
+  project                       Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+
+  @@unique([projectId, userId])
+  @@index([organizationId, userId])
+  @@map("project_members")
+}
+
+model Notification {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
+  recipientUserId               String                    @map("recipient_user_id")
+  type                          String
+  title                         String                    @db.VarChar(200)
+  body                          String                    @db.Text
+  link                          String
+  entityType                    String                    @map("entity_type")
+  entityId                      String                    @map("entity_id")
+  actorUserId                   String?                   @map("actor_user_id")
+  readAt                        DateTime?                 @map("read_at")
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recipient                     User                      @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  actor                         User?                     @relation("NotificationActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([recipientUserId, readAt, createdAt])
+  @@index([organizationId])
+  @@map("notifications")
 }
 
 model Lead {
@@ -449,6 +495,9 @@ model Tickets {
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   project                       Project?                  @relation(fields: [projectId], references: [id], onDelete: SetNull)
   team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  createdById                   String?                   @map("created_by_id")
+  createdBy                     User?                     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  timesheetEntries              TimesheetEntry[]
   assignees                     TicketAssignee[]
   comments                      TicketComment[]
   activities                    TicketActivity[]
@@ -469,6 +518,7 @@ model Tickets {
   @@index([ticketStatusId])
   @@index([categoryId])
   @@index([projectId])
+  @@index([createdById])
   @@index([teamId])
   @@index([isArchived])
   @@unique([organizationId, ticketNumber])
@@ -630,8 +680,12 @@ model TimesheetEntry {
   userId                        String                    @map("user_id")
   user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  projectId                     String                    @map("project_id")
-  project                       Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectId                     String?                   @map("project_id")
+  project                       Project?                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  ticketId                      String?                   @map("ticket_id")
+  ticket                        Tickets?                  @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  description                   String?                   @db.Text
 
   workDate                      DateTime                  @map("work_date")
   hours                         Float
@@ -659,6 +713,7 @@ model TimesheetEntry {
   @@index([organizationId])
   @@index([userId])
   @@index([projectId])
+  @@index([ticketId])
   @@index([organizationId, userId, workDate])
   @@index([organizationId, workDate])
   @@index([organizationId, workDate, status])

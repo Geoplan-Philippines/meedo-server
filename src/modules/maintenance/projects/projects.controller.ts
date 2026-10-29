@@ -1,4 +1,7 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
+import { CreateProjectDTO } from './dto/create-project.dto';
+import { AddProjectMemberDTO, ArchiveProjectDTO, CloseProjectDTO } from './dto/project-state.dto';
 import { ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AllowAnonymous, OrgRoles, Session } from '@thallesp/nestjs-better-auth';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
@@ -27,17 +30,52 @@ export class ProjectsController {
   async getAllProjects(
     @Query() query: GetAllProjectsQueryDTO,
     @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') userId: string,
   ): Promise<PaginatedResponse<ProjectView>> {
-    return this.projectsService.getAllProjects(query, organizationId);
+    return this.projectsService.getAllProjects(query, organizationId, userId);
   }
 
   @AllowAnonymous()
   @Get('statuses')
   @ApiOperation({ summary: 'Distinct project statuses, for filters' })
   @ApiOkResponse({ type: String, isArray: true })
-  async getStatuses(@CurrentOrganizationId() organizationId: string): Promise<string[]> {
-    return this.projectsService.getStatuses(organizationId);
+  async getStatuses(@CurrentOrganizationId() organizationId: string, @CurrentUser('id') userId: string): Promise<string[]> {
+    return this.projectsService.getStatuses(organizationId, userId);
   }
+
+  @Post()
+  @OrgRoles(['owner', 'admin'])
+  @ApiOperation({ summary: 'Create an internal project with a client' })
+  create(@Body() dto: CreateProjectDTO, @CurrentOrganizationId() org: string, @CurrentUser('id') user: string) { return this.projectsService.createProject(dto, org, user); }
+
+  @Get('member-options')
+  @OrgRoles(['owner', 'admin'])
+  @ApiOperation({ summary: 'Organization members available to add to a project' })
+  memberOptions(@CurrentOrganizationId() org: string, @CurrentUser('id') user: string) { return this.projectsService.memberOptions(org, user); }
+
+  @Get(':id/members')
+  @ApiOperation({ summary: 'Members of a visible project' })
+  members(@Param('id', ParseUUIDPipe) id: string, @CurrentOrganizationId() org: string, @CurrentUser('id') user: string) { return this.projectsService.listMembers(id, org, user); }
+
+  @Post(':id/members')
+  @OrgRoles(['owner', 'admin'])
+  @ApiOperation({ summary: 'Add an organization member to a project' })
+  addMember(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddProjectMemberDTO, @CurrentOrganizationId() org: string, @CurrentUser('id') user: string) { return this.projectsService.changeMember(id, dto.userId, true, org, user); }
+
+  @Delete(':id/members/:userId')
+  @OrgRoles(['owner', 'admin'])
+  @ApiOperation({ summary: 'Remove a project membership' })
+  removeMember(@Param('id', ParseUUIDPipe) id: string, @Param('userId', ParseUUIDPipe) memberUser: string, @CurrentOrganizationId() org: string, @CurrentUser('id') user: string) { return this.projectsService.changeMember(id, memberUser, false, org, user); }
+
+  @Patch(':id/closed')
+  @OrgRoles(['owner', 'admin'])
+  @ApiOperation({ summary: 'Set the informational Closed tag; support remains available' })
+  close(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CloseProjectDTO, @CurrentOrganizationId() org: string, @CurrentUser('id') user: string) { return this.projectsService.setState(id, dto, org, user); }
+
+  @Patch(':id/archive')
+  @OrgRoles(['owner', 'admin'])
+  @ApiOperation({ summary: 'Manually archive or restore a project; manual archives survive sync' })
+  archive(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ArchiveProjectDTO, @CurrentOrganizationId() org: string, @CurrentUser('id') user: string) { return this.projectsService.setState(id, dto, org, user); }
 
   // Keep after the static GET routes so ':id' doesn't capture them.
   @AllowAnonymous()
@@ -47,8 +85,9 @@ export class ProjectsController {
   async getProject(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') userId: string,
   ): Promise<ProjectDetail> {
-    return this.projectsService.getProjectDetail(id, organizationId);
+    return this.projectsService.getProjectDetail(id, organizationId, userId);
   }
 
   @Patch(':id')

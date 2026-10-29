@@ -1,4 +1,10 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { projectVisibility, visibleProjects } from './project-visibility';
+import { CreateProjectDTO } from './dto/create-project.dto';
+import { NotificationsService } from '../../notifications/notifications.service';
+import { NOTIFICATION_TYPES } from '../../notifications/notification.types';
+import { APPTIVO_SOURCE_FILTER, isApptivoSource } from './utils/apptivo-source';
 import { MaintenanceAuditEntity, Prisma, TicketPriority, TimesheetEntryStatus } from '@prisma/client';
 import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
@@ -65,14 +71,18 @@ export class ProjectsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly clientsService: ClientsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
-  async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string): Promise<PaginatedResponse<ProjectView>> {
+  async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string, userId?: string): Promise<PaginatedResponse<ProjectView>> {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
     const { page, limit, clientId, includeArchived, status, unassigned, teamId } = query;
     const search = query.search?.trim();
 
     const where: Prisma.ProjectWhereInput = {
       organizationId,
+      ...visibleProjects(scope),
+      ...(query.includeClosed === false ? { isClosed: false } : {}),
       ...(unassigned ? { clientId: null } : clientId ? { clientId } : {}),
       ...(teamId ? { tickets: { some: { teamId, isArchived: false } } } : {}),
       ...(includeArchived ? {} : { isArchived: false }),
@@ -83,6 +93,11 @@ export class ProjectsService {
               { displayName: { contains: search, mode: 'insensitive' } },
               { quoteSubject: { contains: search, mode: 'insensitive' } },
               { workOrderNumber: { contains: search, mode: 'insensitive' } },
+              { customerName: { contains: search, mode: 'insensitive' } },
+              { client: { OR: [
+                { displayName: { contains: search, mode: 'insensitive' } },
+                { customerName: { contains: search, mode: 'insensitive' } },
+              ] } },
             ],
           }
         : {}),
@@ -112,9 +127,10 @@ export class ProjectsService {
   }
 
   /** Distinct Apptivo statuses in the organization, for the status filter. */
-  async getStatuses(organizationId: string): Promise<string[]> {
+  async getStatuses(organizationId: string, userId?: string): Promise<string[]> {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
     const rows = await this.prisma.project.findMany({
-      where: { organizationId },
+      where: { organizationId, ...visibleProjects(scope) },
       distinct: ['status'],
       select: { status: true },
       orderBy: { status: 'asc' },
@@ -122,8 +138,9 @@ export class ProjectsService {
     return rows.map((row) => row.status);
   }
 
-  async getProjectDetail(id: string, organizationId: string): Promise<ProjectDetail> {
-    const project = await this.prisma.project.findFirst({ where: { id, organizationId }, include: PROJECT_INCLUDE });
+  async getProjectDetail(id: string, organizationId: string, userId?: string): Promise<ProjectDetail> {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
+    const project = await this.prisma.project.findFirst({ where: { id, organizationId, ...visibleProjects(scope) }, include: PROJECT_INCLUDE });
     if (!project) throw new NotFoundException('Project not found in this organization.');
 
     const [ticketCount, openTicketCount, hours, approvedHours, policies, history] = await Promise.all([
@@ -208,6 +225,65 @@ export class ProjectsService {
     return toProjectView(await this.prisma.project.findUniqueOrThrow({ where: { id }, include: PROJECT_INCLUDE }));
   }
 
+  async createProject(dto: CreateProjectDTO, organizationId: string, userId?: string): Promise<ProjectView> {
+    await resolveAdminActor(this.prisma, organizationId, userId);
+    const client = await this.prisma.client.findFirst({ where: { id: dto.clientId, organizationId, isArchived: false } });
+    if (!client) throw new NotFoundException('Choose an active client in this organization.');
+    return toProjectView(await this.prisma.project.create({ data: {
+      organizationId, clientId: client.id, apptivoId: null, displayName: dto.name.trim(),
+      workOrderNumber: `INTERNAL-${randomUUID().slice(0, 8)}`, customerName: client.customerName,
+      status: 'Internal', total: 0, clientLocked: true,
+    }, include: PROJECT_INCLUDE }));
+  }
+
+  async setState(id: string, data: { isClosed?: boolean; isArchived?: boolean }, organizationId: string, userId?: string) {
+    await resolveAdminActor(this.prisma, organizationId, userId);
+    const current = await this.prisma.project.findFirst({ where: { id, organizationId } });
+    if (!current) throw new NotFoundException('Project not found.');
+    const updated = await this.prisma.project.update({ where: { id, organizationId }, data: {
+      ...(data.isClosed !== undefined ? { isClosed: data.isClosed } : {}),
+      ...(data.isArchived !== undefined ? { isArchived: data.isArchived, archivedManually: data.isArchived, archivedAt: data.isArchived ? new Date() : null } : {}),
+    }, include: PROJECT_INCLUDE });
+    if (data.isArchived !== undefined && data.isArchived !== current.isArchived) {
+      try {
+        const members = await this.prisma.projectMember.findMany({ where: { projectId: id, organizationId } });
+        await this.notifications.createMany(members.map(member => ({ organizationId, recipientUserId: member.userId, actorUserId: userId,
+          type: NOTIFICATION_TYPES.projectArchived, title: data.isArchived ? 'Project archived' : 'Project restored', body: projectDisplayName(updated),
+          link: `/clients/${updated.clientId ?? 'unassigned'}/projects/${id}/tickets`, entityType: 'project', entityId: id })));
+      } catch { this.logger.warn('Project archive notification failed after commit.'); }
+    }
+    return toProjectView(updated);
+  }
+
+  async listMembers(id: string, organizationId: string, userId?: string) {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
+    if (!await this.prisma.project.findFirst({ where: { id, organizationId, ...visibleProjects(scope) } })) throw new NotFoundException('Project not found.');
+    return this.prisma.projectMember.findMany({ where: { projectId: id, organizationId }, include: { user: { select: { id: true, name: true, email: true } } }, orderBy: { createdAt: 'asc' } });
+  }
+
+  async memberOptions(organizationId: string, userId?: string) {
+    await resolveAdminActor(this.prisma, organizationId, userId);
+    return this.prisma.member.findMany({ where: { organizationId }, select: { user: { select: { id: true, name: true, email: true } } } });
+  }
+
+  async changeMember(id: string, recipientUserId: string, add: boolean, organizationId: string, userId?: string) {
+    await resolveAdminActor(this.prisma, organizationId, userId);
+    const project = await this.prisma.project.findFirst({ where: { id, organizationId } });
+    if (!project) throw new NotFoundException('Project not found.');
+    if (!await this.prisma.member.findUnique({ where: { organizationId_userId: { organizationId, userId: recipientUserId } } })) throw new NotFoundException('Organization member not found.');
+    const result = add
+      ? await this.prisma.projectMember.createMany({ data: [{ projectId: id, userId: recipientUserId, organizationId }], skipDuplicates: true })
+      : await this.prisma.projectMember.deleteMany({ where: { projectId: id, userId: recipientUserId, organizationId } });
+    if (result.count) {
+      try { await this.notifications.create({ organizationId, recipientUserId, actorUserId: userId,
+        type: add ? NOTIFICATION_TYPES.projectMemberAdded : NOTIFICATION_TYPES.projectMemberRemoved,
+        title: add ? 'Added to project' : 'Removed from project', body: projectDisplayName(project),
+        link: `/clients/${project.clientId ?? 'unassigned'}/projects/${id}/tickets`, entityType: 'project', entityId: id });
+      } catch { this.logger.warn('Project membership notification failed after commit.'); }
+    }
+    return { changed: result.count > 0 };
+  }
+
   /** The target client must be in the organization and active, unless the project already uses it. */
   private async assertClientAssignable(clientId: string, organizationId: string, currentClientId: string | null): Promise<void> {
     const client = await this.prisma.client.findFirst({
@@ -259,8 +335,8 @@ export class ProjectsService {
     ];
     const clientMap = await this.clientsService.getClientMap(organizationId, apptivoClientIds, tx);
 
-    const existing = await tx.project.findMany({ where: { organizationId }, select: PROJECT_SYNC_SELECT });
-    const existingByApptivoId = new Map(existing.map((p) => [p.apptivoId, p]));
+    const existing = await tx.project.findMany({ where: { organizationId, ...APPTIVO_SOURCE_FILTER, apptivoId: { not: null } }, select: PROJECT_SYNC_SELECT });
+    const existingByApptivoId = new Map(existing.filter(p => isApptivoSource(p.apptivoId)).map((p) => [p.apptivoId, p]));
 
     const toCreate: Prisma.ProjectCreateManyInput[] = [];
     let updated = 0;
@@ -270,6 +346,7 @@ export class ProjectsService {
     for (const wo of incoming) {
       const project = normalizeProject(wo, clientMap);
       const current = existingByApptivoId.get(project.apptivoId);
+      if (current?.archivedManually) continue;
 
       if (!project.clientId) {
         unmatched++;
@@ -302,7 +379,7 @@ export class ProjectsService {
     }
 
     const { count: archived } = await tx.project.updateMany({
-      where: { organizationId, isArchived: false, apptivoId: { notIn: incoming.map((wo) => String(wo.id).trim()) } },
+      where: { organizationId, ...APPTIVO_SOURCE_FILTER, isArchived: false, apptivoId: { not: null, notIn: incoming.map((wo) => String(wo.id).trim()) } },
       data: archiveData(),
     });
 
@@ -322,6 +399,7 @@ export class ProjectsService {
 }
 
 const PROJECT_SYNC_SELECT = {
+  archivedManually: true,
   id: true,
   apptivoId: true,
   workOrderNumber: true,
@@ -349,7 +427,7 @@ function dedupeWorkOrders(workOrders: WorkOrder[]): WorkOrder[] {
 
   return workOrders.filter((wo) => {
     const apptivoId = wo.id == null ? '' : String(wo.id).trim();
-    if (apptivoId === '' || seen.has(apptivoId)) return false;
+    if (!isApptivoSource(apptivoId) || seen.has(apptivoId)) return false;
     seen.add(apptivoId);
     return true;
   });
