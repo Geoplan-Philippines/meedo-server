@@ -8,22 +8,25 @@
  *   tests can check that referenced projects survive (onDelete: Restrict in the real schema).
  */
 
-type Row = Record<string, unknown> & { id: string; organizationId: string; apptivoId: string };
+type Row = Record<string, unknown> & { id: string; organizationId: string; apptivoId: string | null };
 
 type Where = Record<string, unknown>;
 
-type FilterOperator = { in?: unknown[]; notIn?: unknown[] };
+type FilterOperator = { in?: unknown[]; notIn?: unknown[]; not?: unknown; startsWith?: string };
 
 const isFilterOperator = (value: unknown): value is FilterOperator =>
-  typeof value === 'object' && value !== null && !(value instanceof Date) && ('in' in value || 'notIn' in value);
+  typeof value === 'object' && value !== null && !(value instanceof Date) && ('in' in value || 'notIn' in value || 'not' in value || 'startsWith' in value);
 
 const matches = (row: Row, where: Where = {}): boolean =>
   Object.entries(where).every(([key, expected]) => {
+    if (key === 'NOT') return !(expected as Where[]).some(filter => matches(row, filter));
     if (key === 'organizationId_apptivoId') {
       const compound = expected as { organizationId: string; apptivoId: string };
       return row.organizationId === compound.organizationId && row.apptivoId === compound.apptivoId;
     }
     if (isFilterOperator(expected)) {
+      if (expected.startsWith !== undefined && (typeof row[key] !== 'string' || !row[key].startsWith(expected.startsWith))) return false;
+      if ('not' in expected && row[key] === expected.not) return false;
       if (expected.in && !expected.in.includes(row[key])) return false;
       if (expected.notIn && expected.notIn.includes(row[key])) return false;
       return true;
@@ -44,7 +47,7 @@ class FakeTable {
     private readonly defaults: Record<string, unknown> = {},
   ) {}
 
-  seed(rows: Array<Partial<Row> & { organizationId: string; apptivoId: string }>): Row[] {
+  seed(rows: Array<Partial<Row> & { organizationId: string; apptivoId: string | null }>): Row[] {
     return rows.map((row) => this.insert(row));
   }
 
@@ -77,8 +80,8 @@ class FakeTable {
   delete = jest.fn(() => this.onDelete());
   deleteMany = jest.fn(() => this.onDelete());
 
-  private insert(row: Partial<Row> & { organizationId: string; apptivoId: string }): Row {
-    if (this.rows.some((r) => r.organizationId === row.organizationId && r.apptivoId === row.apptivoId)) {
+  private insert(row: Partial<Row> & { organizationId: string; apptivoId: string | null }): Row {
+    if (row.apptivoId !== null && this.rows.some((r) => r.organizationId === row.organizationId && r.apptivoId === row.apptivoId)) {
       throw new Error(`${this.prefix}: unique constraint failed on (organizationId, apptivoId)`);
     }
     const now = new Date();
@@ -110,7 +113,7 @@ export class FakeApptivoSyncPrisma {
     () => {
       throw new Error('Delete called on projects during sync');
     },
-    { customerName: '', quoteSubject: null, apptivoQuoteRefId: null, displayName: null, clientLocked: false },
+    { customerName: '', quoteSubject: null, apptivoQuoteRefId: null, displayName: null, clientLocked: false, archivedManually: false, isClosed: false },
   );
 
   /** project ids referenced by timesheet entries (onDelete: Restrict in the real schema). */
