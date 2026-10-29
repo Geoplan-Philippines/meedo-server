@@ -20,6 +20,7 @@ const mockPrismaService = {
     create: jest.fn(),
     findMany: jest.fn(),
     count: jest.fn(),
+    groupBy: jest.fn(),
   },
 };
 
@@ -38,14 +39,16 @@ describe('LeadsService', () => {
     jest.resetAllMocks();
   });
 
-  describe('createLead', () => {
-    const dto = {
-      firstName: 'Juan',
-      lastName: 'Dela Cruz',
-      email: 'juan@example.com',
-      message: 'I am interested',
-    };
+  it('returns all four existing lead statuses and a matching total', async () => {
+    mockPrismaService.lead.groupBy.mockResolvedValue([
+      { status: 'PENDING', _count: { _all: 2 } },
+      { status: 'QUALIFIED', _count: { _all: 1 } },
+    ]);
+    await expect(service.getStats()).resolves.toEqual({ total: 3, pending: 2, contacted: 0, qualified: 1, lost: 0 });
+    expect(mockPrismaService.lead.groupBy).toHaveBeenCalledWith({ by: ['status'], _count: { _all: true } });
+  });
 
+  describe('createLead', () => {
     it('propagates error when create fails', async () => {
       mockPrismaService.lead.create.mockRejectedValue(new Error('Unique constraint failed'));
 

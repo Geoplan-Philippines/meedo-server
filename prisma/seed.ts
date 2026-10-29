@@ -1,12 +1,9 @@
 import { auth } from '../src/core/auth/auth';
 import { prisma } from '../src/core/database/prisma.client';
+import { assertSafeSeedTarget } from './seed-target';
 
 const ORG_NAME = 'Geoplan Philippines Inc.';
 const ORG_SLUG = 'geoplan-philippines-inc';
-
-const ADMIN_NAME = 'Admin';
-const ADMIN_EMAIL = 'admin@geoplanph.com';
-const ADMIN_PASSWORD = 'admin123';
 
 const MEMBER_NAME = 'Timesheet Member';
 const MEMBER_EMAIL = 'member@geoplanph.com';
@@ -63,6 +60,7 @@ async function seedOrgUser(
 }
 
 async function main() {
+  assertSafeSeedTarget(process.env);
   console.log('Seeding...');
 
   const org = await prisma.organization.upsert({
@@ -177,10 +175,6 @@ async function main() {
   console.log('Timesheet demo projects seeded');
 
   console.log('Done.');
-  console.log(`Admin login -> ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
-  console.log(`Member login -> ${MEMBER_EMAIL} / ${MEMBER_PASSWORD}`);
-  console.log(`Admin login -> admin@geoplanph.com / admin123`);
-  console.log(`User login  -> user@geoplanph.com / user123456`);
 }
 
 main()

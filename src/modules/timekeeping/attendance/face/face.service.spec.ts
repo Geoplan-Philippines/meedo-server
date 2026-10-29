@@ -70,6 +70,7 @@ describe('FaceService', () => {
         userId: 'user-uuid-1',
         organizationId: 'org-geo',
         status: 'ACTIVE',
+        isArchived: false,
       });
 
       expect(mockPrismaService.faceProfile.create).toHaveBeenCalled();
