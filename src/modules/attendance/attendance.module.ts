@@ -1,3 +1,4 @@
+import { AttendanceUpdatesGuard } from './attendance-updates.guard';
 import { Module } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
 import { AttendanceController } from './attendance.controller';
@@ -15,6 +16,7 @@ import { AttendanceBoardService } from './board/attendance-board.service';
   providers: [
     AttendanceService,
     AttendanceUpdatesService,
+    AttendanceUpdatesGuard,
     AttendanceScheduler,
     HikvisionClient,
     BiometricSyncService,

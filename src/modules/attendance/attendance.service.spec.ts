@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AttendanceEventType, AttendanceOrigin, AttendanceSource } from '@prisma/client';
 
+import { AttendanceUpdatesService } from './attendance-updates.service';
 import { AttendanceService } from './attendance.service';
 import { PrismaService } from '../../core/database/prisma.service';
 import { ScheduleResolverService } from '../settings/attendance/assignments/resolver/schedule-resolver.service';
@@ -67,6 +68,7 @@ describe('AttendanceService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AttendanceService,
+        { provide: AttendanceUpdatesService, useValue: { notifyEmployees: jest.fn() } },
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: ScheduleResolverService, useValue: mockScheduleResolver },
       ],

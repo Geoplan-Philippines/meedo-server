@@ -1,12 +1,20 @@
+import { SetMetadata } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AttendanceEventType } from '@prisma/client';
 
 import { AttendanceController } from './attendance.controller';
 import { AttendanceService } from './attendance.service';
 import { BiometricSyncService } from './biometrics/biometric-sync.service';
+import { AttendanceUpdatesGuard } from './attendance-updates.guard';
 import { AttendanceUpdatesService } from './attendance-updates.service';
 
+jest.mock('@thallesp/nestjs-better-auth', () => ({
+  ...jest.requireActual<Record<string, unknown>>('@thallesp/nestjs-better-auth'),
+  OptionalAuth: () => SetMetadata('OPTIONAL', true),
+}));
+
 const mockAttendanceService = {
+  resolveUpdateScope: jest.fn(),
   recordAttendanceEvent: jest.fn(),
   getMyAttendanceEvents: jest.fn(),
   getDailyAttendance: jest.fn(),
@@ -22,9 +30,9 @@ describe('AttendanceController', () => {
       providers: [
         { provide: AttendanceService, useValue: mockAttendanceService },
         { provide: BiometricSyncService, useValue: {} },
-        { provide: AttendanceUpdatesService, useValue: { notify: jest.fn() } },
+        { provide: AttendanceUpdatesService, useValue: { stream: jest.fn() } },
       ],
-    }).compile();
+    }).overrideGuard(AttendanceUpdatesGuard).useValue({ canActivate: () => true }).compile();
 
     controller = module.get<AttendanceController>(AttendanceController);
     jest.resetAllMocks();
@@ -39,6 +47,10 @@ describe('AttendanceController', () => {
 
     expect(mockAttendanceService.recordAttendanceEvent).toHaveBeenCalledWith('employee-1', body);
     expect(result).toBe(event);
+  });
+
+  it('does not open a stream without a resolved scope', () => {
+    expect(() => controller.attendanceUpdateStream({})).toThrow('A signed-in organization member is required.');
   });
 
   it('scopes the daily summary to the current employee', async () => {
