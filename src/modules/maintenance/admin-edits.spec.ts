@@ -152,28 +152,26 @@ describe('Admin edits of projects and clients', () => {
       expect(prisma.project.update).toHaveBeenCalledWith({ where: { id: storedProject.id }, data: { displayName: null } });
     });
 
-    it('locks a hand-picked client', async () => {
+    it('audits a hand-picked client without a sync lock', async () => {
       prisma.client.findFirst.mockResolvedValue({ isArchived: false });
 
       await projects.updateProject(storedProject.id, { clientId: 'client-2' }, ORG, ADMIN_USER);
 
       expect(prisma.project.update).toHaveBeenCalledWith({
         where: { id: storedProject.id },
-        data: { clientId: 'client-2', clientLocked: true },
+        data: { clientId: 'client-2' },
       });
       expect(prisma.maintenanceAuditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
-          changes: { clientId: { from: 'client-1', to: 'client-2' }, clientLocked: { from: false, to: true } },
+          changes: { clientId: { from: 'client-1', to: 'client-2' } },
         }) as object,
       });
     });
 
-    it('hands the client back to the sync when clientLocked is cleared', async () => {
+    it('does not write the retired client lock when renaming', async () => {
       prisma.project.findFirst.mockResolvedValue({ ...storedProject, clientLocked: true });
-
-      await projects.updateProject(storedProject.id, { clientLocked: false }, ORG, ADMIN_USER);
-
-      expect(prisma.project.update).toHaveBeenCalledWith({ where: { id: storedProject.id }, data: { clientLocked: false } });
+      await projects.updateProject(storedProject.id, { displayName: 'Meedo name' }, ORG, ADMIN_USER);
+      expect(prisma.project.update).toHaveBeenCalledWith({ where: { id: storedProject.id }, data: { displayName: 'Meedo name' } });
     });
 
     it('rejects reassignment to an archived client', async () => {

@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
 import { projectVisibility, visibleProjects } from './project-visibility';
 import { CreateProjectDTO } from './dto/create-project.dto';
 import { NotificationsService } from '../../notifications/notifications.service';
@@ -11,7 +10,7 @@ import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
 import { WorkOrder, ProjectSyncCounts } from './types/project.type';
-import { APPTIVO_SYNC_TRANSACTION_OPTIONS, UNARCHIVE_DATA, archiveData } from './constants/apptivo-sync.constants';
+import { APPTIVO_SYNC_TRANSACTION_OPTIONS } from './constants/apptivo-sync.constants';
 import { ClientsService, type ClientRef } from '../clients/clients.service';
 import { fetchApptivoPages } from './utils/fetch-apptivo-pages';
 import { UpdateProjectDTO } from './dto/update-project.dto';
@@ -179,11 +178,7 @@ export class ProjectsService {
     };
   }
 
-  /**
-   * Admin edit of the shown name and the client. Setting clientId locks the client against
-   * the Apptivo sync (unless clientLocked: false is sent with it); clientLocked: false alone
-   * hands it back to the sync. Every change is written to the maintenance audit log.
-   */
+  /** Admin-owned name and client link. Every edit is audited. */
   async updateProject(
     id: string,
     dto: UpdateProjectDTO,
@@ -193,7 +188,7 @@ export class ProjectsService {
     const actorMemberId = await resolveAdminActor(this.prisma, organizationId, userId);
     const current = await this.prisma.project.findFirst({
       where: { id, organizationId },
-      select: { id: true, displayName: true, clientId: true, clientLocked: true },
+      select: { id: true, displayName: true, clientId: true },
     });
     if (!current) throw new NotFoundException('Project not found in this organization.');
 
@@ -204,7 +199,6 @@ export class ProjectsService {
     const changes = diffFields(current, {
       displayName: normalizeDisplayName(dto.displayName),
       clientId: dto.clientId,
-      clientLocked: dto.clientId !== undefined ? (dto.clientLocked ?? true) : dto.clientLocked,
     });
 
     if (Object.keys(changes).length > 0) {
@@ -231,8 +225,8 @@ export class ProjectsService {
     if (!client) throw new NotFoundException('Choose an active client in this organization.');
     return toProjectView(await this.prisma.project.create({ data: {
       organizationId, clientId: client.id, apptivoId: null, displayName: dto.name.trim(),
-      workOrderNumber: `INTERNAL-${randomUUID().slice(0, 8)}`, customerName: client.customerName,
-      status: 'Internal', total: 0, clientLocked: true,
+      workOrderNumber: null, customerName: null,
+      status: 'Internal', total: 0,
     }, include: PROJECT_INCLUDE }));
   }
 
@@ -292,7 +286,7 @@ export class ProjectsService {
     });
     if (!client) throw new NotFoundException('Client not found in this organization.');
     if (client.isArchived && clientId !== currentClientId) {
-      throw new BadRequestException('This client is archived because it no longer exists in Apptivo. Choose an active client.');
+      throw new BadRequestException('This client is archived. Choose an active client.');
     }
   }
 
@@ -311,13 +305,7 @@ export class ProjectsService {
     }, APPTIVO_SYNC_TRANSACTION_OPTIONS);
   }
 
-  /**
-   * Upserts projects by (organizationId, apptivoId), archives projects Apptivo no longer
-   * returns and un-archives ones that reappear. Never deletes, so tickets, SLA policies and
-   * timesheet entries keep their project. Unmatched customers never clear an existing link.
-   * Admin-owned fields are left alone: displayName is never written, and a clientLocked
-   * project keeps the client an admin set by hand.
-   */
+  /** Add source rows and refresh reference fields only. All Meedo state stays untouched. */
   private async reconcileProjects(
     tx: Prisma.TransactionClient,
     organizationId: string,
@@ -327,7 +315,7 @@ export class ProjectsService {
 
     if (incoming.length === 0) {
       this.logger.warn(`Apptivo returned no valid work orders for org ${organizationId}; skipping project reconciliation.`);
-      return { synced: 0, created: 0, updated: 0, archived: 0, unarchived: 0, unmatched: 0 };
+      return { synced: 0, created: 0, updated: 0, missing: 0, archived: 0, unarchived: 0, unmatched: 0 };
     }
 
     const apptivoClientIds = [
@@ -340,13 +328,12 @@ export class ProjectsService {
 
     const toCreate: Prisma.ProjectCreateManyInput[] = [];
     let updated = 0;
-    let unarchived = 0;
+
     let unmatched = 0;
 
     for (const wo of incoming) {
       const project = normalizeProject(wo, clientMap);
       const current = existingByApptivoId.get(project.apptivoId);
-      if (current?.archivedManually) continue;
 
       if (!project.clientId) {
         unmatched++;
@@ -360,30 +347,28 @@ export class ProjectsService {
 
       const changes = diffProject(current, {
         ...project,
-        clientId: current.clientLocked ? current.clientId : (project.clientId ?? current.clientId),
         customerName: project.customerName ?? current.customerName,
       });
-      if (!changes && !current.isArchived) continue;
+      if (!changes && !current.missingFromApptivoAt) continue;
 
       await tx.project.update({
         where: { id: current.id },
-        data: { ...changes, ...(current.isArchived ? UNARCHIVE_DATA : {}) },
+        data: { ...changes, missingFromApptivoAt: null },
       });
 
       if (changes) updated++;
-      if (current.isArchived) unarchived++;
     }
 
     if (toCreate.length > 0) {
       await tx.project.createMany({ data: toCreate });
     }
 
-    const { count: archived } = await tx.project.updateMany({
-      where: { organizationId, ...APPTIVO_SOURCE_FILTER, isArchived: false, apptivoId: { not: null, notIn: incoming.map((wo) => String(wo.id).trim()) } },
-      data: archiveData(),
+    const { count: missing } = await tx.project.updateMany({
+      where: { organizationId, ...APPTIVO_SOURCE_FILTER, missingFromApptivoAt: null, apptivoId: { not: null, notIn: incoming.map((wo) => String(wo.id).trim()) } },
+      data: { missingFromApptivoAt: new Date() },
     });
 
-    return { synced: incoming.length, created: toCreate.length, updated, archived, unarchived, unmatched };
+    return { synced: incoming.length, created: toCreate.length, updated, missing, archived: 0, unarchived: 0, unmatched };
   }
 
   private logUnmatchedWorkOrder(wo: WorkOrder, existingClientId: string | null): void {
@@ -407,7 +392,7 @@ const PROJECT_SYNC_SELECT = {
   total: true,
   reportedDate: true,
   clientId: true,
-  clientLocked: true,
+  missingFromApptivoAt: true,
   customerName: true,
   quoteSubject: true,
   apptivoQuoteRefId: true,
@@ -434,16 +419,10 @@ function dedupeWorkOrders(workOrders: WorkOrder[]): WorkOrder[] {
 }
 
 /** Returns only the synced fields that differ from the stored row, or null when nothing changed. */
-function diffProject(current: ProjectSyncSnapshot, next: NormalizedProject & { customerName: string }): Prisma.ProjectUncheckedUpdateInput | null {
+function diffProject(current: ProjectSyncSnapshot, next: NormalizedProject): Prisma.ProjectUncheckedUpdateInput | null {
   const changes: Prisma.ProjectUncheckedUpdateInput = {};
 
   if (next.workOrderNumber !== current.workOrderNumber) changes.workOrderNumber = next.workOrderNumber;
-  if (next.status !== current.status) changes.status = next.status;
-  if (next.total !== current.total) changes.total = next.total;
-  if ((next.reportedDate?.getTime() ?? null) !== (current.reportedDate?.getTime() ?? null)) {
-    changes.reportedDate = next.reportedDate;
-  }
-  if (next.clientId !== current.clientId) changes.clientId = next.clientId;
   if (next.customerName !== current.customerName) changes.customerName = next.customerName;
   if (next.quoteSubject !== current.quoteSubject) changes.quoteSubject = next.quoteSubject;
   if (next.apptivoQuoteRefId !== current.apptivoQuoteRefId) changes.apptivoQuoteRefId = next.apptivoQuoteRefId;

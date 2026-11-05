@@ -10,10 +10,13 @@ export class SyncCountsDTO {
   @ApiProperty({ description: 'Existing rows whose synced fields changed' })
   updated!: number;
 
-  @ApiProperty({ description: 'Rows archived because Apptivo no longer returns them' })
+  @ApiProperty({ description: 'Rows newly marked missing from Apptivo; no archive state is changed' })
+  missing!: number;
+
+  @ApiProperty({ description: 'Compatibility counter, always zero: sync never archives' })
   archived!: number;
 
-  @ApiProperty({ description: 'Archived rows that reappeared in Apptivo' })
+  @ApiProperty({ description: 'Compatibility counter, always zero: sync never restores' })
   unarchived!: number;
 }
 

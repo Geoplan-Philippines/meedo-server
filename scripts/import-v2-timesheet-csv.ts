@@ -54,7 +54,7 @@ async function main() {
 
   const projects = await prisma.project.findMany({
     where: { organizationId: organization.id },
-    select: { id: true, workOrderNumber: true, client: { select: { customerName: true } } },
+    select: { id: true, displayName: true, workOrderNumber: true, client: { select: { displayName: true, customerName: true } } },
   });
 
   const ready: Array<{
@@ -228,17 +228,19 @@ function parseLegacyDate(value: string, year: number): Date {
 }
 
 function findProject(
-  projects: Array<{ id: string; workOrderNumber: string; client: { customerName: string } | null }>,
+  projects: Array<{ id: string; displayName: string | null; workOrderNumber: string | null; client: { displayName: string | null; customerName: string | null } | null }>,
   projectLabel: string,
   tagLabel: string,
 ) {
   const normalizedProject = normalize(projectLabel);
   const normalizedTag = normalize(tagLabel);
 
-  const name = (p: { client: { customerName: string } | null }) => p.client?.customerName ?? '';
+  const name = (p: { client: { displayName: string | null; customerName: string | null } | null }) => p.client?.displayName ?? p.client?.customerName ?? '';
+  const matchesLabel = (project: typeof projects[number], value: string) =>
+    [project.workOrderNumber, project.displayName].some(label => label !== null && normalize(label) === value);
 
-  return projects.find((project) => normalize(project.workOrderNumber) === normalizedTag)
-    ?? projects.find((project) => normalize(project.workOrderNumber) === normalizedProject)
+  return projects.find((project) => matchesLabel(project, normalizedTag))
+    ?? projects.find((project) => matchesLabel(project, normalizedProject))
     ?? projects.find((project) => normalize(name(project)) === normalizedProject)
     ?? projects.find((project) => normalize(name(project)).includes(normalizedProject));
 }

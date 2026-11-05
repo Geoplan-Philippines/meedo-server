@@ -7,7 +7,7 @@ import { ProjectsService } from './projects.service';
 import { projectVisibility, visibleProjects } from './project-visibility';
 
 describe('Internal projects, membership and state notifications', () => {
-  const project = { id: 'example-project', clientId: 'example-client', organizationId: 'example-org', apptivoId: null, displayName: 'Example internal project', quoteSubject: null, workOrderNumber: 'INTERNAL-example', client: null, isArchived: false, isClosed: false };
+  const project = { id: 'example-project', clientId: 'example-client', organizationId: 'example-org', apptivoId: null, displayName: 'Example internal project', quoteSubject: null, workOrderNumber: null, client: null, isArchived: false, isClosed: false };
   const prisma = {
     member: { findUnique: jest.fn(), findMany: jest.fn() },
     project: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn(), count: jest.fn() },
@@ -26,7 +26,7 @@ describe('Internal projects, membership and state notifications', () => {
   });
   it('creates internal projects with a required active client, no source ID and no implicit members', async () => {
     await service.createProject({ name: ' Example internal project ', clientId: project.clientId }, project.organizationId, 'example-admin');
-    expect(prisma.project.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ apptivoId: null, organizationId: project.organizationId, clientId: project.clientId, clientLocked: true, displayName: project.displayName }) as unknown }));
+    expect(prisma.project.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ apptivoId: null, organizationId: project.organizationId, clientId: project.clientId, workOrderNumber: null, customerName: null, displayName: project.displayName }) as unknown }));
     expect(prisma.projectMember.createMany).not.toHaveBeenCalled();
   });
   it.each(['owner', 'admin', 'member'])('uses project membership visibility for %s', async role => {
@@ -65,10 +65,10 @@ describe('Internal projects, membership and state notifications', () => {
 });
 
 describe('Apptivo source boundaries', () => {
-  it('preserves null-ID internal rows and legacy seed rows, and keeps manual archives archived and untouched', async () => {
+  it('preserves null-ID internal rows and legacy seed rows, and refreshes only reference fields on manually archived source rows', async () => {
     const fake = new FakeApptivoSyncPrisma(); const org = 'example-org';
     const [internalClient, seedClient] = fake.client.seed([{ organizationId: org, apptivoId: null, customerName: 'Example internal' }, { organizationId: org, apptivoId: 'seed-client-001', customerName: 'Example seed' }]);
-    const [internal, seed, manual] = fake.project.seed([
+    const [internal, seed] = fake.project.seed([
       { organizationId: org, apptivoId: null, workOrderNumber: 'Example internal', clientId: internalClient.id },
       { organizationId: org, apptivoId: 'local-timesheet-wo-001', workOrderNumber: 'Example seed', clientId: seedClient.id },
       { organizationId: org, apptivoId: 'example-source', workOrderNumber: 'Manually retained name', isArchived: true, archivedManually: true, clientId: internalClient.id },
@@ -79,7 +79,7 @@ describe('Apptivo source boundaries', () => {
     await clients.reconcileClients(fake as unknown as import('@prisma/client').Prisma.TransactionClient, org, [{ customerId: 'example-other', customerName: 'Example source client' }]);
     const reconcile = service as unknown as { reconcileProjects(tx: unknown, org: string, orders: unknown[]): Promise<unknown> };
     await reconcile.reconcileProjects(fake, org, [{ id: 'example-source', workOrderNumber: 'Source changed', statusName: 'active', total: '1' }, { id: 'example-other-project', workOrderNumber: 'Example source work', statusName: 'active', total: '0' }]);
-    for (const row of [internalClient, seedClient, internal, seed, manual]) expect([...fake.client.rows, ...fake.project.rows].find(stored => stored.id === row.id)).toEqual(before.find(stored => stored.id === row.id));
-    expect(fake.projectByApptivoId(org, 'example-source')).toMatchObject({ isArchived: true, archivedManually: true, workOrderNumber: 'Manually retained name' });
+    for (const row of [internalClient, seedClient, internal, seed]) expect([...fake.client.rows, ...fake.project.rows].find(stored => stored.id === row.id)).toEqual(before.find(stored => stored.id === row.id));
+    expect(fake.projectByApptivoId(org, 'example-source')).toMatchObject({ isArchived: true, archivedManually: true, workOrderNumber: 'Source changed', clientId: internalClient.id });
   });
 });

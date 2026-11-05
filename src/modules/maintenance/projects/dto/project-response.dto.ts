@@ -5,8 +5,8 @@ class ProjectClientDTO {
   @ApiProperty()
   id!: string;
 
-  @ApiProperty()
-  customerName!: string;
+  @ApiProperty({ nullable: true, type: String, description: 'Apptivo reference name; null for internal rows' })
+  customerName!: string | null;
 
   @ApiProperty({ nullable: true, type: String, description: 'Admin-set name; null means the Apptivo customer name is shown' })
   displayName!: string | null;
@@ -28,11 +28,11 @@ export class ProjectResponseDTO {
   @ApiProperty({ nullable: true, type: String, description: 'Admin-set name; never written by the Apptivo sync' })
   displayName!: string | null;
 
-  @ApiProperty()
-  workOrderNumber!: string;
+  @ApiProperty({ nullable: true, type: String, description: 'Apptivo WO reference; null for internal projects' })
+  workOrderNumber!: string | null;
 
-  @ApiProperty()
-  customerName!: string;
+  @ApiProperty({ nullable: true, type: String, description: 'Apptivo reference name; null for internal rows' })
+  customerName!: string | null;
 
   @ApiProperty()
   status!: string;
@@ -52,6 +52,9 @@ export class ProjectResponseDTO {
   @ApiProperty({ nullable: true, type: String })
   apptivoId!: string | null;
 
+  @ApiProperty({ nullable: true, type: Date, description: 'First missing-from-Apptivo date; informational only' })
+  missingFromApptivoAt!: Date | null;
+
   @ApiProperty() isClosed!: boolean;
   @ApiProperty() archivedManually!: boolean;
 
@@ -61,7 +64,7 @@ export class ProjectResponseDTO {
   @ApiProperty({ nullable: true, type: String })
   clientId!: string | null;
 
-  @ApiProperty({ description: 'true when an admin set the client by hand; the Apptivo sync then leaves it alone' })
+  @ApiProperty({ deprecated: true, description: 'Retired historical field; every client link is Meedo-owned regardless of this value' })
   clientLocked!: boolean;
 
   @ApiProperty()

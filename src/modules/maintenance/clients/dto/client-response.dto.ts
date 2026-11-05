@@ -12,8 +12,11 @@ export class ClientResponseDTO {
   @ApiProperty({ nullable: true, type: String })
   apptivoId!: string | null;
 
-  @ApiProperty()
-  customerName!: string;
+  @ApiProperty({ nullable: true, type: Date, description: 'First missing-from-Apptivo date; informational only' })
+  missingFromApptivoAt!: Date | null;
+
+  @ApiProperty({ nullable: true, type: String, description: 'Apptivo reference name; null for internal rows' })
+  customerName!: string | null;
 
   @ApiProperty({ nullable: true, type: String, description: 'Admin-set name; never written by the Apptivo sync' })
   displayName!: string | null;
@@ -53,8 +56,8 @@ export class ClientOptionDTO {
   @ApiProperty({ description: 'Shown name: displayName, else customerName' })
   name!: string;
 
-  @ApiProperty()
-  customerName!: string;
+  @ApiProperty({ nullable: true, type: String, description: 'Apptivo reference name; null for internal rows' })
+  customerName!: string | null;
 
   @ApiProperty()
   isArchived!: boolean;

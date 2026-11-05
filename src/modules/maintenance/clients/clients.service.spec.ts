@@ -173,7 +173,7 @@ describe('ClientsService', () => {
 
       const result = await syncService.syncClientsFromApptivo(ORG);
 
-      expect(result).toEqual({ synced: 1, created: 1, updated: 0, archived: 0, unarchived: 0 });
+      expect(result).toEqual({ synced: 1, created: 1, updated: 0, missing: 0, archived: 0, unarchived: 0 });
       expect(fake.clientByApptivoId(ORG, '21463370742')).toMatchObject({
         customerName: 'Orica Philippines Inc.',
         isArchived: false,
@@ -187,7 +187,7 @@ describe('ClientsService', () => {
 
       const result = await syncService.syncClientsFromApptivo(ORG);
 
-      expect(result).toEqual({ synced: 1, created: 0, updated: 1, archived: 0, unarchived: 0 });
+      expect(result).toEqual({ synced: 1, created: 0, updated: 1, missing: 0, archived: 0, unarchived: 0 });
       expect(fake.client.rows).toHaveLength(1);
       expect(fake.clientByApptivoId(ORG, 'c-1')).toMatchObject({ id: existing.id, customerName: 'New Name Inc.' });
     });
@@ -203,7 +203,7 @@ describe('ClientsService', () => {
       expect(result.created).toBe(2);
     });
 
-    it('archives clients missing from Apptivo instead of deleting them', async () => {
+    it('marks missing clients without archiving or deleting them', async () => {
       fake.client.seed([
         { organizationId: ORG, apptivoId: 'c-1', customerName: 'Kept' },
         { organizationId: ORG, apptivoId: 'c-gone', customerName: 'Gone' },
@@ -213,13 +213,13 @@ describe('ClientsService', () => {
 
       const result = await syncService.syncClientsFromApptivo(ORG);
 
-      expect(result).toEqual({ synced: 1, created: 0, updated: 0, archived: 1, unarchived: 0 });
-      expect(fake.clientByApptivoId(ORG, 'c-gone')).toMatchObject({ isArchived: true, archivedAt: expect.any(Date) as Date });
+      expect(result).toEqual({ synced: 1, created: 0, updated: 0, missing: 1, archived: 0, unarchived: 0 });
+      expect(fake.clientByApptivoId(ORG, 'c-gone')).toMatchObject({ isArchived: false, archivedAt: null, missingFromApptivoAt: expect.any(Date) as Date });
       expect(fake.clientByApptivoId('other-org', 'c-other')).toMatchObject({ isArchived: false });
       expect(fake.client.rows).toHaveLength(3);
     });
 
-    it('un-archives a client that reappears', async () => {
+    it('keeps an archived client archived when it reappears', async () => {
       fake.client.seed([
         { organizationId: ORG, apptivoId: 'c-1', customerName: 'Back', isArchived: true, archivedAt: new Date() },
       ]);
@@ -227,8 +227,8 @@ describe('ClientsService', () => {
 
       const result = await syncService.syncClientsFromApptivo(ORG);
 
-      expect(result).toEqual({ synced: 1, created: 0, updated: 0, archived: 0, unarchived: 1 });
-      expect(fake.clientByApptivoId(ORG, 'c-1')).toMatchObject({ isArchived: false, archivedAt: null });
+      expect(result).toEqual({ synced: 1, created: 0, updated: 0, missing: 0, archived: 0, unarchived: 0 });
+      expect(fake.clientByApptivoId(ORG, 'c-1')).toMatchObject({ isArchived: true, archivedAt: expect.any(Date) as Date, missingFromApptivoAt: null });
     });
 
     it('does not write unchanged active clients', async () => {
@@ -237,7 +237,7 @@ describe('ClientsService', () => {
 
       const result = await syncService.syncClientsFromApptivo(ORG);
 
-      expect(result).toEqual({ synced: 1, created: 0, updated: 0, archived: 0, unarchived: 0 });
+      expect(result).toEqual({ synced: 1, created: 0, updated: 0, missing: 0, archived: 0, unarchived: 0 });
       expect(fake.client.update).not.toHaveBeenCalled();
     });
 
@@ -264,7 +264,7 @@ describe('ClientsService', () => {
 
       const result = await syncService.syncClientsFromApptivo(ORG);
 
-      expect(result).toMatchObject({ created: 0, updated: 0, archived: 0 });
+      expect(result).toMatchObject({ created: 0, updated: 0, missing: 0, archived: 0 });
       expect(fake.clientByApptivoId(ORG, 'c-1')).toMatchObject({ customerName: 'Known', isArchived: false });
     });
 
@@ -274,7 +274,7 @@ describe('ClientsService', () => {
 
       const result = await syncService.syncClientsFromApptivo(ORG);
 
-      expect(result).toEqual({ synced: 0, created: 0, updated: 0, archived: 0, unarchived: 0 });
+      expect(result).toEqual({ synced: 0, created: 0, updated: 0, missing: 0, archived: 0, unarchived: 0 });
       expect(fake.clientByApptivoId(ORG, 'c-1')).toMatchObject({ isArchived: false });
     });
 

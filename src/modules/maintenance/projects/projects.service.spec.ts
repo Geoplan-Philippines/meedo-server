@@ -268,10 +268,11 @@ describe('ProjectsService', () => {
         synced: 1,
         created: 1,
         updated: 0,
+        missing: 0,
         archived: 0,
         unarchived: 0,
         unmatched: 0,
-        clients: { synced: 1, created: 1, updated: 0, archived: 0, unarchived: 0 },
+        clients: { synced: 1, created: 1, updated: 0, missing: 0, archived: 0, unarchived: 0 },
       });
       expect(fake.$transaction).toHaveBeenCalledTimes(1);
     });
@@ -294,7 +295,7 @@ describe('ProjectsService', () => {
       expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ clientId: client.id, isArchived: false });
     });
 
-    it('archives a work order missing from Apptivo instead of deleting it, even with timesheet entries', async () => {
+    it('marks a missing work order without archiving it, preserving timesheet entries', async () => {
       const [client] = fake.client.seed([{ organizationId: ORG, apptivoId: 'cust-1', customerName: 'Clark PH' }]);
       const [gone] = fake.project.seed([{ organizationId: ORG, apptivoId: 'wo-gone', workOrderNumber: 'SO-OLD', status: 'active', total: 5, reportedDate: null, clientId: client.id }]);
       fake.timesheetProjectIds.add(gone.id);
@@ -302,21 +303,21 @@ describe('ProjectsService', () => {
 
       const result = await syncService.syncWorkOrdersFromApptivo(ORG);
 
-      expect(result).toMatchObject({ created: 1, archived: 1 });
+      expect(result).toMatchObject({ created: 1, archived: 0, missing: 1 });
       const archived = fake.projectByApptivoId(ORG, 'wo-gone');
-      expect(archived).toMatchObject({ id: gone.id, clientId: client.id, isArchived: true, archivedAt: expect.any(Date) as Date });
+      expect(archived).toMatchObject({ id: gone.id, clientId: client.id, isArchived: false, archivedAt: null, missingFromApptivoAt: expect.any(Date) as Date });
       expect(fake.project.rows.map((p) => p.id)).toEqual(expect.arrayContaining([...fake.timesheetProjectIds]));
     });
 
-    it('un-archives a work order that comes back', async () => {
+    it('does not restore an archived work order that comes back', async () => {
       const [client] = fake.client.seed([{ organizationId: ORG, apptivoId: 'cust-1', customerName: 'Clark PH' }]);
       const [returning] = fake.project.seed([{ organizationId: ORG, apptivoId: 'wo-1', workOrderNumber: 'SO-2026-1111', status: 'active', total: 1000, reportedDate: new Date('2026-01-01'), clientId: client.id, customerName: 'Clark PH', isArchived: true, archivedAt: new Date('2026-05-01') }]);
       mockWorkOrdersResponse([workOrder()]);
 
       const result = await syncService.syncWorkOrdersFromApptivo(ORG);
 
-      expect(result).toMatchObject({ created: 0, updated: 0, unarchived: 1, archived: 0 });
-      expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ id: returning.id, isArchived: false, archivedAt: null });
+      expect(result).toMatchObject({ created: 0, updated: 0, unarchived: 0, archived: 0 });
+      expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ id: returning.id, isArchived: true, archivedAt: new Date('2026-05-01') });
     });
 
     it('stores an unmatched work order with a null client and logs it', async () => {
@@ -338,7 +339,7 @@ describe('ProjectsService', () => {
       const result = await syncService.syncWorkOrdersFromApptivo(ORG);
 
       expect(result).toMatchObject({ unmatched: 1, updated: 1 });
-      expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ clientId: client.id, status: 'closed' });
+      expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ clientId: client.id, status: 'active' });
     });
 
     it('leaves no partial client changes when the project step fails', async () => {
@@ -379,7 +380,7 @@ describe('ProjectsService', () => {
 
       const result = await syncService.syncWorkOrdersFromApptivo(ORG);
 
-      expect(result).toMatchObject({ created: 0, updated: 0, archived: 0, unarchived: 0 });
+      expect(result).toMatchObject({ created: 0, updated: 0, missing: 0, archived: 0, unarchived: 0 });
       expect(fake.project.update).not.toHaveBeenCalled();
     });
 
@@ -418,11 +419,11 @@ describe('ProjectsService', () => {
 
         await syncService.syncWorkOrdersFromApptivo(ORG);
 
-        expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ clientId: handPicked.id, clientLocked: true, status: 'closed' });
+        expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ clientId: handPicked.id, clientLocked: true, status: 'active' });
         expect(apptivoClient.id).not.toBe(handPicked.id);
       });
 
-      it('lets the sync set the client again once clientLocked is cleared', async () => {
+      it('preserves client links even when the retired clientLocked flag is false', async () => {
         const [apptivoClient, handPicked] = fake.client.seed([
           { organizationId: ORG, apptivoId: 'cust-1', customerName: 'Clark PH' },
           { organizationId: ORG, apptivoId: 'cust-2', customerName: 'Denso PH' },
@@ -436,7 +437,8 @@ describe('ProjectsService', () => {
 
         await syncService.syncWorkOrdersFromApptivo(ORG);
 
-        expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ clientId: apptivoClient.id });
+        expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ clientId: handPicked.id });
+        expect(handPicked.id).not.toBe(apptivoClient.id);
       });
     });
 
@@ -480,7 +482,7 @@ describe('ProjectsService', () => {
 
         await syncService.syncWorkOrdersFromApptivo(ORG);
 
-        expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ customerName: 'Known Name', status: 'closed' });
+        expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({ customerName: 'Known Name', status: 'active' });
       });
 
       it('stores an empty name for a new unmatched work order without a name', async () => {
@@ -531,7 +533,7 @@ describe('ProjectsService', () => {
         expect(result).toMatchObject({ created: 0, updated: 1 });
         expect(fake.project.update).toHaveBeenCalledWith({
           where: { id: stored.id },
-          data: { quoteSubject: 'Denso RTLS Dashboard Software', apptivoQuoteRefId: '21462066553' },
+          data: { quoteSubject: 'Denso RTLS Dashboard Software', apptivoQuoteRefId: '21462066553', missingFromApptivoAt: null },
         });
         expect(fake.projectByApptivoId(ORG, 'wo-1')).toMatchObject({
           id: stored.id,

@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { DISPLAY_NAME_MAX_LENGTH } from '../utils/display-name';
 
 /** Admin edits. Every field is optional; null (or a blank name) clears the value. */
@@ -16,14 +16,10 @@ export class UpdateProjectDTO {
 
   @ApiPropertyOptional({
     nullable: true,
-    description: 'Reassign to this client (null = no client). Locks the client against the sync unless clientLocked is false.',
+    description: 'Reassign to this client (null = no client). The link is always owned by Meedo.',
   })
   @IsOptional()
   @IsUUID()
   clientId?: string | null;
 
-  @ApiPropertyOptional({ description: 'false hands the client back to the Apptivo sync on its next run.' })
-  @IsOptional()
-  @IsBoolean()
-  clientLocked?: boolean;
 }

@@ -88,6 +88,7 @@ class FakeTable {
     const stored: Row = {
       id: `${this.prefix}-${++this.sequence}`,
       isArchived: false,
+      missingFromApptivoAt: null,
       archivedAt: null,
       createdAt: now,
       updatedAt: now,

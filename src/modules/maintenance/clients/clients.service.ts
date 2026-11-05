@@ -15,8 +15,6 @@ import { UpdateClientDTO } from './dto/update-client.dto';
 import { GetClientTreeQueryDTO } from './dto/get-client-tree-query.dto';
 import {
   APPTIVO_SYNC_TRANSACTION_OPTIONS,
-  UNARCHIVE_DATA,
-  archiveData,
 } from '../projects/constants/apptivo-sync.constants';
 
 const CLIENT_INCLUDE = {
@@ -35,12 +33,12 @@ export type ClientView = ClientWithCount & {
 };
 
 /** Lightweight row for client pickers. */
-export type ClientOption = { id: string; name: string; customerName: string; isArchived: boolean };
+export type ClientOption = { id: string; name: string; customerName: string | null; isArchived: boolean };
 
 /** Sidebar tree row: an active client and how many matching active projects it has. */
 export type ClientTreeNode = { id: string; name: string; projectCount: number };
 
-export type ClientRef = { id: string; customerName: string };
+export type ClientRef = { id: string; customerName: string | null };
 
 @Injectable()
 export class ClientsService {
@@ -261,28 +259,23 @@ export class ClientsService {
     );
   }
 
-  /**
-   * Upserts clients by (organizationId, apptivoId), archives clients that Apptivo no longer
-   * returns and un-archives ones that reappear. Never deletes. Runs on the caller's transaction
-   * so the project sync can include it in a single atomic unit.
-   */
+  /** Add clients and refresh reference names only; missing rows are marked, never archived. */
   async reconcileClients(tx: Prisma.TransactionClient, organizationId: string, customers: Customer[]): Promise<SyncCounts> {
     const incoming = this.indexCustomersByApptivoId(customers);
 
     if (incoming.size === 0) {
       this.logger.warn(`Apptivo returned no valid customers for org ${organizationId}; skipping client reconciliation.`);
-      return { synced: 0, created: 0, updated: 0, archived: 0, unarchived: 0 };
+      return { synced: 0, created: 0, updated: 0, missing: 0, archived: 0, unarchived: 0 };
     }
 
     const existing = await tx.client.findMany({
       where: { organizationId, ...APPTIVO_SOURCE_FILTER, apptivoId: { not: null } },
-      select: { apptivoId: true, customerName: true, isArchived: true },
+      select: { apptivoId: true, customerName: true, missingFromApptivoAt: true },
     });
     const existingByApptivoId = new Map(existing.filter(c => isApptivoSource(c.apptivoId)).map((c) => [c.apptivoId, c]));
 
     const toCreate: Prisma.ClientCreateManyInput[] = [];
     let updated = 0;
-    let unarchived = 0;
 
     for (const [apptivoId, customerName] of incoming) {
       const current = existingByApptivoId.get(apptivoId);
@@ -298,7 +291,7 @@ export class ClientsService {
 
       // A blank name from Apptivo never overwrites a known name.
       const nameChanged = customerName !== '' && customerName !== current.customerName;
-      if (!nameChanged && !current.isArchived) continue;
+      if (!nameChanged && !current.missingFromApptivoAt) continue;
 
       if (nameChanged) {
         this.logger.log(`Client ${apptivoId} (org ${organizationId}) renamed "${current.customerName}" -> "${customerName}".`);
@@ -306,23 +299,22 @@ export class ClientsService {
 
       await tx.client.update({
         where: { organizationId_apptivoId: { organizationId, apptivoId } },
-        data: { ...(nameChanged ? { customerName } : {}), ...(current.isArchived ? UNARCHIVE_DATA : {}) },
+        data: { ...(nameChanged ? { customerName } : {}), missingFromApptivoAt: null },
       });
 
       if (nameChanged) updated++;
-      if (current.isArchived) unarchived++;
     }
 
     if (toCreate.length > 0) {
       await tx.client.createMany({ data: toCreate });
     }
 
-    const { count: archived } = await tx.client.updateMany({
-      where: { organizationId, ...APPTIVO_SOURCE_FILTER, isArchived: false, apptivoId: { not: null, notIn: Array.from(incoming.keys()) } },
-      data: archiveData(),
+    const { count: missing } = await tx.client.updateMany({
+      where: { organizationId, ...APPTIVO_SOURCE_FILTER, missingFromApptivoAt: null, apptivoId: { not: null, notIn: Array.from(incoming.keys()) } },
+      data: { missingFromApptivoAt: new Date() },
     });
 
-    return { synced: incoming.size, created: toCreate.length, updated, archived, unarchived };
+    return { synced: incoming.size, created: toCreate.length, updated, missing, archived: 0, unarchived: 0 };
   }
 
   /** Maps Apptivo apptivoId -> client db id and name. Includes archived clients so existing links resolve. */
@@ -358,7 +350,7 @@ export class ClientsService {
 
   async createClient(dto: CreateClientDTO, organizationId: string, userId?: string) {
     await resolveAdminActor(this.prisma, organizationId, userId);
-    const client = await this.prisma.client.create({ data: { organizationId, apptivoId: null, customerName: dto.name.trim(), displayName: dto.name.trim() }, include: CLIENT_INCLUDE });
+    const client = await this.prisma.client.create({ data: { organizationId, apptivoId: null, customerName: null, displayName: dto.name.trim() }, include: CLIENT_INCLUDE });
     return { ...client, name: clientDisplayName(client), projectCount: 0, activeProjectCount: 0 };
   }
 }
