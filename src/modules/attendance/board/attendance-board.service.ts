@@ -75,8 +75,10 @@ export class AttendanceBoardService {
       off: 0,
     };
     let availableNow = 0;
+    let presentUnscheduled = 0;
     for (const row of rows) {
       counts[toFilter(row.status.status)] += 1;
+      if (row.status.status === 'present_unscheduled') presentUnscheduled += 1;
       if (row.available) availableNow += 1;
     }
 
@@ -84,7 +86,8 @@ export class AttendanceBoardService {
       date: toCompanyOffsetIso(dayKey).slice(0, 10),
       asOf: (asOf ?? getAttendanceDayRange(dayKey).end).toISOString(),
       isToday,
-      scheduled: counts.present + counts.late + counts.absent + counts.upcoming,
+      // Unscheduled employees who timed in count as Present but were never scheduled.
+      scheduled: counts.present - presentUnscheduled + counts.late + counts.absent + counts.upcoming,
       // A late employee still showed up, so Present counts them; Late is the subset.
       present: counts.present + counts.late,
       late: counts.late,
@@ -363,6 +366,7 @@ export class AttendanceBoardService {
 function toFilter(status: AttendanceStatus): BoardStatusFilter {
   switch (status) {
     case 'present':
+    case 'present_unscheduled':
       return 'present';
     case 'late':
       return 'late';

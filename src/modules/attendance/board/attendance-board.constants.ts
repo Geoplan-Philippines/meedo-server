@@ -12,14 +12,14 @@ export interface BoardSummary {
   isToday: boolean;
   /** Employees whose schedule has them working this day (present + absent + upcoming). */
   scheduled: number;
-  /** Everyone who showed up on a working day, including late arrivals. */
+  /** Everyone who showed up on a working day, including late arrivals and unscheduled time-ins. */
   present: number;
   /** The subset of `present` who arrived late. */
   late: number;
   absent: number;
   /** Working today but their shift isn't due yet (live view only). */
   upcoming: number;
-  /** Rest day, holiday, or no schedule resolved. */
+  /** Rest day, holiday, or no schedule resolved with no punch. */
   off: number;
   /** Every employee in the organization. */
   total: number;

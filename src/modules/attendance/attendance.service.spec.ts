@@ -254,7 +254,7 @@ describe('AttendanceService', () => {
         expect.objectContaining({ where: { employeeId: EMPLOYEE_ID }, skip: 0, take: 10 }),
       );
       expect(result.data).toMatchObject([
-        { ...record, status: { status: 'no_schedule', workedHours: 9 } },
+        { ...record, status: { status: 'present_unscheduled', workedHours: 9, lateMinutes: 0 } },
       ]);
       expect(result.meta.total).toBe(1);
     });
@@ -293,7 +293,7 @@ describe('AttendanceService', () => {
         firstIn: FIRST_IN,
         lastOut: LAST_OUT,
         billableHours: 9,
-        status: { status: 'no_schedule', workedHours: 9 },
+        status: { status: 'present_unscheduled', workedHours: 9, lateMinutes: 0 },
         events,
       });
     });
