@@ -33,6 +33,7 @@ describe('Ticket department access across service surfaces', () => {
       if (key === 'ticket') return tickets.some(t => t.id === row.ticketId && matches(t, value));
       if (key === 'relatedTicket') return tickets.some(t => t.id === row.relatedTicketId && matches(t, value));
       const filter = object(value);
+      if ('some' in filter) return Array.isArray(row[key]) && (row[key] as Row[]).some(item => matches(item, filter.some));
       if ('in' in filter) return Array.isArray(filter.in) && filter.in.includes(row[key]);
       if ('lt' in filter) return row[key] instanceof Date && row[key] < (filter.lt as Date);
       if ('is' in filter) return matches(object(row[key]), filter.is);
@@ -114,6 +115,7 @@ describe('Ticket department access across service surfaces', () => {
         deleteMany: jest.fn(),
       },
       team: { findFirst: jest.fn(() => ({ id: 'a' })) },
+      project: { findFirst: jest.fn(() => null) },
       ticketRelation: { findMany: jest.fn(() => []), createMany: jest.fn(), deleteMany: jest.fn() },
       slaPolicy: { findMany: jest.fn(() => []) },
       $transaction: jest.fn<Promise<unknown>, [(client: unknown) => unknown]>(),
@@ -194,6 +196,46 @@ describe('Ticket department access across service surfaces', () => {
       expect(list.data.map(t => t.id)).toEqual(teamId.includes('a') ? ['a-ticket'] : []);
       expect(facets.views.all).toBe(list.meta.total);
     }
+  });
+
+  it('lets a fresh assignee read only their assigned ticket without department or project membership', async () => {
+    Object.assign(tickets[1], { projectId: 'private-project', assignees: [{ memberId: 'member-empty' }],
+      project: { id: 'private-project', displayName: 'Private project', client: { displayName: 'Private client' } } });
+    const list = await service.getAllTickets(page, 'org', 'empty');
+    expect(list.data.map(ticket => ticket.id)).toEqual(['b-ticket']);
+    expect((await service.getTicketById('b-ticket', 'org', 'empty')).project).toMatchObject({
+      displayName: 'Private project', client: { displayName: 'Private client' },
+    });
+    expect((await service.getFacets({}, 'org', 'empty')).views.all).toBe(1);
+    await expect(service.getTicketById('a-ticket', 'org', 'empty')).rejects.toThrow(NotFoundException);
+    await expect(service.updateTicket('b-ticket', { title: 'Denied' }, 'org', 'empty')).rejects.toThrow(ForbiddenException);
+    await expect(service.getAllTickets({ ...page, projectId: 'private-project' }, 'org', 'empty')).rejects.toThrow(ForbiddenException);
+    await expect(service.getFacets({ projectId: 'private-project' }, 'org', 'empty')).rejects.toThrow(ForbiddenException);
+    expect(db.project.findFirst).toHaveBeenCalledWith({ where: { id: 'private-project', organizationId: 'org',
+      members: { some: { organizationId: 'org', userId: 'empty' } } }, select: { id: true } });
+    tickets[1].assignees = [];
+    await expect(service.getTicketById('b-ticket', 'org', 'empty')).rejects.toThrow(NotFoundException);
+  });
+
+  it('keeps creator ticket context after losing project membership without granting a project ticket listing', async () => {
+    Object.assign(tickets[1], { createdById: 'empty', projectId: 'private-project',
+      project: { id: 'private-project', displayName: 'Private project', client: { displayName: 'Private client' } } });
+    expect((await service.getTicketById('b-ticket', 'org', 'empty')).project?.displayName).toBe('Private project');
+    await expect(service.updateTicket('b-ticket', { projectId: null } as never, 'org', 'empty')).rejects.toThrow(ForbiddenException);
+    await expect(service.updateTicket('b-ticket', { projectId: 'different-project' }, 'org', 'empty')).rejects.toThrow(ForbiddenException);
+    expect(db.tickets.update).not.toHaveBeenCalled();
+    await expect(service.getAllTickets({ ...page, projectId: 'private-project' }, 'org', 'empty')).rejects.toThrow(ForbiddenException);
+  });
+
+  it('loads display fields rather than financial, membership, or source metadata on ticket project context', async () => {
+    await service.getAllTickets(page, 'org', 'empty');
+    const include = object(db.tickets.findMany.mock.calls[0][0].include);
+    expect(object(include.project).select).toEqual({ id: true, displayName: true, quoteSubject: true,
+      workOrderNumber: true, customerName: true, isArchived: true,
+      client: { select: { customerName: true, displayName: true } } });
+    const sql = access.sql(await access.resolve('org', 'empty'));
+    expect(sql.text).toContain('FROM ticket_assignees');
+    expect(sql.values).toContain('member-empty');
   });
 
   it('scopes nonempty status groups and board views as well as priority groups', async () => {
@@ -306,7 +348,7 @@ describe('Ticket department access across service surfaces', () => {
 
   it('provides parameterized raw SQL, including own tickets in an empty department scope, without executing it', async () => {
     const member = access.sql(await access.resolve('org', 'u'));
-    expect(member.values).toEqual(['org', 'a', 'u']);
+    expect(member.values).toEqual(['org', 'a', 'u', 'member-u']);
     expect(member.text).not.toContain("'org'");
     expect(access.sql(await access.resolve('org', 'empty')).text).toContain('created_by_id');
     expect(access.sql(await access.resolve('org', 'admin')).values).toEqual(['org']);

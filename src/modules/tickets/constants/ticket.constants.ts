@@ -24,7 +24,14 @@ export const TICKET_INCLUDE = {
   ticketStatus: true,
   category: true,
   project: {
-    include: {
+    // Display context only. Ticket access never grants project-detail access.
+    select: {
+      id: true,
+      displayName: true,
+      quoteSubject: true,
+      workOrderNumber: true,
+      customerName: true,
+      isArchived: true,
       client: { select: { customerName: true, displayName: true } },
     },
   },

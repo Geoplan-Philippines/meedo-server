@@ -54,6 +54,7 @@ export class TicketsService {
   ): Promise<PaginatedResponse<WithSla<TicketWithRelations>>> {
     const scope = await this.access.resolve(organizationId, userId);
     const { page, limit, ticketStatusId, priority, teamId, categoryId, assigneeId, projectId, search, includeArchived, view } = query;
+    if (!scope.isAdmin) await this.assertMemberProject(projectId, organizationId, scope.userId);
 
     const orderBy = this.buildOrderBy(query.sortField, query.sortOrder);
 
@@ -116,6 +117,7 @@ export class TicketsService {
   async getFacets(query: GetTicketFacetsQueryDTO, organizationId: string, userId?: string): Promise<TicketFacets> {
     const scope = await this.access.resolve(organizationId, userId);
     const { search, includeArchived, view, teamId, categoryId, assigneeId, projectId } = query;
+    if (!scope.isAdmin) await this.assertMemberProject(projectId, organizationId, scope.userId);
 
     // Context shared by every count: org + archived scope + the active search and
     // scope filters (team/category/assignee/project), so badge counts match the list.
@@ -256,7 +258,11 @@ export class TicketsService {
       }
       if (!scope.isAdmin) {
         if (existing.createdById !== scope.userId) throw new ForbiddenException('Members can edit only tickets they created.');
-        await this.assertMemberProject(data.projectId !== undefined ? data.projectId : existing.projectId, organizationId, scope.userId);
+        if (data.projectId !== undefined) {
+          // Knowing a ticket's project name does not permit changing or clearing its link.
+          await this.assertMemberProject(existing.projectId, organizationId, scope.userId);
+          if (data.projectId !== existing.projectId) await this.assertMemberProject(data.projectId, organizationId, scope.userId);
+        }
         if (data.assigneeIds?.some(memberId => memberId !== scope.memberId)) throw new ForbiddenException('Members can assign their own tickets only to themselves.');
       }
       if (scope.isAdmin || existing.teamId || (data.teamId !== undefined && data.teamId !== existing.teamId)) this.access.assertTeam(scope, data.teamId !== undefined ? data.teamId : existing.teamId);
