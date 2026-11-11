@@ -1,21 +1,22 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { Test, TestingModule } from "@nestjs/testing";
+import { NotFoundException } from "@nestjs/common";
 
-import { TicketCategoriesService } from './ticket-categories.service';
-import { PrismaService } from '../../../../core/database/prisma.service';
+import { TicketCategoriesService } from "./ticket-categories.service";
+import { PrismaService } from "../../../../core/database/prisma.service";
 
-const organizationId = 'org-geo';
+const organizationId = "org-geo";
 
 const mockTicketCategory = {
-  id: 'category-uuid-1',
-  name: 'Hardware',
-  description: 'Hardware tickets',
+  id: "category-uuid-1",
+  name: "Hardware",
+  description: "Hardware tickets",
   organizationId,
   createdAt: new Date(),
   updatedAt: new Date(),
 };
 
 const mockPrismaService = {
+  member: { findUnique: jest.fn() },
   ticketCategory: {
     create: jest.fn(),
     findFirst: jest.fn(),
@@ -23,7 +24,7 @@ const mockPrismaService = {
   },
 };
 
-describe('TicketCategoriesService', () => {
+describe("TicketCategoriesService", () => {
   let service: TicketCategoriesService;
 
   beforeEach(async () => {
@@ -36,18 +37,28 @@ describe('TicketCategoriesService', () => {
 
     service = module.get<TicketCategoriesService>(TicketCategoriesService);
     jest.resetAllMocks();
+    mockPrismaService.member.findUnique.mockResolvedValue({
+      id: "admin-member",
+      role: "admin",
+    });
   });
 
-  describe('createTicketCategory', () => {
+  describe("createTicketCategory", () => {
     const dto = {
-      name: 'Hardware',
-      description: 'Hardware tickets',
+      name: "Hardware",
+      description: "Hardware tickets",
     };
 
-    it('creates a category scoped to the current organization', async () => {
-      mockPrismaService.ticketCategory.create.mockResolvedValue(mockTicketCategory);
+    it("creates a category scoped to the current organization", async () => {
+      mockPrismaService.ticketCategory.create.mockResolvedValue(
+        mockTicketCategory,
+      );
 
-      const result = await service.createTicketCategory(dto, organizationId);
+      const result = await service.createTicketCategory(
+        dto,
+        organizationId,
+        "admin-user",
+      );
 
       expect(mockPrismaService.ticketCategory.create).toHaveBeenCalledWith({
         data: {
@@ -60,24 +71,36 @@ describe('TicketCategoriesService', () => {
     });
   });
 
-  describe('deleteTicketCategory', () => {
-    it('deletes a category that belongs to the organization', async () => {
-      mockPrismaService.ticketCategory.findFirst.mockResolvedValue({ id: 'category-uuid-1' });
-      mockPrismaService.ticketCategory.delete.mockResolvedValue(mockTicketCategory);
+  describe("deleteTicketCategory", () => {
+    it("deletes a category that belongs to the organization", async () => {
+      mockPrismaService.ticketCategory.findFirst.mockResolvedValue({
+        id: "category-uuid-1",
+      });
+      mockPrismaService.ticketCategory.delete.mockResolvedValue(
+        mockTicketCategory,
+      );
 
-      const result = await service.deleteTicketCategory('category-uuid-1', organizationId);
+      const result = await service.deleteTicketCategory(
+        "category-uuid-1",
+        organizationId,
+        "admin-user",
+      );
 
       expect(mockPrismaService.ticketCategory.delete).toHaveBeenCalledWith({
-        where: { id: 'category-uuid-1' },
+        where: { id: "category-uuid-1" },
       });
       expect(result).toEqual(mockTicketCategory);
     });
 
-    it('throws NotFoundException when the category is missing or in another org', async () => {
+    it("throws NotFoundException when the category is missing or in another org", async () => {
       mockPrismaService.ticketCategory.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.deleteTicketCategory('nonexistent-id', organizationId),
+        service.deleteTicketCategory(
+          "nonexistent-id",
+          organizationId,
+          "admin-user",
+        ),
       ).rejects.toThrow(NotFoundException);
 
       expect(mockPrismaService.ticketCategory.delete).not.toHaveBeenCalled();
