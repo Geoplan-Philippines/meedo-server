@@ -25,6 +25,7 @@ import { AttendanceSettingsModule } from './modules/settings/attendance/attendan
 import { TicketsModule } from './modules/tickets/tickets.module';
 import { SlaPoliciesModule } from './modules/sla/sla-policies.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { AttendanceModule } from './modules/attendance/attendance.module';
     TicketsModule,
     SlaPoliciesModule,
     AttendanceModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [

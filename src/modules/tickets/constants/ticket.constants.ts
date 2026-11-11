@@ -1,4 +1,8 @@
 import { Prisma, TicketPriority, TicketStatusCategory } from "@prisma/client";
+import type { TicketSla } from "../../sla/sla-state";
+
+/** A ticket response with its SLA state, calculated on read; null when no policy applies. */
+export type WithSla<T> = T & { sla: TicketSla | null };
 
 export const TICKET_NUMBER_MIN = 100000;
 export const TICKET_NUMBER_MAX = 999999;
@@ -20,8 +24,15 @@ export const TICKET_INCLUDE = {
   ticketStatus: true,
   category: true,
   project: {
-    include: {
-      client: { select: { customerName: true } },
+    // Display context only. Ticket access never grants project-detail access.
+    select: {
+      id: true,
+      displayName: true,
+      quoteSubject: true,
+      workOrderNumber: true,
+      customerName: true,
+      isArchived: true,
+      client: { select: { customerName: true, displayName: true } },
     },
   },
   team: true,
@@ -97,7 +108,7 @@ export const ACTIVITY_INCLUDE = {
 
 export type ActivityWithActor = Prisma.TicketActivityGetPayload<{ include: typeof ACTIVITY_INCLUDE }>;
 
-export const TICKET_SORTABLE_FIELDS = ['title', 'priority', 'dueDate', 'createdAt', 'ticketNumber'] as const;
+export const TICKET_SORTABLE_FIELDS = ['title', 'priority', 'dueDate', 'createdAt', 'ticketNumber', 'board'] as const;
 export type TicketSortField = (typeof TICKET_SORTABLE_FIELDS)[number];
 
 export interface TicketStats {
@@ -124,6 +135,7 @@ export const TICKET_VIEW_CATEGORIES: Record<Exclude<TicketView, 'all'>, TicketSt
 
 /** Faceted counts powering the view tabs and the filter menu badges. */
 export interface TicketFacets {
+  noStatusCount: number;
   views: Record<TicketView, number>;
   statuses: { ticketStatusId: string; count: number }[];
   priorities: { priority: TicketPriority; count: number }[];

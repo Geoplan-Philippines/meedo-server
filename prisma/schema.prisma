@@ -25,6 +25,10 @@ model User {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   accounts                      Account[]
+  createdTickets                Tickets[]                 @relation("TicketCreator")
+  projectMemberships            ProjectMember[]
+  notifications                 Notification[]            @relation("NotificationRecipient")
+  actedNotifications            Notification[]            @relation("NotificationActor")
   attendanceEvents              AttendanceEvent[]
   attendances                   Attendance[]
   faceProfiles                  FaceProfile[]
@@ -125,6 +129,10 @@ model Organization {
   teamScheduleAssignments       TeamScheduleAssignment[]
   employeeScheduleAssignments   EmployeeScheduleAssignment[]
   clients                       Client[]
+  maintenanceAuditLogs          MaintenanceAuditLog[]
+  newsletterCampaigns           NewsletterCampaign[]
+  projectMembers                ProjectMember[]
+  notifications                 Notification[]
 
   @@map("organizations")
 }
@@ -188,6 +196,8 @@ model Member {
   lockedTimesheetPeriods        TimesheetPeriodLock[]     @relation("TimesheetPeriodLockedBy")
   unlockedTimesheetPeriods      TimesheetPeriodLock[]     @relation("TimesheetPeriodUnlockedBy")
   timesheetAuditLogs            TimesheetAuditLog[]       @relation("TimesheetAuditActor")
+  maintenanceAuditLogs          MaintenanceAuditLog[]
+  newsletterCampaigns           NewsletterCampaign[]
 
   @@unique([organizationId, userId])
   @@index([organizationId])
@@ -296,17 +306,55 @@ model NewsletterSubscriber {
   @@map("newsletter_subscribers")
 }
 
+enum NewsletterCampaignStatus {
+  DRAFT
+  ARCHIVED
+}
+
+model NewsletterCampaign {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                          String                    @db.VarChar(200)
+  subject                       String                    @db.VarChar(200)
+  body                          String                    @db.Text
+  status                        NewsletterCampaignStatus  @default(DRAFT)
+  createdByMemberId             String?                   @map("created_by_member_id")
+  createdByMember               Member?                   @relation(fields: [createdByMemberId], references: [id], onDelete: SetNull)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId, status])
+  @@map("newsletter_campaigns")
+}
+
 model Project {
   id                            String                    @id @default(uuid())
-  workOrderNumber               String                    @map("work_order_number")
-  customerName                  String                    @default("") @map("customer_name")
+  workOrderNumber               String?                   @map("work_order_number")
+  customerName                  String?                   @map("customer_name")
   status                        String
   total                         Float
   reportedDate                  DateTime?                 @map("reported_date")
+  // Read-only Apptivo copies refreshed on every sync: subject of the source sales quote
+  // and the work order's fromObjectRefId.
+  quoteSubject                  String?                   @map("quote_subject")
+  apptivoQuoteRefId             String?                   @map("apptivo_quote_ref_id")
+  // Admin-owned; the Apptivo sync never writes these. Shown name: displayName,
+  // else quoteSubject, else workOrderNumber. Client links always belong to Meedo.
+  displayName                   String?                   @map("display_name")
+  // Retired legacy flag, preserved for historical audits; never used by sync or API edits.
+  clientLocked                  Boolean                   @default(false) @map("client_locked")
 
-  apptivoId                     String                    @map("apptivo_id")
+  missingFromApptivoAt           DateTime?                 @map("missing_from_apptivo_at")
+  apptivoId                     String?                   @map("apptivo_id")
   organizationId                String                    @map("organization_id")
   clientId                      String?                   @map("client_id")
+
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+  isClosed                      Boolean                   @default(false) @map("is_closed")
+  archivedManually              Boolean                   @default(false) @map("archived_manually")
+  archivedAt                    DateTime?                 @map("archived_at")
 
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   client                        Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
@@ -314,6 +362,7 @@ model Project {
   tickets                       Tickets[]
   slaPolicies                   SlaPolicy[]
   timesheetEntries              TimesheetEntry[]
+  members                       ProjectMember[]
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
@@ -326,8 +375,14 @@ model Project {
 
 model Client {
   id                            String                    @id @default(uuid())
-  apptivoId                     String                    @map("apptivo_id")
-  customerName                  String                    @map("customer_name")
+  missingFromApptivoAt           DateTime?                 @map("missing_from_apptivo_at")
+  apptivoId                     String?                   @map("apptivo_id")
+  customerName                  String?                   @map("customer_name")
+  // Admin-owned; the Apptivo sync never writes it. Shown name: displayName, else customerName.
+  displayName                   String?                   @map("display_name")
+
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+  archivedAt                    DateTime?                 @map("archived_at")
 
   organizationId                String                    @map("organization_id")
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -338,9 +393,45 @@ model Client {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([organizationId, apptivoId])
-  @@unique([organizationId, customerName])
   @@index([organizationId])
   @@map("clients")
+}
+
+model ProjectMember {
+  id                            String                    @id @default(uuid())
+  projectId                     String                    @map("project_id")
+  userId                        String                    @map("user_id")
+  organizationId                String                    @map("organization_id")
+  project                       Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+
+  @@unique([projectId, userId])
+  @@index([organizationId, userId])
+  @@map("project_members")
+}
+
+model Notification {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
+  recipientUserId               String                    @map("recipient_user_id")
+  type                          String
+  title                         String                    @db.VarChar(200)
+  body                          String                    @db.Text
+  link                          String
+  entityType                    String                    @map("entity_type")
+  entityId                      String                    @map("entity_id")
+  actorUserId                   String?                   @map("actor_user_id")
+  readAt                        DateTime?                 @map("read_at")
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recipient                     User                      @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  actor                         User?                     @relation("NotificationActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([recipientUserId, readAt, createdAt])
+  @@index([organizationId])
+  @@map("notifications")
 }
 
 model Lead {
@@ -406,6 +497,9 @@ model Tickets {
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   project                       Project?                  @relation(fields: [projectId], references: [id], onDelete: SetNull)
   team                          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  createdById                   String?                   @map("created_by_id")
+  createdBy                     User?                     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  timesheetEntries              TimesheetEntry[]
   assignees                     TicketAssignee[]
   comments                      TicketComment[]
   activities                    TicketActivity[]
@@ -426,6 +520,7 @@ model Tickets {
   @@index([ticketStatusId])
   @@index([categoryId])
   @@index([projectId])
+  @@index([createdById])
   @@index([teamId])
   @@index([isArchived])
   @@unique([organizationId, ticketNumber])
@@ -505,6 +600,34 @@ enum TicketActivityType {
   RESTORED
 }
 
+enum MaintenanceAuditEntity {
+  PROJECT
+  CLIENT
+}
+
+/// Who changed which admin-owned project/client field, and when.
+/// `changes` is { field: { from, to } } for the fields that changed.
+model MaintenanceAuditLog {
+  id                            String                    @id @default(uuid())
+
+  organizationId                String                    @map("organization_id")
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  entityType                    MaintenanceAuditEntity    @map("entity_type")
+  entityId                      String                    @map("entity_id")
+
+  actorMemberId                 String?                   @map("actor_member_id")
+  actor                         Member?                   @relation(fields: [actorMemberId], references: [id], onDelete: SetNull)
+
+  changes                       Json
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+
+  @@index([organizationId, entityType, entityId])
+  @@index([actorMemberId])
+  @@map("maintenance_audit_logs")
+}
+
 model TicketComment {
   id                            String                    @id @default(uuid())
 
@@ -559,8 +682,12 @@ model TimesheetEntry {
   userId                        String                    @map("user_id")
   user                          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  projectId                     String                    @map("project_id")
-  project                       Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectId                     String?                   @map("project_id")
+  project                       Project?                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  ticketId                      String?                   @map("ticket_id")
+  ticket                        Tickets?                  @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  description                   String?                   @db.Text
 
   workDate                      DateTime                  @map("work_date")
   hours                         Float
@@ -588,6 +715,7 @@ model TimesheetEntry {
   @@index([organizationId])
   @@index([userId])
   @@index([projectId])
+  @@index([ticketId])
   @@index([organizationId, userId, workDate])
   @@index([organizationId, workDate])
   @@index([organizationId, workDate, status])

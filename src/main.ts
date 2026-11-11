@@ -32,6 +32,7 @@ async function bootstrap() {
       .setDescription('Meedo server API documentation')
       .setVersion('1.0')
       .addApiKey({ type: 'apiKey', in: 'header', name: 'x-org-id' }, 'x-org-id')
+      .addCookieAuth('better-auth.session_token')
       .build();
  
     const document = SwaggerModule.createDocument(app, config);

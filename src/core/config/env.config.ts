@@ -18,10 +18,14 @@ const schema = z.object({
   FACE_RECOGNITION_API_URL: z.string().default('http://localhost:5000'),
   FACE_RECOGNITION_API_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 
-  APPTIVO_API_RESOURCE: z.string().url().default('https://api.apptivo.com/v1/'),
+  APPTIVO_API_RESOURCE: z.string().url().default('https://api2.apptivo.com/app/dao/v6/workorders?a=getAllByAdvancedSearch'),
   APPTIVO_API_KEY: z.string().min(1),
   APPTIVO_API_ACCESS_KEY: z.string().min(1),
   APPTIVO_CUSTOMERS_API_RESOURCE: z.string().url().default('https://api2.apptivo.com/app/dao/v6/customers?a=getAll'),
+  // Max 500-record pages per Apptivo list fetch. Reaching it with records left fails the sync.
+  APPTIVO_SYNC_MAX_PAGES: z.coerce.number().int().positive().default(20),
+  APPTIVO_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  APPTIVO_REQUEST_MAX_RETRIES: z.coerce.number().int().min(0).max(2).default(2),
   CLOUDINARY_API_KEY_SECRET: z.string().min(1),
   CLOUDINARY_API_KEY: z.string().min(1),
   CLOUDINARY_CLOUD_NAME: z.string().min(1),

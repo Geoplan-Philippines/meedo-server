@@ -37,6 +37,7 @@ import {
   parseAttendanceDate,
   toCompanyOffsetIso,
 } from './utils/attendance-day.util';
+import { AttendanceUpdatesService } from './attendance-updates.service';
 import { deriveDayStatus } from './utils/attendance-status.util';
 import { ScheduleResolverService } from '../settings/attendance/assignments/resolver/schedule-resolver.service';
 
@@ -47,6 +48,7 @@ export class AttendanceService {
   constructor(
     private prisma: PrismaService,
     private scheduleResolver: ScheduleResolverService,
+    private readonly updates: AttendanceUpdatesService,
   ) {}
 
   async getRegisteredBiometricIds(): Promise<string[]> {
@@ -71,7 +73,7 @@ export class AttendanceService {
     const timestamp = this.resolveEventTimestamp(body.timestamp);
     const source = EVENT_TYPE_SOURCE[body.eventType];
 
-    return this.prisma.$transaction(async (tx) => {
+    const recorded = await this.prisma.$transaction(async (tx) => {
       const event = await tx.attendanceEvent.create({
         data: {
           employeeId,
@@ -88,6 +90,8 @@ export class AttendanceService {
 
       return event;
     });
+    await this.updates.notifyEmployees('manual', [{ employeeId, date: toCompanyOffsetIso(getAttendanceDayKey(timestamp)).slice(0, 10) }]);
+    return recorded;
   }
 
   /**
@@ -189,6 +193,7 @@ export class AttendanceService {
       date: toCompanyOffsetIso(getAttendanceDayKey(row.timestamp)).slice(0, 10),
     }));
 
+    await this.updates.notifyEmployees('biometric', affected);
     return {
       ingested: results.filter((result) => result.status === 'ingested').length,
       duplicates: results.filter((result) => result.status === 'duplicate').length,
@@ -237,6 +242,7 @@ export class AttendanceService {
       }
       if (await this.createAutoClockOut(employeeId, latest.source, cutoff, dayKey)) {
         closed += 1;
+        await this.updates.notifyEmployees('auto-clock-out', [{ employeeId, date: toCompanyOffsetIso(dayKey).slice(0, 10) }]);
       }
     }
 
@@ -563,8 +569,20 @@ export class AttendanceService {
     }
   }
 
-  private async isOrgManager(userId: string, organizationId: string): Promise<boolean> {
+  /** Scope is fixed for this connection; role changes take effect on reconnect. */
+  async resolveUpdateScope(userId: string | undefined, organizationId: string | undefined) {
+    if (!userId || !organizationId) throw new ForbiddenException('A signed-in organization member is required.');
     const member = await this.prisma.member.findFirst({
+      where: { userId, organizationId }, select: { role: true },
+    });
+    if (!member?.role) throw new ForbiddenException('A current organization membership is required.');
+    return { userId, organizationId, isManager: await this.isOrgManager(userId, organizationId, member) };
+  }
+
+  private async isOrgManager(
+    userId: string, organizationId: string, membership?: { role: string },
+  ): Promise<boolean> {
+    const member = membership ?? await this.prisma.member.findFirst({
       where: { userId, organizationId },
       select: { role: true },
     });

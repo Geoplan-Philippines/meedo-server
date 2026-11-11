@@ -4,9 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, TicketPriority } from '@prisma/client';
 
 import { PrismaService } from '../../core/database/prisma.service';
+import { assertProjectAssignable } from '../maintenance/projects/utils/assert-project-assignable';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { CreateSlaPolicyDTO } from './dto/create-sla-policy.dto';
 import { UpdateSlaPolicyDTO } from './dto/update-sla-policy.dto';
@@ -17,7 +18,10 @@ const SLA_POLICY_INCLUDE = {
     select: {
       id:              true,
       workOrderNumber: true,
-      client:          { select: { customerName: true } },
+      displayName:     true,
+      quoteSubject:    true,
+      isArchived:      true,
+      client:          { select: { customerName: true, displayName: true } },
     },
   },
 } satisfies Prisma.SlaPolicyInclude;
@@ -82,8 +86,8 @@ export class SlaPoliciesService {
     data: CreateSlaPolicyDTO,
     organizationId: string,
   ): Promise<SlaPolicyWithRelations> {
-    await this.validateProjectReference(data.projectId, organizationId);
-    await this.assertNoDuplicate(organizationId, data.projectId ?? null);
+    await this.validateProjectReference(data.projectId, organizationId, null);
+    await this.assertNoDuplicate(organizationId, data.projectId ?? null, data.priority);
 
     return this.prisma.slaPolicy.create({
       data: {
@@ -111,9 +115,19 @@ export class SlaPoliciesService {
 
     if (!existing) throw new NotFoundException('SLA policy not found.');
 
-    if (data.projectId !== undefined && data.projectId !== existing.projectId) {
-      await this.validateProjectReference(data.projectId, organizationId);
-      await this.assertNoDuplicate(organizationId, data.projectId ?? null, id);
+    const projectChanged = data.projectId !== undefined && data.projectId !== existing.projectId;
+    const priorityChanged = data.priority !== undefined && data.priority !== existing.priority;
+
+    if (projectChanged) {
+      await this.validateProjectReference(data.projectId, organizationId, existing.projectId);
+    }
+    if (projectChanged || priorityChanged) {
+      await this.assertNoDuplicate(
+        organizationId,
+        projectChanged ? (data.projectId ?? null) : existing.projectId,
+        data.priority ?? existing.priority,
+        id,
+      );
     }
 
     const firstResponse = data.firstResponseMinutes ?? existing.firstResponseMinutes;
@@ -183,26 +197,29 @@ export class SlaPoliciesService {
   private async validateProjectReference(
     projectId: string | undefined,
     organizationId: string,
+    currentProjectId: string | null,
   ): Promise<void> {
     if (!projectId) return;
 
-    const project = await this.prisma.project.findFirst({
-      where: { id: projectId, organizationId },
-      select: { id: true },
-    });
-
-    if (!project) throw new NotFoundException('Project not found in this organization.');
+    await assertProjectAssignable(this.prisma, projectId, organizationId, currentProjectId);
   }
 
+  /**
+   * One non-archived policy per organization + project + priority (project null = the
+   * org-wide default for that priority). Policy matching picks by project and priority,
+   * so two policies for the same pair would make the match ambiguous.
+   */
   private async assertNoDuplicate(
     organizationId: string,
     projectId: string | null,
+    priority: TicketPriority,
     excludeId?: string,
   ): Promise<void> {
     const conflict = await this.prisma.slaPolicy.findFirst({
       where: {
         organizationId,
         projectId,
+        priority,
         isArchived: false,
         ...(excludeId && { id: { not: excludeId } }),
       },
@@ -211,7 +228,9 @@ export class SlaPoliciesService {
 
     if (conflict) {
       throw new ConflictException(
-        'An SLA policy already exists for this organization and project.',
+        projectId
+          ? `An SLA policy for this project and ${priority} priority already exists.`
+          : `An organization-wide SLA policy for ${priority} priority already exists.`,
       );
     }
   }

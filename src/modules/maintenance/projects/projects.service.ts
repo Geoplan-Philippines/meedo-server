@@ -1,17 +1,67 @@
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { projectVisibility, visibleProjects } from './project-visibility';
+import { CreateProjectDTO } from './dto/create-project.dto';
+import { NotificationsService } from '../../notifications/notifications.service';
+import { NOTIFICATION_TYPES } from '../../notifications/notification.types';
+import { APPTIVO_SOURCE_FILTER, isApptivoSource } from './utils/apptivo-source';
+import { MaintenanceAuditEntity, Prisma, TicketPriority, TimesheetEntryStatus } from '@prisma/client';
 import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
-import { WorkOrder, ProjectInput, ApptivoResponse } from './types/project.type';
-import { ClientsService } from '../clients/clients.service';
+import { WorkOrder, ProjectSyncCounts } from './types/project.type';
+import { APPTIVO_SYNC_TRANSACTION_OPTIONS } from './constants/apptivo-sync.constants';
+import { ClientsService, type ClientRef } from '../clients/clients.service';
+import { fetchApptivoPages } from './utils/fetch-apptivo-pages';
+import { UpdateProjectDTO } from './dto/update-project.dto';
+import { clientDisplayName, normalizeDisplayName, projectDisplayName } from './utils/display-name';
+import {
+  MAINTENANCE_AUDIT_HISTORY_LIMIT,
+  MAINTENANCE_AUDIT_SELECT,
+  MaintenanceAuditEntry,
+  diffFields,
+  recordMaintenanceAudit,
+  resolveAdminActor,
+} from '../audit/maintenance-audit';
+import {
+  ACTIVE_SLA_POLICY_WHERE,
+  SLA_POLICY_RULE_SELECT,
+  SlaPolicyRule,
+  SlaPolicyScope,
+  matchSlaPolicy,
+} from '../../sla/sla-state';
 
 const PROJECT_INCLUDE = {
   client: true,
 } satisfies Prisma.ProjectInclude;
 
 export type ProjectWithClient = Prisma.ProjectGetPayload<{ include: typeof PROJECT_INCLUDE }>;
+
+/** A project as the API returns it: `name` is the shown name, and the client carries its shown name too. */
+export type ProjectView = Omit<ProjectWithClient, 'client'> & {
+  name: string;
+  client: (NonNullable<ProjectWithClient['client']> & { name: string }) | null;
+};
+
+export type EffectiveSlaPolicy = SlaPolicyRule & { scope: SlaPolicyScope };
+
+export type ProjectDetail = ProjectView & {
+  ticketCount: number;
+  openTicketCount: number;
+  timesheetHours: number;
+  approvedTimesheetHours: number;
+  /** The policy each priority would use for this project's tickets (project policy, else org default). */
+  slaPolicies: EffectiveSlaPolicy[];
+  history: MaintenanceAuditEntry[];
+};
+
+export function toProjectView(project: ProjectWithClient): ProjectView {
+  return {
+    ...project,
+    name: projectDisplayName(project),
+    client: project.client ? { ...project.client, name: clientDisplayName(project.client) } : null,
+  };
+}
 
 @Injectable()
 export class ProjectsService {
@@ -20,26 +70,52 @@ export class ProjectsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly clientsService: ClientsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
-  async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string): Promise<PaginatedResponse<ProjectWithClient>> {
-    const { page, limit, clientId } = query;
+  async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string, userId?: string): Promise<PaginatedResponse<ProjectView>> {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
+    const { page, limit, clientId, includeArchived, status, unassigned, teamId } = query;
+    const search = query.search?.trim();
 
-    const where = { organizationId, ...(clientId ? { clientId } : {}) };
+    const where: Prisma.ProjectWhereInput = {
+      organizationId,
+      ...visibleProjects(scope),
+      ...(query.includeClosed === false ? { isClosed: false } : {}),
+      ...(unassigned ? { clientId: null } : clientId ? { clientId } : {}),
+      ...(teamId ? { tickets: { some: { teamId, isArchived: false } } } : {}),
+      ...(includeArchived ? {} : { isArchived: false }),
+      ...(status ? { status } : {}),
+      ...(search
+        ? {
+            OR: [
+              { displayName: { contains: search, mode: 'insensitive' } },
+              { quoteSubject: { contains: search, mode: 'insensitive' } },
+              { workOrderNumber: { contains: search, mode: 'insensitive' } },
+              { customerName: { contains: search, mode: 'insensitive' } },
+              { client: { OR: [
+                { displayName: { contains: search, mode: 'insensitive' } },
+                { customerName: { contains: search, mode: 'insensitive' } },
+              ] } },
+            ],
+          }
+        : {}),
+    };
 
     const [projects, total] = await Promise.all([
       this.prisma.project.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        // The id tiebreak keeps pages stable when the sort field has duplicates.
+        orderBy: [{ [query.sortField ?? 'createdAt']: query.sortOrder ?? 'desc' }, { id: 'asc' }],
         include: PROJECT_INCLUDE,
       }),
       this.prisma.project.count({ where }),
     ]);
 
     return {
-      data: projects,
+      data: projects.map(toProjectView),
       meta: {
         total,
         limit,
@@ -49,128 +125,352 @@ export class ProjectsService {
     };
   }
 
-  async syncWorkOrdersFromApptivo(organizationId: string): Promise<{ synced: number; deleted: number }> {
-    await this.clientsService.syncClientsFromApptivo(organizationId);
+  /** Distinct Apptivo statuses in the organization, for the status filter. */
+  async getStatuses(organizationId: string, userId?: string): Promise<string[]> {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
+    const rows = await this.prisma.project.findMany({
+      where: { organizationId, ...visibleProjects(scope) },
+      distinct: ['status'],
+      select: { status: true },
+      orderBy: { status: 'asc' },
+    });
+    return rows.map((row) => row.status);
+  }
 
+  async getProjectDetail(id: string, organizationId: string, userId?: string): Promise<ProjectDetail> {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
+    const project = await this.prisma.project.findFirst({ where: { id, organizationId, ...visibleProjects(scope) }, include: PROJECT_INCLUDE });
+    if (!project) throw new NotFoundException('Project not found in this organization.');
+
+    const [ticketCount, openTicketCount, hours, approvedHours, policies, history] = await Promise.all([
+      this.prisma.tickets.count({ where: { projectId: id, organizationId, isArchived: false } }),
+      this.prisma.tickets.count({ where: { projectId: id, organizationId, isArchived: false, resolvedAt: null } }),
+      this.prisma.timesheetEntry.aggregate({ where: { projectId: id, organizationId }, _sum: { hours: true } }),
+      this.prisma.timesheetEntry.aggregate({
+        where: { projectId: id, organizationId, status: TimesheetEntryStatus.APPROVED },
+        _sum: { hours: true },
+      }),
+      this.prisma.slaPolicy.findMany({
+        where: { organizationId, ...ACTIVE_SLA_POLICY_WHERE, OR: [{ projectId: id }, { projectId: null }] },
+        select: SLA_POLICY_RULE_SELECT,
+      }),
+      this.prisma.maintenanceAuditLog.findMany({
+        where: { organizationId, entityType: MaintenanceAuditEntity.PROJECT, entityId: id },
+        select: MAINTENANCE_AUDIT_SELECT,
+        orderBy: { createdAt: 'desc' },
+        take: MAINTENANCE_AUDIT_HISTORY_LIMIT,
+      }),
+    ]);
+
+    const slaPolicies: EffectiveSlaPolicy[] = Object.values(TicketPriority).flatMap((priority) => {
+      const policy = matchSlaPolicy(policies, { projectId: id, priority });
+      return policy ? [{ ...policy, scope: policy.projectId ? 'project' : 'organization' }] : [];
+    });
+
+    return {
+      ...toProjectView(project),
+      ticketCount,
+      openTicketCount,
+      timesheetHours: hours._sum.hours ?? 0,
+      approvedTimesheetHours: approvedHours._sum.hours ?? 0,
+      slaPolicies,
+      history,
+    };
+  }
+
+  /** Admin-owned name and client link. Every edit is audited. */
+  async updateProject(
+    id: string,
+    dto: UpdateProjectDTO,
+    organizationId: string,
+    userId: string | undefined,
+  ): Promise<ProjectView> {
+    const actorMemberId = await resolveAdminActor(this.prisma, organizationId, userId);
+    const current = await this.prisma.project.findFirst({
+      where: { id, organizationId },
+      select: { id: true, displayName: true, clientId: true },
+    });
+    if (!current) throw new NotFoundException('Project not found in this organization.');
+
+    if (dto.clientId) {
+      await this.assertClientAssignable(dto.clientId, organizationId, current.clientId);
+    }
+
+    const changes = diffFields(current, {
+      displayName: normalizeDisplayName(dto.displayName),
+      clientId: dto.clientId,
+    });
+
+    if (Object.keys(changes).length > 0) {
+      const data = Object.fromEntries(Object.entries(changes).map(([field, change]) => [field, change.to]));
+
+      await this.prisma.$transaction(async (tx) => {
+        await tx.project.update({ where: { id }, data });
+        await recordMaintenanceAudit(tx, {
+          organizationId,
+          entityType: MaintenanceAuditEntity.PROJECT,
+          entityId: id,
+          actorMemberId,
+          changes,
+        });
+      });
+    }
+
+    return toProjectView(await this.prisma.project.findUniqueOrThrow({ where: { id }, include: PROJECT_INCLUDE }));
+  }
+
+  async createProject(dto: CreateProjectDTO, organizationId: string, userId?: string): Promise<ProjectView> {
+    await resolveAdminActor(this.prisma, organizationId, userId);
+    const client = await this.prisma.client.findFirst({ where: { id: dto.clientId, organizationId, isArchived: false } });
+    if (!client) throw new NotFoundException('Choose an active client in this organization.');
+    return toProjectView(await this.prisma.project.create({ data: {
+      organizationId, clientId: client.id, apptivoId: null, displayName: dto.name.trim(),
+      workOrderNumber: null, customerName: null,
+      status: 'Internal', total: 0,
+    }, include: PROJECT_INCLUDE }));
+  }
+
+  async setState(id: string, data: { isClosed?: boolean; isArchived?: boolean }, organizationId: string, userId?: string) {
+    await resolveAdminActor(this.prisma, organizationId, userId);
+    const current = await this.prisma.project.findFirst({ where: { id, organizationId } });
+    if (!current) throw new NotFoundException('Project not found.');
+    const updated = await this.prisma.project.update({ where: { id, organizationId }, data: {
+      ...(data.isClosed !== undefined ? { isClosed: data.isClosed } : {}),
+      ...(data.isArchived !== undefined ? { isArchived: data.isArchived, archivedManually: data.isArchived, archivedAt: data.isArchived ? new Date() : null } : {}),
+    }, include: PROJECT_INCLUDE });
+    if (data.isArchived !== undefined && data.isArchived !== current.isArchived) {
+      try {
+        const members = await this.prisma.projectMember.findMany({ where: { projectId: id, organizationId } });
+        await this.notifications.createMany(members.map(member => ({ organizationId, recipientUserId: member.userId, actorUserId: userId,
+          type: NOTIFICATION_TYPES.projectArchived, title: data.isArchived ? 'Project archived' : 'Project restored', body: projectDisplayName(updated),
+          link: `/clients/${updated.clientId ?? 'unassigned'}/projects/${id}/tickets`, entityType: 'project', entityId: id })));
+      } catch { this.logger.warn('Project archive notification failed after commit.'); }
+    }
+    return toProjectView(updated);
+  }
+
+  async listMembers(id: string, organizationId: string, userId?: string) {
+    const scope = await projectVisibility(this.prisma, organizationId, userId);
+    if (!await this.prisma.project.findFirst({ where: { id, organizationId, ...visibleProjects(scope) } })) throw new NotFoundException('Project not found.');
+    return this.prisma.projectMember.findMany({ where: { projectId: id, organizationId }, include: { user: { select: { id: true, name: true, email: true } } }, orderBy: { createdAt: 'asc' } });
+  }
+
+  async memberOptions(organizationId: string, userId?: string) {
+    await resolveAdminActor(this.prisma, organizationId, userId);
+    return this.prisma.member.findMany({ where: { organizationId }, select: { user: { select: { id: true, name: true, email: true } } } });
+  }
+
+  async changeMember(id: string, recipientUserId: string, add: boolean, organizationId: string, userId?: string) {
+    await resolveAdminActor(this.prisma, organizationId, userId);
+    const project = await this.prisma.project.findFirst({ where: { id, organizationId } });
+    if (!project) throw new NotFoundException('Project not found.');
+    if (!await this.prisma.member.findUnique({ where: { organizationId_userId: { organizationId, userId: recipientUserId } } })) throw new NotFoundException('Organization member not found.');
+    const result = add
+      ? await this.prisma.projectMember.createMany({ data: [{ projectId: id, userId: recipientUserId, organizationId }], skipDuplicates: true })
+      : await this.prisma.projectMember.deleteMany({ where: { projectId: id, userId: recipientUserId, organizationId } });
+    if (result.count) {
+      try { await this.notifications.create({ organizationId, recipientUserId, actorUserId: userId,
+        type: add ? NOTIFICATION_TYPES.projectMemberAdded : NOTIFICATION_TYPES.projectMemberRemoved,
+        title: add ? 'Added to project' : 'Removed from project', body: projectDisplayName(project),
+        link: `/clients/${project.clientId ?? 'unassigned'}/projects/${id}/tickets`, entityType: 'project', entityId: id });
+      } catch { this.logger.warn('Project membership notification failed after commit.'); }
+    }
+    return { changed: result.count > 0 };
+  }
+
+  /** The target client must be in the organization and active, unless the project already uses it. */
+  private async assertClientAssignable(clientId: string, organizationId: string, currentClientId: string | null): Promise<void> {
+    const client = await this.prisma.client.findFirst({
+      where: { id: clientId, organizationId },
+      select: { isArchived: true },
+    });
+    if (!client) throw new NotFoundException('Client not found in this organization.');
+    if (client.isArchived && clientId !== currentClientId) {
+      throw new BadRequestException('This client is archived. Choose an active client.');
+    }
+  }
+
+  /**
+   * Full Apptivo sync. Both lists are fetched first; client reconciliation and project
+   * reconciliation then run in one transaction, so any failure rolls back every change.
+   */
+  async syncWorkOrdersFromApptivo(organizationId: string): Promise<ProjectSyncCounts> {
+    const customers = await this.clientsService.fetchApptivoCustomers();
     const workOrders = await this.fetchApptivoWorkOrders();
 
-    if (workOrders.length === 0) {
-      return { synced: 0, deleted: 0 };
+    return this.prisma.$transaction(async (tx) => {
+      const clients = await this.clientsService.reconcileClients(tx, organizationId, customers);
+      const projects = await this.reconcileProjects(tx, organizationId, workOrders);
+      return { ...projects, clients };
+    }, APPTIVO_SYNC_TRANSACTION_OPTIONS);
+  }
+
+  /** Add source rows and refresh reference fields only. All Meedo state stays untouched. */
+  private async reconcileProjects(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    workOrders: WorkOrder[],
+  ): Promise<Omit<ProjectSyncCounts, 'clients'>> {
+    const incoming = dedupeWorkOrders(workOrders);
+
+    if (incoming.length === 0) {
+      this.logger.warn(`Apptivo returned no valid work orders for org ${organizationId}; skipping project reconciliation.`);
+      return { synced: 0, created: 0, updated: 0, missing: 0, archived: 0, unarchived: 0, unmatched: 0 };
     }
 
     const apptivoClientIds = [
-      ...new Set(workOrders.map((wo) => wo.customerId).filter(Boolean).map((id) => String(id).trim())),
+      ...new Set(incoming.map((wo) => wo.customerId).filter((id) => id != null).map((id) => String(id).trim())),
     ];
+    const clientMap = await this.clientsService.getClientMap(organizationId, apptivoClientIds, tx);
 
-    const clientMap = await this.clientsService.getClientMap(organizationId, apptivoClientIds);
+    const existing = await tx.project.findMany({ where: { organizationId, ...APPTIVO_SOURCE_FILTER, apptivoId: { not: null } }, select: PROJECT_SYNC_SELECT });
+    const existingByApptivoId = new Map(existing.filter(p => isApptivoSource(p.apptivoId)).map((p) => [p.apptivoId, p]));
 
-    const projects = workOrders.map((wo) => normalizeProject(wo, clientMap));
+    const toCreate: Prisma.ProjectCreateManyInput[] = [];
+    let updated = 0;
 
-    const validProjects: typeof projects = [];
-    for (let i = 0; i < projects.length; i++) {
-      if (!projects[i].clientId) {
-        this.logger.warn(
-          `Work order "${workOrders[i].workOrderNumber}" (customer: "${workOrders[i].customerName || 'unknown'}") could not be linked to a client — apptivoId "${workOrders[i].customerId}" not found in client map. Skipping project sync.`,
-        );
-      } else {
-        validProjects.push(projects[i]);
+    let unmatched = 0;
+
+    for (const wo of incoming) {
+      const project = normalizeProject(wo, clientMap);
+      const current = existingByApptivoId.get(project.apptivoId);
+
+      if (!project.clientId) {
+        unmatched++;
+        this.logUnmatchedWorkOrder(wo, current?.clientId ?? null);
       }
+
+      if (!current) {
+        toCreate.push({ ...project, customerName: project.customerName ?? '', organizationId });
+        continue;
+      }
+
+      const changes = diffProject(current, {
+        ...project,
+        customerName: project.customerName ?? current.customerName,
+      });
+      if (!changes && !current.missingFromApptivoAt) continue;
+
+      await tx.project.update({
+        where: { id: current.id },
+        data: { ...changes, missingFromApptivoAt: null },
+      });
+
+      if (changes) updated++;
     }
-    const apptivoIds = validProjects.map((p) => p.apptivoId);
 
-    const upserts = validProjects.map(({ apptivoId, clientId, ...data }) =>
-      this.prisma.project.upsert({
-        where: { organizationId_apptivoId: { organizationId, apptivoId } },
-        update: { ...data, clientId },
-        create: {
-          apptivoId,
-          ...data,
-          clientId,
-          organizationId,
-        },
-      }),
-    );
+    if (toCreate.length > 0) {
+      await tx.project.createMany({ data: toCreate });
+    }
 
-    const purge = this.prisma.project.deleteMany({
-      where: { organizationId, apptivoId: { notIn: apptivoIds } },
+    const { count: missing } = await tx.project.updateMany({
+      where: { organizationId, ...APPTIVO_SOURCE_FILTER, missingFromApptivoAt: null, apptivoId: { not: null, notIn: incoming.map((wo) => String(wo.id).trim()) } },
+      data: { missingFromApptivoAt: new Date() },
     });
 
-    const results = await this.prisma.$transaction([...upserts, purge]);
-    const deleted = (results.at(-1) as { count: number }).count;
-
-    return { synced: validProjects.length, deleted };
+    return { synced: incoming.length, created: toCreate.length, updated, missing, archived: 0, unarchived: 0, unmatched };
   }
 
-  private async fetchApptivoWorkOrders(): Promise<WorkOrder[]> {
-    const allWorkOrders: WorkOrder[] = [];
-    let startIndex = 0;
-    const batchSize = 500;
-    const maxIterations = 20;
-    let iterations = 0;
-    let hitCap = false;
+  private logUnmatchedWorkOrder(wo: WorkOrder, existingClientId: string | null): void {
+    const outcome = existingClientId ? `keeping existing client ${existingClientId}` : 'storing with no client';
+    this.logger.warn(
+      `Work order "${wo.workOrderNumber}" (apptivoId ${wo.id}, customer "${wo.customerName || 'unknown'}") has customerId "${wo.customerId ?? ''}" that matches no client; ${outcome}.`,
+    );
+  }
 
-    while (iterations < maxIterations) {
-      const url = `${env.APPTIVO_API_RESOURCE}&numRecords=${batchSize}&startIndex=${startIndex}&apiKey=${env.APPTIVO_API_KEY}&accessKey=${env.APPTIVO_API_ACCESS_KEY}`;
-
-      let payload: ApptivoResponse<WorkOrder>;
-      try {
-        const response = await fetch(url, { headers: { Accept: 'application/json' } });
-
-        if (!response.ok) {
-          throw new HttpException('Failed to fetch Apptivo data', HttpStatus.BAD_GATEWAY);
-        }
-
-        payload = await response.json();
-      } catch (error) {
-        if (error instanceof HttpException) throw error;
-        throw new HttpException('Network error while fetching Apptivo data', HttpStatus.BAD_GATEWAY);
-      }
-
-      const items = payload?.data;
-
-      if (!Array.isArray(items)) {
-        throw new HttpException('Unexpected Apptivo response structure', HttpStatus.INTERNAL_SERVER_ERROR);
-      }
-
-      if (items.length === 0) break;
-
-      allWorkOrders.push(...items);
-
-      if (items.length < batchSize) break;
-
-      startIndex += items.length;
-      iterations++;
-
-      if (iterations === maxIterations) {
-        hitCap = true;
-      }
-    }
-
-    if (hitCap) {
-      throw new HttpException(
-        'Apptivo fetch exceeded maximum page limit — sync aborted to prevent partial purge',
-        HttpStatus.BAD_GATEWAY,
-      );
-    }
-
-    return allWorkOrders;
+  private fetchApptivoWorkOrders(): Promise<WorkOrder[]> {
+    return fetchApptivoPages<WorkOrder>(env.APPTIVO_API_RESOURCE, 'work orders', this.logger);
   }
 }
 
+const PROJECT_SYNC_SELECT = {
+  archivedManually: true,
+  id: true,
+  apptivoId: true,
+  workOrderNumber: true,
+  status: true,
+  total: true,
+  reportedDate: true,
+  clientId: true,
+  missingFromApptivoAt: true,
+  customerName: true,
+  quoteSubject: true,
+  apptivoQuoteRefId: true,
+  isArchived: true,
+} satisfies Prisma.ProjectSelect;
+
+/** Work order custom attribute holding the subject of the sales quote it was converted from. */
+const QUOTE_SUBJECT_ATTRIBUTE = 'referenceField_1617259959312_729_1007781617259959312_311';
+
+type ProjectSyncSnapshot = Prisma.ProjectGetPayload<{ select: typeof PROJECT_SYNC_SELECT }>;
+
+type NormalizedProject = ReturnType<typeof normalizeProject>;
+
+/** Drops work orders without an id and keeps the first occurrence of each apptivoId. */
+function dedupeWorkOrders(workOrders: WorkOrder[]): WorkOrder[] {
+  const seen = new Set<string>();
+
+  return workOrders.filter((wo) => {
+    const apptivoId = wo.id == null ? '' : String(wo.id).trim();
+    if (!isApptivoSource(apptivoId) || seen.has(apptivoId)) return false;
+    seen.add(apptivoId);
+    return true;
+  });
+}
+
+/** Returns only the synced fields that differ from the stored row, or null when nothing changed. */
+function diffProject(current: ProjectSyncSnapshot, next: NormalizedProject): Prisma.ProjectUncheckedUpdateInput | null {
+  const changes: Prisma.ProjectUncheckedUpdateInput = {};
+
+  if (next.workOrderNumber !== current.workOrderNumber) changes.workOrderNumber = next.workOrderNumber;
+  if (next.customerName !== current.customerName) changes.customerName = next.customerName;
+  if (next.quoteSubject !== current.quoteSubject) changes.quoteSubject = next.quoteSubject;
+  if (next.apptivoQuoteRefId !== current.apptivoQuoteRefId) changes.apptivoQuoteRefId = next.apptivoQuoteRefId;
+
+  return Object.keys(changes).length > 0 ? changes : null;
+}
+
+/** Trimmed string form of an Apptivo scalar, or null when missing or blank. */
+function trimmedOrNull(value: unknown): string | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const trimmed = String(value).trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * customerName is the matched client's name, else the name stored on the work order, else
+ * null (the caller then keeps the stored value). quoteSubject and apptivoQuoteRefId are
+ * read-only copies of Apptivo values, refreshed on every sync.
+ */
 function normalizeProject(
   wo: WorkOrder,
-  clientMap: Map<string, string>,
-): ProjectInput & { apptivoId: string; clientId: string | null } {
+  clientMap: Map<string, ClientRef>,
+): {
+  apptivoId: string;
+  workOrderNumber: string;
+  status: string;
+  total: number;
+  reportedDate: Date | null;
+  clientId: string | null;
+  customerName: string | null;
+  quoteSubject: string | null;
+  apptivoQuoteRefId: string | null;
+} {
   const total = Number(wo.total);
   const date = wo.reportedDate ? new Date(wo.reportedDate) : null;
   const apptivoClientId = wo.customerId ? String(wo.customerId).trim() : null;
+  const client = apptivoClientId ? clientMap.get(apptivoClientId) : undefined;
+  const quoteSubject = wo.customAttributes?.find((a) => a.customAttributeName === QUOTE_SUBJECT_ATTRIBUTE);
 
   return {
-    apptivoId: String(wo.id),
+    apptivoId: String(wo.id).trim(),
     workOrderNumber: wo.workOrderNumber || '',
     status: wo.statusName || 'Unknown',
     total: Number.isFinite(total) ? total : 0,
     reportedDate: date && !isNaN(date.getTime()) ? date : null,
-    clientId: apptivoClientId ? (clientMap.get(apptivoClientId) ?? null) : null,
+    clientId: client?.id ?? null,
+    customerName: trimmedOrNull(client?.customerName) ?? trimmedOrNull(wo.customerName),
+    quoteSubject: trimmedOrNull(quoteSubject?.customAttributeValue),
+    apptivoQuoteRefId: trimmedOrNull(wo.fromObjectRefId),
   };
 }

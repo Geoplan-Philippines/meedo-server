@@ -1,6 +1,8 @@
-import { Body, Controller, Get, Header, MessageEvent, Param, ParseUUIDPipe, Post, Query, Sse } from '@nestjs/common';
-import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
+import { Body, Controller, ForbiddenException, Req, UseGuards, Get, Header, MessageEvent, Param, ParseUUIDPipe, Post, Query, Sse } from '@nestjs/common';
+import { AllowAnonymous, OptionalAuth } from '@thallesp/nestjs-better-auth';
 import { Observable } from 'rxjs';
+import { AttendanceUpdatesGuard } from './attendance-updates.guard';
+import type { AttendanceUpdatesRequest } from './attendance-updates.guard';
 
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -39,7 +41,6 @@ export class AttendanceController {
   ): Promise<{ ingested: number }> {
     await this.attendanceService.assertOrgManager(callerId, organizationId);
     const ingested = await this.biometricSync.sync();
-    if (ingested > 0) this.attendanceUpdates.notify('biometric');
     return { ingested };
   }
 
@@ -59,7 +60,6 @@ export class AttendanceController {
     @CurrentUser('id') employeeId: string,
   ): Promise<AttendanceEventRecord> {
     const event = await this.attendanceService.recordAttendanceEvent(employeeId, body);
-    this.attendanceUpdates.notify('manual');
     return event;
   }
 
@@ -72,7 +72,6 @@ export class AttendanceController {
       biometricsId: body.biometricsId,
       timestamp: new Date(body.timestamp),
     }]);
-    if (result.ingested > 0) this.attendanceUpdates.notify('biometric', result.affected);
     return { ingested: result.ingested };
   }
 
@@ -89,15 +88,18 @@ export class AttendanceController {
         timestamp: new Date(event.timestamp),
       })),
     );
-    if (result.ingested > 0) this.attendanceUpdates.notify('biometric', result.affected);
     const { affected: _affected, ...response } = result;
     return response;
   }
 
   @Header('X-Accel-Buffering', 'no')
+  // Resolve even a missing session here so all invalid scopes fail closed with 403.
+  @OptionalAuth()
   @Sse('updates')
-  attendanceUpdateStream(): Observable<MessageEvent> {
-    return this.attendanceUpdates.stream();
+  @UseGuards(AttendanceUpdatesGuard)
+  attendanceUpdateStream(@Req() request: AttendanceUpdatesRequest): Observable<MessageEvent> {
+    if (!request.attendanceUpdateScope) throw new ForbiddenException('A signed-in organization member is required.');
+    return this.attendanceUpdates.stream(request.attendanceUpdateScope);
   }
 
   /** Device identifiers currently mapped to users; consumed by the on-premise sync agent. */

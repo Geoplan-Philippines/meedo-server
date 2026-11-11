@@ -6,10 +6,11 @@ import { TicketCommentsService } from './comments/ticket-comments.service';
 import { TicketActivityService } from './activity/ticket-activity.service';
 import { TicketAttachmentsController } from './attachments/ticket-attachments.controller';
 import { CloudinaryModule } from '../../shared/cloudinary/cloudinary.module';
+import { TicketDepartmentAccessService } from './access/ticket-department-access.service';
 
 @Module({
   imports: [CloudinaryModule],
   controllers: [TicketsController, TicketCommentsController, TicketAttachmentsController],
-  providers: [TicketsService, TicketCommentsService, TicketActivityService],
+  providers: [TicketsService, TicketCommentsService, TicketActivityService, TicketDepartmentAccessService],
 })
 export class TicketsModule {}

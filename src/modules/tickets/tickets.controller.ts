@@ -7,7 +7,7 @@ import { CreateTicketDTO } from './dto/create-ticket.dto';
 import { UpdateTicketDTO } from './dto/update-ticket.dto';
 import { GetAllTicketsQueryDTO } from './dto/get-all-tickets-query.dto';
 import { GetTicketFacetsQueryDTO } from './dto/get-ticket-facets-query.dto';
-import { TicketDetail, TicketFacets, TicketStats, TicketWithRelations } from './constants/ticket.constants';
+import { TicketDetail, TicketFacets, TicketStats, TicketWithRelations, WithSla } from './constants/ticket.constants';
 import { CurrentOrganizationId } from '../../common/decorators/current-organization-id.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -20,14 +20,18 @@ export class TicketsController {
   async getAllTickets(
     @Query() query: GetAllTicketsQueryDTO,
     @CurrentOrganizationId() organizationId: string,
-  ): Promise<PaginatedResponse<TicketWithRelations>> {
-    return this.ticketsService.getAllTickets(query, organizationId);
+    @CurrentUser('id') userId: string,
+  ): Promise<PaginatedResponse<WithSla<TicketWithRelations>>> {
+    return this.ticketsService.getAllTickets(query, organizationId, userId);
   }
 
   @AllowAnonymous()
   @Get('stats')
-  async getTicketStats(@CurrentOrganizationId() organizationId: string): Promise<TicketStats> {
-    return this.ticketsService.getTicketStats(organizationId);
+  async getTicketStats(
+    @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') userId: string,
+  ): Promise<TicketStats> {
+    return this.ticketsService.getTicketStats(organizationId, userId);
   }
 
   @AllowAnonymous()
@@ -35,8 +39,9 @@ export class TicketsController {
   async getTicketFacets(
     @Query() query: GetTicketFacetsQueryDTO,
     @CurrentOrganizationId() organizationId: string,
+    @CurrentUser('id') userId: string,
   ): Promise<TicketFacets> {
-    return this.ticketsService.getFacets(query, organizationId);
+    return this.ticketsService.getFacets(query, organizationId, userId);
   }
 
   // Keep after the static GET routes ('stats' / 'facets') so ':id' doesn't capture them.
@@ -45,8 +50,9 @@ export class TicketsController {
   async getTicketById(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentOrganizationId() organizationId: string,
-  ): Promise<TicketDetail> {
-    return this.ticketsService.getTicketById(id, organizationId);
+    @CurrentUser('id') userId: string,
+  ): Promise<WithSla<TicketDetail>> {
+    return this.ticketsService.getTicketById(id, organizationId, userId);
   }
 
   @AllowAnonymous()
@@ -55,7 +61,7 @@ export class TicketsController {
     @Body() body: CreateTicketDTO,
     @CurrentOrganizationId() organizationId: string,
     @CurrentUser('id') userId: string,
-  ): Promise<TicketWithRelations> {
+  ): Promise<WithSla<TicketWithRelations>> {
     return this.ticketsService.createTicket(body, organizationId, userId);
   }
 
@@ -66,7 +72,7 @@ export class TicketsController {
     @Body() body: UpdateTicketDTO,
     @CurrentOrganizationId() organizationId: string,
     @CurrentUser('id') userId: string,
-  ): Promise<TicketDetail> {
+  ): Promise<WithSla<TicketDetail>> {
     return this.ticketsService.updateTicket(id, body, organizationId, userId);
   }
 }

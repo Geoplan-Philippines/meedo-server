@@ -1,6 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, TimesheetAuditAction, TimesheetEntryStatus, TimesheetWorkType } from '@prisma/client';
 import ExcelJS from 'exceljs';
+import { NotificationsService } from '../../notifications/notifications.service';
+import { NOTIFICATION_TYPES, NotificationType } from '../../notifications/notification.types';
+import { assertNotFutureWorkDate } from './timesheet-date';
+import { TIMESHEET_DESCRIPTION_MAX_LENGTH } from './timesheet-entry.constants';
+import { GetTimesheetTicketsQueryDTO } from './dto/get-timesheet-tickets-query.dto';
 
 import { PrismaService } from '../../../core/database/prisma.service';
 import { isOrgAdminRole } from '../../../common/constants/org-roles.constants';
@@ -17,18 +22,24 @@ import { LockTimesheetPeriodDTO } from './dto/lock-timesheet-period.dto';
 import { SubmitTimesheetWeekDTO } from './dto/submit-timesheet-week.dto';
 import { UnlockTimesheetPeriodDTO } from './dto/unlock-timesheet-period.dto';
 import { UpdateTimesheetEntryDTO } from './dto/update-timesheet-entry.dto';
+import { assertProjectAssignable } from '../../maintenance/projects/utils/assert-project-assignable';
+import { CLIENT_DISPLAY_NAME_SQL, PROJECT_DISPLAY_NAME_SQL } from '../../maintenance/projects/utils/display-name';
 
 const MAX_REGULAR_HOURS_PER_DAY = 9;
 const MAX_TOTAL_HOURS_PER_DAY = 24;
 
 const TIMESHEET_ENTRY_INCLUDE = {
+  ticket: { select: { id: true, ticketNumber: true, title: true } },
   project: {
     select: {
       id:              true,
       workOrderNumber: true,
       status:          true,
       customerName:    true,
-      client:          { select: { customerName: true } },
+      displayName:     true,
+      quoteSubject:    true,
+      isArchived:      true,
+      client:          { select: { customerName: true, displayName: true } },
     },
   },
   approvedBy: {
@@ -46,13 +57,17 @@ const TIMESHEET_ENTRY_INCLUDE = {
 } satisfies Prisma.TimesheetEntryInclude;
 
 const TIMESHEET_SUMMARY_ENTRY_INCLUDE = {
+  ticket: { select: { id: true, ticketNumber: true, title: true } },
   project: {
     select: {
       id:              true,
       workOrderNumber: true,
       status:          true,
       customerName:    true,
-      client:          { select: { customerName: true } },
+      displayName:     true,
+      quoteSubject:    true,
+      isArchived:      true,
+      client:          { select: { customerName: true, displayName: true } },
     },
   },
   user: {
@@ -111,9 +126,12 @@ interface TimesheetExportResult {
 
 interface RawProjectRow {
   id: string;
+  name: string;
   work_order_number: string;
+  quote_subject: string | null;
   status: string;
   reported_date: Date | null;
+  is_archived: boolean;
   customer_name: string | null;
 }
 
@@ -123,7 +141,8 @@ interface RawProjectCountRow {
 
 @Injectable()
 export class TimesheetService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(TimesheetService.name);
+  constructor(private prisma: PrismaService, private notifications: NotificationsService) {}
 
   async getEntries(
     organizationId: string,
@@ -156,120 +175,59 @@ export class TimesheetService {
   }
 
   async createEntry(
-    organizationId: string,
-    userId: string | undefined,
-    dto: CreateTimesheetEntryDTO,
+    organizationId: string, userId: string | undefined, dto: CreateTimesheetEntryDTO,
   ): Promise<TimesheetEntryWithRelations> {
     const member = await this.resolveMember(organizationId, userId);
-    await this.ensureProjectInOrganization(dto.projectId, organizationId);
-    const workDate = parseDateOnly(dto.workDate);
+    const workDate = parseEntryWorkDate(dto.workDate);
+    assertNotFutureWorkDate(workDate);
+    const work = await this.resolveEntryWork(dto, organizationId, userId!, member.role, member.id);
     const hours = this.resolveEntryHours(dto.workType ?? TimesheetWorkType.REGULAR, dto.hours);
     await this.ensureDateNotLocked(organizationId, workDate);
     await this.ensureDailyHoursLimit(organizationId, userId!, workDate, hours, dto.isOvertime ?? false);
-
-    const data = {
-      organizationId,
-      userId: userId!,
-      projectId: dto.projectId,
-      workDate,
-      hours,
-      location: dto.location?.trim() || undefined,
-      workType: dto.workType,
-      task: dto.task.trim(),
-      projectDescription: normalizeOptionalString(dto.projectDescription),
-      isOvertime: dto.isOvertime ?? false,
-      isNightDifferential: dto.isNightDifferential ?? false,
-      status: TimesheetEntryStatus.DRAFT,
-    } satisfies Prisma.TimesheetEntryUncheckedCreateInput;
-
-    return this.prisma.$transaction(async (tx) => {
-      const entry = await tx.timesheetEntry.create({
-        data,
-        include: TIMESHEET_ENTRY_INCLUDE,
-      });
-
-      await tx.timesheetAuditLog.create({
-        data: {
-          organizationId,
-          actorMemberId: member.id,
-          targetUserId: userId!,
-          timesheetEntryId: entry.id,
-          action: TimesheetAuditAction.CREATED,
-          after: toJson(entry),
-        },
-      });
-
+    return this.prisma.$transaction(async tx => {
+      const entry = await tx.timesheetEntry.create({ data: {
+        organizationId, userId: userId!, ...work, workDate, hours,
+        location: dto.location?.trim() || undefined, workType: dto.workType,
+        projectDescription: normalizeOptionalString(dto.projectDescription),
+        isOvertime: dto.isOvertime ?? false, isNightDifferential: dto.isNightDifferential ?? false,
+        status: TimesheetEntryStatus.DRAFT,
+      }, include: TIMESHEET_ENTRY_INCLUDE });
+      await tx.timesheetAuditLog.create({ data: { organizationId, actorMemberId: member.id, targetUserId: userId!, timesheetEntryId: entry.id, action: TimesheetAuditAction.CREATED, after: toJson(entry) } });
       return entry;
     });
   }
 
   async updateEntry(
-    entryId: string,
-    organizationId: string,
-    userId: string | undefined,
-    dto: UpdateTimesheetEntryDTO,
+    entryId: string, organizationId: string, userId: string | undefined, dto: UpdateTimesheetEntryDTO,
   ): Promise<TimesheetEntryWithRelations> {
     const member = await this.resolveMember(organizationId, userId);
-    const existing = await this.findOwnEntryOrThrow(entryId, organizationId, userId!);
-
-    this.assertCanEdit(existing.status);
-
-    if (dto.projectId) {
-      await this.ensureProjectInOrganization(dto.projectId, organizationId);
-    }
-
+    const admin = isOrgAdminRole(member.role);
+    const existing = await this.prisma.timesheetEntry.findFirst({ where: { id: entryId, organizationId, ...(admin ? {} : { userId }) }, include: TIMESHEET_ENTRY_INCLUDE });
+    if (!existing) throw new NotFoundException('Timesheet entry not found.');
+    this.assertCanEdit(existing.status, admin);
+    if (existing.userId !== userId && existing.status !== TimesheetEntryStatus.SUBMITTED) throw new ForbiddenException('Only submitted entries of other employees can be corrected.');
     const workDate = dto.workDate !== undefined ? parseDateOnly(dto.workDate) : existing.workDate;
-    const workType = dto.workType !== undefined ? dto.workType : existing.workType;
-    const hours = this.resolveEntryHours(workType, dto.hours !== undefined ? dto.hours : existing.hours);
-    const isOvertime = dto.isOvertime !== undefined ? dto.isOvertime : existing.isOvertime;
+    assertNotFutureWorkDate(workDate);
+    const work = await this.resolveEntryWork(dto, organizationId, userId!, member.role, member.id, existing);
+    const workType = dto.workType ?? existing.workType;
+    const hours = this.resolveEntryHours(workType, dto.hours ?? existing.hours);
+    const isOvertime = dto.isOvertime ?? existing.isOvertime;
     await this.ensureDateNotLocked(organizationId, existing.workDate);
     await this.ensureDateNotLocked(organizationId, workDate);
-    await this.ensureDailyHoursLimit(organizationId, userId!, workDate, hours, isOvertime, entryId);
-
-    const data: Prisma.TimesheetEntryUncheckedUpdateInput = {
-      ...(dto.projectId !== undefined ? { projectId: dto.projectId } : {}),
-      ...(dto.workDate !== undefined ? { workDate } : {}),
-      hours,
-      ...(dto.location !== undefined ? { location: dto.location.trim() || 'OFC - DW' } : {}),
-      ...(dto.workType !== undefined ? { workType: dto.workType } : {}),
-      ...(dto.task !== undefined ? { task: dto.task.trim() } : {}),
-      ...(dto.projectDescription !== undefined
-        ? { projectDescription: normalizeOptionalString(dto.projectDescription) }
-        : {}),
-      ...(dto.isOvertime !== undefined ? { isOvertime: dto.isOvertime } : {}),
-      ...(dto.isNightDifferential !== undefined ? { isNightDifferential: dto.isNightDifferential } : {}),
-      // Editing a rejected entry returns it to draft; a submitted entry stays pending after edits.
-      ...(existing.status === TimesheetEntryStatus.REJECTED
-        ? {
-            status: TimesheetEntryStatus.DRAFT,
-            rejectedAt: null,
-            rejectedByMemberId: null,
-            rejectionReason: null,
-          }
-        : {}),
-    };
-
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.timesheetEntry.update({
-        where: { id: entryId },
-        data,
-        include: TIMESHEET_ENTRY_INCLUDE,
-      });
-
-      await tx.timesheetAuditLog.create({
-        data: {
-          organizationId,
-          actorMemberId: member.id,
-          targetUserId: userId!,
-          timesheetEntryId: updated.id,
-          action: TimesheetAuditAction.UPDATED,
-          before: toJson(existing),
-          after: toJson(updated),
-        },
-      });
-
-      return updated;
+    await this.ensureDailyHoursLimit(organizationId, existing.userId, workDate, hours, isOvertime, entryId);
+    const updated = await this.prisma.$transaction(async tx => {
+      const entry = await tx.timesheetEntry.update({ where: { id: entryId, organizationId, status: existing.status }, data: {
+        ...work, workDate, workType, hours, isOvertime,
+        ...(dto.location !== undefined ? { location: dto.location.trim() || 'OFC - DW' } : {}),
+        ...(dto.projectDescription !== undefined ? { projectDescription: normalizeOptionalString(dto.projectDescription) } : {}),
+        ...(dto.isNightDifferential !== undefined ? { isNightDifferential: dto.isNightDifferential } : {}),
+        ...(existing.status === TimesheetEntryStatus.REJECTED ? { status: TimesheetEntryStatus.DRAFT, rejectedAt: null, rejectedByMemberId: null, rejectionReason: null } : {}),
+      }, include: TIMESHEET_ENTRY_INCLUDE });
+      await tx.timesheetAuditLog.create({ data: { organizationId, actorMemberId: member.id, targetUserId: existing.userId, timesheetEntryId: entry.id, action: TimesheetAuditAction.UPDATED, before: toJson(existing), after: toJson(entry) } });
+      return entry;
     });
+    if (admin && existing.userId !== userId && existing.status === TimesheetEntryStatus.SUBMITTED) await this.notifyTimesheet(NOTIFICATION_TYPES.timesheetEditedByAdmin, [updated], organizationId, userId!);
+    return updated;
   }
 
   async deleteEntry(
@@ -326,7 +284,7 @@ export class TimesheetService {
 
     const submittedAt = new Date();
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.timesheetEntry.updateMany({
         where: { id: { in: entries.map((entry) => entry.id) } },
         data: { status: TimesheetEntryStatus.SUBMITTED, submittedAt },
@@ -352,6 +310,8 @@ export class TimesheetService {
 
       return { submittedCount: submittedEntries.length, entries: submittedEntries };
     });
+    await this.notifyTimesheet(NOTIFICATION_TYPES.timesheetSubmitted, result.entries, organizationId, userId!);
+    return result;
   }
 
   async getSummary(
@@ -393,20 +353,20 @@ export class TimesheetService {
     const member = await this.resolveMember(organizationId, userId);
     this.ensureAdminMember(member.role);
 
-    const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds);
-    this.ensureNoSelfApproval(entries, userId!);
+    const result = await this.prisma.$transaction(async (tx) => {
+      const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds, tx);
+      await this.ensureEntriesNotLocked(tx, organizationId, entries);
 
-    const approvableEntries = entries.filter(
-      (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
-    );
-    if (approvableEntries.length === 0) {
-      throw new BadRequestException('No timesheet entries available to approve.');
-    }
+      const approvableEntries = entries.filter(
+        (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
+      );
+      if (approvableEntries.length === 0) {
+        throw new BadRequestException('No timesheet entries available to approve.');
+      }
 
-    const approvedAt = new Date();
-    const ids = approvableEntries.map((entry) => entry.id);
+      const approvedAt = new Date();
+      const ids = approvableEntries.map((entry) => entry.id);
 
-    return this.prisma.$transaction(async (tx) => {
       await tx.timesheetEntry.updateMany({
         where: { id: { in: ids }, organizationId, status: { in: [TimesheetEntryStatus.SUBMITTED, TimesheetEntryStatus.DRAFT] } },
         data: {
@@ -432,6 +392,7 @@ export class TimesheetService {
             status: TimesheetEntryStatus.APPROVED,
             approvedAt,
             approvedByMemberId: member.id,
+            selfApproval: entry.userId === userId,
             rejectedAt: null,
             rejectedByMemberId: null,
             rejectionReason: null,
@@ -447,6 +408,8 @@ export class TimesheetService {
 
       return { approvedCount: updatedEntries.length, entries: updatedEntries };
     });
+    await this.notifyTimesheet(NOTIFICATION_TYPES.timesheetApproved, result.entries, organizationId, userId!);
+    return result;
   }
 
   async bulkRejectEntries(
@@ -462,20 +425,20 @@ export class TimesheetService {
       throw new BadRequestException('Rejection reason is required.');
     }
 
-    const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds);
-    this.ensureNoSelfApproval(entries, userId!);
+    const result = await this.prisma.$transaction(async (tx) => {
+      const entries = await this.findApprovalTargetEntries(organizationId, dto.entryIds, tx);
+      await this.ensureEntriesNotLocked(tx, organizationId, entries);
 
-    const rejectableEntries = entries.filter(
-      (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
-    );
-    if (rejectableEntries.length === 0) {
-      throw new BadRequestException('No timesheet entries available to reject.');
-    }
+      const rejectableEntries = entries.filter(
+        (entry) => entry.status === TimesheetEntryStatus.SUBMITTED || entry.status === TimesheetEntryStatus.DRAFT,
+      );
+      if (rejectableEntries.length === 0) {
+        throw new BadRequestException('No timesheet entries available to reject.');
+      }
 
-    const rejectedAt = new Date();
-    const ids = rejectableEntries.map((entry) => entry.id);
+      const rejectedAt = new Date();
+      const ids = rejectableEntries.map((entry) => entry.id);
 
-    return this.prisma.$transaction(async (tx) => {
       await tx.timesheetEntry.updateMany({
         where: { id: { in: ids }, organizationId, status: { in: [TimesheetEntryStatus.SUBMITTED, TimesheetEntryStatus.DRAFT] } },
         data: {
@@ -516,6 +479,8 @@ export class TimesheetService {
 
       return { rejectedCount: updatedEntries.length, entries: updatedEntries };
     });
+    await this.notifyTimesheet(NOTIFICATION_TYPES.timesheetRejected, result.entries, organizationId, userId!, reason);
+    return result;
   }
 
   async exportTimesheet(
@@ -554,7 +519,7 @@ export class TimesheetService {
       }),
     ]);
 
-    const workbook = await buildTimesheetWorkbook({
+    const workbook = buildTimesheetWorkbook({
       entries,
       periodStart: start,
       periodEnd: end,
@@ -642,6 +607,7 @@ export class TimesheetService {
     const now = new Date();
 
     return this.prisma.$transaction(async (tx) => {
+      await this.lockPeriodChanges(tx, organizationId);
       const existing = await tx.timesheetPeriodLock.findUnique({
         where: {
           organizationId_periodStart_periodEnd: {
@@ -715,6 +681,7 @@ export class TimesheetService {
     const now = new Date();
 
     return this.prisma.$transaction(async (tx) => {
+      await this.lockPeriodChanges(tx, organizationId);
       const existing = await tx.timesheetPeriodLock.findUnique({
         where: {
           organizationId_periodStart_periodEnd: {
@@ -821,18 +788,24 @@ export class TimesheetService {
     userId: string | undefined,
     query: GetTimesheetProjectsQueryDTO,
   ) {
-    await this.resolveMember(organizationId, userId);
-    const { page, limit, search } = query;
+    const pickerMember = await this.resolveMember(organizationId, userId);
+    const { page, limit, search, includeArchived } = query;
     const searchTerm = search || null;
-    const whereClause = this.buildProjectSearchWhere(organizationId, searchTerm);
+    const whereClause = Prisma.sql`${this.buildProjectSearchWhere(organizationId, searchTerm, includeArchived ?? false)}
+      AND (${isOrgAdminRole(pickerMember.role)} OR EXISTS (
+        SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.organization_id = ${organizationId} AND pm.user_id = ${userId}
+      ))`;
 
     const [rows, countRows] = await Promise.all([
       this.prisma.$queryRaw<RawProjectRow[]>(Prisma.sql`
-        SELECT p.id, p.work_order_number, p.status, p.reported_date, COALESCE(c.customer_name, p.customer_name) AS customer_name
+        SELECT
+          p.id, p.work_order_number, p.status, p.reported_date, p.quote_subject, p.is_archived,
+          ${PROJECT_DISPLAY_NAME_SQL} AS name,
+          COALESCE(${CLIENT_DISPLAY_NAME_SQL}, NULLIF(p.customer_name, '')) AS customer_name
         FROM projects p
         LEFT JOIN clients c ON c.id = p.client_id
         ${whereClause}
-        ORDER BY COALESCE(c.customer_name, p.customer_name) ASC NULLS LAST, p.work_order_number ASC
+        ORDER BY COALESCE(${CLIENT_DISPLAY_NAME_SQL}, NULLIF(p.customer_name, '')) ASC NULLS LAST, name ASC, p.work_order_number ASC
         LIMIT ${limit} OFFSET ${(page - 1) * limit}
       `),
       this.prisma.$queryRaw<RawProjectCountRow[]>(Prisma.sql`
@@ -849,15 +822,67 @@ export class TimesheetService {
       const customerName = r.customer_name?.trim() || '';
       return {
         id: r.id,
+        name: r.name,
         workOrderNumber: r.work_order_number,
+        quoteSubject: r.quote_subject,
         customerName,
         status: r.status,
         reportedDate: r.reported_date,
+        isArchived: r.is_archived,
         client: r.customer_name !== null ? { customerName: r.customer_name } : null,
       };
     });
 
     return { data: projects, meta: buildPaginationMeta(total, page, limit) };
+  }
+
+  private ticketPickerWhere(organizationId: string, userId: string, role: string, memberId: string): Prisma.TicketsWhereInput {
+    return { organizationId, isArchived: false, ...(isOrgAdminRole(role) ? {} : { AND: [
+      { OR: [{ createdById: userId }, { assignees: { some: { memberId } } }] },
+      { OR: [{ projectId: null }, { project: { members: { some: { userId, organizationId } } } }] },
+    ] }) };
+  }
+
+  async getTickets(organizationId: string, userId: string | undefined, query: GetTimesheetTicketsQueryDTO) {
+    const member = await this.resolveMember(organizationId, userId);
+    const where: Prisma.TicketsWhereInput = { ...this.ticketPickerWhere(organizationId, userId!, member.role, member.id),
+      ...(query.search?.trim() ? { title: { contains: query.search.trim(), mode: 'insensitive' } } : {}) };
+    const [data, total] = await Promise.all([
+      this.prisma.tickets.findMany({ where, select: { id: true, ticketNumber: true, title: true, projectId: true, project: { select: { id: true, displayName: true, quoteSubject: true, workOrderNumber: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.limit, take: query.limit }),
+      this.prisma.tickets.count({ where }),
+    ]);
+    return { data, meta: buildPaginationMeta(total, query.page, query.limit) };
+  }
+
+  private async resolveEntryWork(dto: UpdateTimesheetEntryDTO, organizationId: string, userId: string, role: string, memberId: string, current?: TimesheetEntryWithRelations) {
+    const ticketId = dto.ticketId !== undefined ? dto.ticketId : current?.ticketId ?? null;
+    if (ticketId) {
+      const ticket = await this.prisma.tickets.findFirst({ where: { ...this.ticketPickerWhere(organizationId, userId, role, memberId), id: ticketId }, select: { id: true, title: true, projectId: true } });
+      if (!ticket) throw new ForbiddenException('Choose a ticket you created or are assigned to in a visible project.');
+      return { ticketId: ticket.id, projectId: ticket.projectId, description: ticket.title, task: ticket.title };
+    }
+    const projectId = dto.projectId !== undefined ? dto.projectId : current?.projectId ?? null;
+    if (projectId && (!current || projectId !== current.projectId)) {
+      await this.ensureProjectInOrganization(projectId, organizationId, current?.projectId ?? null);
+      if (!isOrgAdminRole(role) && !await this.prisma.project.findFirst({ where: { id: projectId, organizationId, members: { some: { organizationId, userId } } }, select: { id: true } })) throw new ForbiddenException('Choose a project you are a member of.');
+    }
+    const description = (dto.description ?? dto.task ?? current?.description ?? current?.task ?? '').trim();
+    if (!description.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() || description.length > TIMESHEET_DESCRIPTION_MAX_LENGTH) throw new BadRequestException('Description is required and must be at most ' + TIMESHEET_DESCRIPTION_MAX_LENGTH + ' characters.');
+    return { ticketId: null, projectId, description, task: dto.description !== undefined ? description : dto.task?.trim() ?? current?.task ?? description };
+  }
+
+  private async notifyTimesheet(type: NotificationType, entries: readonly { id: string; userId: string; workDate: Date; description?: string | null; task?: string }[], organizationId: string, actorUserId: string, reason?: string) {
+    try {
+      if (!entries.length) return;
+      const submitted = type === NOTIFICATION_TYPES.timesheetSubmitted;
+      const recipients = submitted ? (await this.prisma.member.findMany({ where: { organizationId }, select: { role: true, userId: true } })).filter(member => isOrgAdminRole(member.role)).map(member => ({ recipientUserId: member.userId, entry: entries[0] })) : entries.map(entry => ({ recipientUserId: entry.userId, entry }));
+      await this.notifications.createMany(recipients.map(({ recipientUserId, entry }) => ({ organizationId, recipientUserId, actorUserId, type,
+        title: submitted ? 'Timesheet submitted for approval' : type === NOTIFICATION_TYPES.timesheetApproved ? 'Timesheet approved' : type === NOTIFICATION_TYPES.timesheetRejected ? 'Timesheet rejected' : 'Timesheet corrected by an admin',
+        body: submitted ? entries.length + ' entry/entries submitted.' : (entry.description ?? entry.task ?? toDateInputValue(entry.workDate)) + (reason ? ' - ' + reason : ''),
+        link: submitted ? '/timekeeping/timesheet/approval' : '/timekeeping/timesheet?date=' + toDateInputValue(entry.workDate) + '&entry=' + entry.id,
+        entityType: 'timesheet', entityId: entry.id,
+      })));
+    } catch { this.logger.warn('Timesheet notification failed after commit.'); }
   }
 
   private async resolveMember(organizationId: string, userId: string | undefined) {
@@ -877,15 +902,13 @@ export class TimesheetService {
     return member;
   }
 
-  private async ensureProjectInOrganization(projectId: string, organizationId: string): Promise<void> {
-    const project = await this.prisma.project.findFirst({
-      where: { id: projectId, organizationId },
-      select: { id: true },
-    });
-
-    if (!project) {
-      throw new NotFoundException('Project not found in this organization.');
-    }
+  /** 404 outside the org; 400 for an archived project unless the entry already uses it. */
+  private async ensureProjectInOrganization(
+    projectId: string,
+    organizationId: string,
+    currentProjectId: string | null,
+  ): Promise<void> {
+    await assertProjectAssignable(this.prisma, projectId, organizationId, currentProjectId);
   }
 
   private async ensureDateNotLocked(organizationId: string, workDate: Date): Promise<void> {
@@ -987,7 +1010,8 @@ export class TimesheetService {
     return entry;
   }
 
-  private assertCanEdit(status: TimesheetEntryStatus): void {
+  private assertCanEdit(status: TimesheetEntryStatus, admin = false): void {
+    if (status === TimesheetEntryStatus.SUBMITTED && !admin) throw new ForbiddenException('Submitted entries can only be corrected by an admin.');
     // Draft, rejected, and submitted (pending) entries can be edited; approved entries are locked.
     if (status === TimesheetEntryStatus.APPROVED) {
       throw new BadRequestException('Approved timesheet entries can no longer be modified.');
@@ -1038,9 +1062,56 @@ export class TimesheetService {
     };
   }
 
-  private async findApprovalTargetEntries(organizationId: string, entryIds: string[]): Promise<TimesheetSummaryEntry[]> {
+  /** Serialize bulk decisions with lock/unlock, including periods that have no row yet. */
+  private async lockPeriodChanges(tx: Prisma.TransactionClient, organizationId: string): Promise<void> {
+    await tx.$queryRaw(Prisma.sql`
+      SELECT id FROM organizations WHERE id = ${organizationId} FOR UPDATE
+    `);
+  }
+
+  private async ensureEntriesNotLocked(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    entries: TimesheetSummaryEntry[],
+  ): Promise<void> {
+    if (entries.length === 0) return;
+
+    const lock = await tx.timesheetPeriodLock.findFirst({
+      where: {
+        organizationId,
+        isLocked: true,
+        OR: entries.map((entry) => ({
+          periodStart: { lte: entry.workDate },
+          periodEnd: { gte: entry.workDate },
+        })),
+      },
+      select: { periodStart: true, periodEnd: true },
+      orderBy: [{ periodStart: 'asc' }, { periodEnd: 'asc' }],
+    });
+
+    if (lock) {
+      throw new ForbiddenException(
+        `This timesheet period is locked (${toDateInputValue(lock.periodStart)} to ${toDateInputValue(lock.periodEnd)}).`,
+      );
+    }
+  }
+
+  private async findApprovalTargetEntries(
+    organizationId: string,
+    entryIds: string[],
+    tx: Prisma.TransactionClient,
+  ): Promise<TimesheetSummaryEntry[]> {
+    await this.lockPeriodChanges(tx, organizationId);
     const uniqueIds = [...new Set(entryIds)];
-    const entries = await this.prisma.timesheetEntry.findMany({
+    if (uniqueIds.length === 0) return [];
+
+    // Prevent a concurrent edit from moving a selected entry after its date is checked.
+    await tx.$queryRaw(Prisma.sql`
+      SELECT id FROM timesheet_entries
+      WHERE organization_id = ${organizationId} AND id IN (${Prisma.join(uniqueIds)})
+      ORDER BY id FOR UPDATE
+    `);
+    const entries = await tx.timesheetEntry.findMany({
       where: { organizationId, id: { in: uniqueIds } },
       include: TIMESHEET_SUMMARY_ENTRY_INCLUDE,
       orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }],
@@ -1051,12 +1122,6 @@ export class TimesheetService {
     }
 
     return entries;
-  }
-
-  private ensureNoSelfApproval(entries: TimesheetSummaryEntry[], actorUserId: string): void {
-    if (entries.some((entry) => entry.userId === actorUserId)) {
-      throw new ForbiddenException('Approvers cannot approve or reject their own timesheet entries.');
-    }
   }
 
   private buildWorkDateFilter(periodStart?: string, periodEnd?: string): Prisma.TimesheetEntryWhereInput {
@@ -1077,22 +1142,34 @@ export class TimesheetService {
     };
   }
 
-  // Used only by getProjects
-  private buildProjectSearchWhere(organizationId: string, searchTerm: string | null): Prisma.Sql {
+  // Used only by getProjects. Archived projects are left out unless includeArchived
+  // (the approval filter needs them to find entries already logged against them).
+  private buildProjectSearchWhere(organizationId: string, searchTerm: string | null, includeArchived: boolean): Prisma.Sql {
     return Prisma.sql`
       WHERE p.organization_id = ${organizationId}
+        AND (${includeArchived} OR p.is_archived = false)
         AND (
           ${searchTerm}::text IS NULL
-          OR COALESCE(c.customer_name, p.customer_name) ILIKE '%' || ${searchTerm} || '%'
+          OR COALESCE(${CLIENT_DISPLAY_NAME_SQL}, p.customer_name) ILIKE '%' || ${searchTerm} || '%'
+          OR ${PROJECT_DISPLAY_NAME_SQL} ILIKE '%' || ${searchTerm} || '%'
+          OR p.quote_subject ILIKE '%' || ${searchTerm} || '%'
           OR p.work_order_number ILIKE '%' || ${searchTerm} || '%'
         )
     `;
   }
 }
 
+function parseEntryWorkDate(value: string): Date {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BadRequestException('workDate must be a calendar date (YYYY-MM-DD).');
+  const date = parseDateOnly(value);
+  if (date.toISOString().slice(0, 10) !== value) throw new BadRequestException('Invalid work date.');
+  return date;
+}
+
 function parseDateOnly(value: string): Date {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BadRequestException('Date must be a calendar date (YYYY-MM-DD).');
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
     throw new BadRequestException('Invalid date value.');
   }
 
@@ -1129,6 +1206,11 @@ function auditLogMatchesPeriod(log: TimesheetAuditLogWithRelations, periodStart:
   return snapshots.some((snapshot) => {
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return false;
     const value = snapshot as Record<string, unknown>;
+    const workDate = value['workDate'];
+    if (typeof workDate === 'string' || workDate instanceof Date) {
+      const date = new Date(workDate);
+      if (!Number.isNaN(date.getTime()) && date >= periodStart && date <= periodEnd) return true;
+    }
     return dateValueMatches(value['periodStart'], periodStart) && dateValueMatches(value['periodEnd'], periodEnd);
   });
 }
@@ -1193,8 +1275,8 @@ function buildTimesheetSummary(
     const dayKey = toDateInputValue(entry.workDate);
     existing.dailyTotals[dayKey] = (existing.dailyTotals[dayKey] ?? 0) + entry.hours;
 
-    const projectCustomer = entry.project.customerName || entry.project.client?.customerName || '';
-    const projectKey = `${projectCustomer} — ${entry.project.workOrderNumber}`;
+    const projectCustomer = entry.project?.customerName || entry.project?.client?.customerName || '';
+    const projectKey = `${projectCustomer} — ${(entry.project?.workOrderNumber ?? 'No project')}`;
     existing.projectTotals[projectKey] = (existing.projectTotals[projectKey] ?? 0) + entry.hours;
     existing.entries.push(entry);
     employeeMap.set(key, existing);
@@ -1229,7 +1311,7 @@ function buildTimesheetSummary(
   };
 }
 
-async function buildTimesheetWorkbook(options: {
+function buildTimesheetWorkbook(options: {
   entries: TimesheetSummaryEntry[];
   periodStart: Date;
   periodEnd: Date;
@@ -1239,7 +1321,7 @@ async function buildTimesheetWorkbook(options: {
   exportedBy: string;
   exportedAt: Date;
   isLocked: boolean;
-}): Promise<ExcelJS.Workbook> {
+}): ExcelJS.Workbook {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Meedo';
   workbook.created = options.exportedAt;
@@ -1402,9 +1484,9 @@ function addDetailsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSummaryEn
       entry.isNightDifferential ? 'Y' : '',
       toDateInputValue(entry.workDate),
       entry.location,
-      entry.project.customerName || entry.project.client?.customerName || '',
-      entry.project.workOrderNumber,
-      entry.task,
+      entry.project?.customerName || entry.project?.client?.customerName || '',
+      (entry.project?.workOrderNumber ?? 'No project'),
+      entry.description ?? entry.task,
       entry.hours,
       entry.projectDescription ?? '',
       weekNumber(entry.workDate),
@@ -1458,9 +1540,9 @@ function addProjectTotalsSheet(workbook: ExcelJS.Workbook, entries: TimesheetSum
 
   const totals = new Map<string, { project: string; tag: string; hours: number }>();
   for (const entry of entries) {
-    const key = `${entry.project.id}:${entry.project.workOrderNumber}`;
-    const projectCustomer = entry.project.customerName || entry.project.client?.customerName || '';
-    const existing = totals.get(key) ?? { project: projectCustomer, tag: entry.project.workOrderNumber, hours: 0 };
+    const key = `${(entry.project?.id ?? 'unassigned')}:${(entry.project?.workOrderNumber ?? 'No project')}`;
+    const projectCustomer = entry.project?.customerName || entry.project?.client?.customerName || '';
+    const existing = totals.get(key) ?? { project: projectCustomer, tag: (entry.project?.workOrderNumber ?? 'No project'), hours: 0 };
     existing.hours += entry.hours;
     totals.set(key, existing);
   }

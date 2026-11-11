@@ -138,6 +138,29 @@ describe('SlaPoliciesService', () => {
         service.createSlaPolicy({ ...dto, projectId: 'bad-project' }, 'org-geo'),
       ).rejects.toThrow(NotFoundException);
     });
+
+    it('checks duplicates per org + project + priority, so one project can have a policy per priority', async () => {
+      mockPrismaService.project.findFirst.mockResolvedValue({ id: 'project-1', isArchived: false });
+      mockPrismaService.slaPolicy.findFirst.mockResolvedValue(null);
+      mockPrismaService.slaPolicy.create.mockResolvedValue(mockPolicy);
+
+      await service.createSlaPolicy({ ...dto, priority: 'LOW', projectId: 'project-1' }, 'org-geo');
+
+      expect(mockPrismaService.slaPolicy.findFirst).toHaveBeenCalledWith({
+        where: { organizationId: 'org-geo', projectId: 'project-1', priority: 'LOW', isArchived: false },
+        select: { id: true },
+      });
+      expect(mockPrismaService.slaPolicy.create).toHaveBeenCalled();
+    });
+
+    it('rejects an archived project with 400', async () => {
+      mockPrismaService.project.findFirst.mockResolvedValue({ id: 'project-1', isArchived: true });
+
+      await expect(
+        service.createSlaPolicy({ ...dto, projectId: 'project-1' }, 'org-geo'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrismaService.slaPolicy.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('updateSlaPolicy', () => {
@@ -184,6 +207,42 @@ describe('SlaPoliciesService', () => {
       await expect(
         service.updateSlaPolicy('sla-uuid-1', { projectId: 'project-1' }, 'org-geo'),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('re-checks duplicates when only the priority changes', async () => {
+      const projectPolicy = { ...mockPolicy, projectId: 'project-1' };
+      mockPrismaService.slaPolicy.findFirst
+        .mockResolvedValueOnce(projectPolicy)
+        .mockResolvedValueOnce({ id: 'sla-uuid-2' });
+
+      await expect(
+        service.updateSlaPolicy('sla-uuid-1', { priority: 'URGENT' }, 'org-geo'),
+      ).rejects.toThrow(ConflictException);
+      expect(mockPrismaService.slaPolicy.findFirst).toHaveBeenLastCalledWith({
+        where: { organizationId: 'org-geo', projectId: 'project-1', priority: 'URGENT', isArchived: false, id: { not: 'sla-uuid-1' } },
+        select: { id: true },
+      });
+    });
+
+    it('rejects moving the policy to an archived project', async () => {
+      mockPrismaService.slaPolicy.findFirst.mockResolvedValue(mockPolicy);
+      mockPrismaService.project.findFirst.mockResolvedValue({ id: 'project-gone', isArchived: true });
+
+      await expect(
+        service.updateSlaPolicy('sla-uuid-1', { projectId: 'project-gone' }, 'org-geo'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrismaService.slaPolicy.update).not.toHaveBeenCalled();
+    });
+
+    it('still saves a policy whose project is archived when the project is unchanged', async () => {
+      const onArchived = { ...mockPolicy, projectId: 'project-gone' };
+      mockPrismaService.slaPolicy.findFirst.mockResolvedValue(onArchived);
+      mockPrismaService.project.findFirst.mockResolvedValue({ id: 'project-gone', isArchived: true });
+      mockPrismaService.slaPolicy.update.mockResolvedValue({ ...onArchived, name: 'Renamed' });
+
+      await service.updateSlaPolicy('sla-uuid-1', { name: 'Renamed', projectId: 'project-gone' }, 'org-geo');
+
+      expect(mockPrismaService.slaPolicy.update).toHaveBeenCalled();
     });
   });
 

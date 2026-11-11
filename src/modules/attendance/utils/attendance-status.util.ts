@@ -7,7 +7,8 @@ const OFFSET_MS = ATTENDANCE_TIMEZONE_OFFSET_MINUTES * 60 * 1000;
 
 /**
  * How a graded day reads against its schedule:
- *  - `no_schedule` — no weekly schedule resolved for the employee that day.
+ *  - `no_schedule` — no weekly schedule resolved for the employee that day, and no punch.
+ *  - `present_unscheduled` — no schedule resolved, but the employee timed in. Never late.
  *  - `holiday`     — the date is a company holiday.
  *  - `rest_day`    — a non-working day on the schedule.
  *  - `upcoming`    — a working day, no punch yet, but the shift isn't due yet (live board only).
@@ -17,6 +18,7 @@ const OFFSET_MS = ATTENDANCE_TIMEZONE_OFFSET_MINUTES * 60 * 1000;
  */
 export type AttendanceStatus =
   | 'no_schedule'
+  | 'present_unscheduled'
   | 'holiday'
   | 'rest_day'
   | 'upcoming'
@@ -81,7 +83,8 @@ export function deriveDayStatus(
       }
     : null;
 
-  const lateMinutes = computeLateMinutes(effective, actual.firstIn);
+  // An unscheduled day has no shift to be late against.
+  const lateMinutes = isUnscheduled(effective) ? 0 : computeLateMinutes(effective, actual.firstIn);
 
   return {
     status: computeStatus(effective, actual, lateMinutes, asOf),
@@ -105,11 +108,16 @@ function computeStatus(
   lateMinutes: number,
   asOf: Date | null,
 ): AttendanceStatus {
-  if (!effective.schedule || effective.isWorkingDay === null) return 'no_schedule';
+  if (isUnscheduled(effective)) return actual.firstIn ? 'present_unscheduled' : 'no_schedule';
   if (effective.isHoliday) return 'holiday';
   if (!effective.isWorkingDay) return 'rest_day';
   if (!actual.firstIn) return isUpcoming(effective, asOf) ? 'upcoming' : 'absent';
   return lateMinutes > 0 ? 'late' : 'present';
+}
+
+/** No weekly schedule (or no day rule on it) resolved for the employee. */
+function isUnscheduled(effective: EffectiveSchedule): boolean {
+  return !effective.schedule || effective.isWorkingDay === null;
 }
 
 /**

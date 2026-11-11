@@ -1,12 +1,9 @@
 import { auth } from '../src/core/auth/auth';
 import { prisma } from '../src/core/database/prisma.client';
+import { assertSafeSeedTarget } from './seed-target';
 
 const ORG_NAME = 'Geoplan Philippines Inc.';
 const ORG_SLUG = 'geoplan-philippines-inc';
-
-const ADMIN_NAME = 'Admin';
-const ADMIN_EMAIL = 'admin@geoplanph.com';
-const ADMIN_PASSWORD = 'admin123';
 
 const MEMBER_NAME = 'Timesheet Member';
 const MEMBER_EMAIL = 'member@geoplanph.com';
@@ -15,28 +12,25 @@ const MEMBER_PASSWORD = 'member123';
 const CATEGORIES = ['Hardware', 'Support', 'Customer Service'];
 const TEAMS = ['IT / System Developer', 'Business Development Group'];
 const TIMESHEET_CLIENTS = [
-  { apptivoId: 'seed-client-001', customerName: 'Geoplan Internal Operations' },
-  { apptivoId: 'seed-client-002', customerName: 'Field Survey Support' },
-  { apptivoId: 'seed-client-003', customerName: 'Client Documentation' },
+  { customerName: 'Geoplan Internal Operations' },
+  { customerName: 'Field Survey Support' },
+  { customerName: 'Client Documentation' },
 ];
 
 const TIMESHEET_PROJECTS = [
   {
-    apptivoId:       'local-timesheet-wo-001',
     workOrderNumber: 'WO-001',
     clientIndex:     0,
     status:          'Open',
     total:           0,
   },
   {
-    apptivoId:       'local-timesheet-wo-002',
     workOrderNumber: 'WO-002',
     clientIndex:     1,
     status:          'Open',
     total:           0,
   },
   {
-    apptivoId:       'local-timesheet-wo-003',
     workOrderNumber: 'WO-003',
     clientIndex:     2,
     status:          'Open',
@@ -63,6 +57,7 @@ async function seedOrgUser(
 }
 
 async function main() {
+  assertSafeSeedTarget(process.env);
   console.log('Seeding...');
 
   const org = await prisma.organization.upsert({
@@ -146,41 +141,22 @@ async function main() {
 
   const clientIds: string[] = [];
   for (const client of TIMESHEET_CLIENTS) {
-    const created = await prisma.client.upsert({
-      where: { organizationId_apptivoId: { organizationId: org.id, apptivoId: client.apptivoId } },
-      update: { customerName: client.customerName },
-      create: { ...client, organizationId: org.id },
-    });
+    const created = await prisma.client.findFirst({ where: { organizationId: org.id, apptivoId: null, displayName: client.customerName } })
+      ?? await prisma.client.create({ data: { organizationId: org.id, apptivoId: null, customerName: null, displayName: client.customerName } });
     clientIds.push(created.id);
   }
 
   for (const project of TIMESHEET_PROJECTS) {
-    await prisma.project.upsert({
-      where: { organizationId_apptivoId: { organizationId: org.id, apptivoId: project.apptivoId } },
-      update: {
-        workOrderNumber: project.workOrderNumber,
-        status:          project.status,
-        total:           project.total,
-        clientId:        clientIds[project.clientIndex],
-      },
-      create: {
-        apptivoId:       project.apptivoId,
-        workOrderNumber: project.workOrderNumber,
-        status:          project.status,
-        total:           project.total,
-        reportedDate:    new Date(),
-        clientId:        clientIds[project.clientIndex],
-        organizationId:  org.id,
-      },
-    });
+    const existing = await prisma.project.findFirst({ where: { organizationId: org.id, apptivoId: null, displayName: project.workOrderNumber, clientId: clientIds[project.clientIndex] } });
+    if (!existing) await prisma.project.create({ data: {
+      apptivoId: null, workOrderNumber: null, customerName: null,
+      displayName: project.workOrderNumber, status: project.status, total: project.total,
+      clientId: clientIds[project.clientIndex], organizationId: org.id,
+    } });
   }
   console.log('Timesheet demo projects seeded');
 
   console.log('Done.');
-  console.log(`Admin login -> ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
-  console.log(`Member login -> ${MEMBER_EMAIL} / ${MEMBER_PASSWORD}`);
-  console.log(`Admin login -> admin@geoplanph.com / admin123`);
-  console.log(`User login  -> user@geoplanph.com / user123456`);
 }
 
 main()

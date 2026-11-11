@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 
 import { AttendanceService } from './attendance.service';
-import { AttendanceUpdatesService } from './attendance-updates.service';
 import { AUTO_CLOCK_OUT_HOUR, COMPANY_TIMEZONE } from './constants/attendance.constants';
 
 @Injectable()
@@ -11,7 +10,6 @@ export class AttendanceScheduler {
 
   constructor(
     private readonly attendanceService: AttendanceService,
-    private readonly attendanceUpdates: AttendanceUpdatesService,
   ) {}
 
   /**
@@ -25,8 +23,7 @@ export class AttendanceScheduler {
   })
   async autoClockOut(): Promise<void> {
     try {
-      const updated = await this.attendanceService.runAutoClockOut();
-      if (updated > 0) this.attendanceUpdates.notify('auto-clock-out');
+      await this.attendanceService.runAutoClockOut();
     } catch (error) {
       this.logger.error('Auto-clock-out run failed.', error instanceof Error ? error.stack : error);
     }

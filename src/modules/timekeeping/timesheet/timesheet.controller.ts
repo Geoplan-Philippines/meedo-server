@@ -11,6 +11,7 @@ import { CreateTimesheetEntryDTO } from './dto/create-timesheet-entry.dto';
 import { GetTimesheetAuditLogsQueryDTO } from './dto/get-timesheet-audit-logs-query.dto';
 import { GetTimesheetEntriesQueryDTO } from './dto/get-timesheet-entries-query.dto';
 import { GetTimesheetPeriodLockQueryDTO } from './dto/get-timesheet-period-lock-query.dto';
+import { GetTimesheetTicketsQueryDTO } from './dto/get-timesheet-tickets-query.dto';
 import { GetTimesheetProjectsQueryDTO } from './dto/get-timesheet-projects-query.dto';
 import { GetTimesheetSummaryQueryDTO } from './dto/get-timesheet-summary-query.dto';
 import { LockTimesheetPeriodDTO } from './dto/lock-timesheet-period.dto';
@@ -176,6 +177,13 @@ export class TimesheetController {
     @Session() session?: UserSession,
   ) {
     return this.timesheetService.getAuditLogs(organizationId, session?.user?.id, query);
+  }
+
+  @Get('tickets')
+  @ApiOperation({ summary: 'Assigned or created tickets in visible projects; admins can select any organization ticket.' })
+  @ApiOkResponse({ description: 'Paged ticket options for timesheet entry.' })
+  getTickets(@Query() query: GetTimesheetTicketsQueryDTO, @CurrentOrganizationId() organizationId: string, @Session() session?: UserSession) {
+    return this.timesheetService.getTickets(organizationId, session?.user?.id, query);
   }
 
   @Get('projects')

@@ -8,6 +8,8 @@
 
 A robust, high-performance NestJS backend service for the **Meedo** application. Powered by **Prisma** ORM and **PostgreSQL**, this service features an advanced face recognition module utilizing vector embeddings via **pgvector**.
 
+See [the data model guide](docs/DATA_MODEL.md) for internal projects, membership, tickets, timesheets, notifications and manual Apptivo sync. Run `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit` to type-check application code and specs. The seed refuses production and non-local targets unless `SEED_ALLOWED_DATABASE_NAME` exactly names the database.
+
 ---
 
 ## 🚀 Key Features
