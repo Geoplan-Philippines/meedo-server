@@ -578,7 +578,7 @@ export class TicketsService {
    *  so editing a ticket that already has a past due date stays possible. */
   private assertDueDateNotPastOnChange(dueDate: string | null | undefined, existing: Date | null): void {
     if (!dueDate) {
-      // not provided, or being cleared — nothing to validate
+      // not provided, or being cleared. Nothing to validate.
       return;
     }
     if (existing && new Date(dueDate).getTime() === existing.getTime()) {

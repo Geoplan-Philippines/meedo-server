@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 
 import { PrismaService } from '../../../core/database/prisma.service';
 
-/** Team member shape returned to the client — the link row plus the linked user. */
+/** Team member shape returned to the client. It includes the link row and the linked user. */
 const TEAM_MEMBER_SELECT = {
   id: true,
   teamId: true,
@@ -19,7 +19,7 @@ export class TeamsService {
    * Members assigned to a team, scoped to the organization.
    *
    * Unlike Better Auth's `list-team-members`, this does NOT require the caller
-   * to be a member of the team — the ticket assignee picker needs a team's roster
+   * to be a member of the team. The ticket assignee picker needs a team's roster
    * regardless of who is looking. An empty team correctly returns `[]` (no members),
    * which callers must treat as "no one", never as "everyone".
    */
@@ -50,7 +50,7 @@ export class TeamsService {
 
   /**
    * Remove a member's assignment from a team. This deletes only the team↔user
-   * link row — the user, their org membership, and their ticket history are all
+   * link row. The user, their org membership, and their ticket history are all
    * untouched. Idempotent: removing a member who isn't on the team is a no-op.
    */
   async removeTeamMember(teamId: string, userId: string, organizationId: string) {

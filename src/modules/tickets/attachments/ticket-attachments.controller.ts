@@ -21,7 +21,7 @@ export interface TicketAttachmentResult {
   name: string;
   mimeType: string;
   bytes: number;
-  /** Cloudinary resource kind — 'image' renders inline, otherwise a file chip. */
+  /** Cloudinary resource kind. 'image' renders inline. Anything else is a file chip. */
   resourceType: string;
 }
 

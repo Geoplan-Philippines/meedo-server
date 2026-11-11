@@ -1363,7 +1363,7 @@ function addSummarySheet(
   const sheet = workbook.addWorksheet('Timesheet', { views: [{ state: 'frozen', ySplit: PAYROLL_HEADER_ROW }] });
 
   sheet.mergeCells('A1:N1');
-  sheet.getCell('A1').value = `Timesheet — ${formatLongDate(options.periodStart)} to ${formatLongDate(options.periodEnd)}`;
+  sheet.getCell('A1').value = `Timesheet, ${formatLongDate(options.periodStart)} to ${formatLongDate(options.periodEnd)}`;
   sheet.getCell('A1').font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
   sheet.getCell('A1').fill = solidFill('1F4E78');
   sheet.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center' };

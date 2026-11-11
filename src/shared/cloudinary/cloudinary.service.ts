@@ -74,7 +74,7 @@ export class CloudinaryService {
    * Uploads an arbitrary attachment (image or any other file type).
    *
    * `resource_type: 'auto'` lets Cloudinary store images as images (so they get
-   * `f_auto,q_auto` optimisation) and everything else as `raw` — the returned
+   * `f_auto,q_auto` optimisation) and everything else as `raw`. The returned
    * `secure_url` is then a direct download link. Only an allowlist of safe types
    * (images, PDF, Office docs, text, zip) is accepted; SVGs are rejected because
    * they can embed scripts. Size is capped by the controller's ParseFilePipe.

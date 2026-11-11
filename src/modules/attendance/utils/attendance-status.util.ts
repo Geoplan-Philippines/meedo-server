@@ -7,14 +7,14 @@ const OFFSET_MS = ATTENDANCE_TIMEZONE_OFFSET_MINUTES * 60 * 1000;
 
 /**
  * How a graded day reads against its schedule:
- *  - `no_schedule` — no weekly schedule resolved for the employee that day, and no punch.
- *  - `present_unscheduled` — no schedule resolved, but the employee timed in. Never late.
- *  - `holiday`     — the date is a company holiday.
- *  - `rest_day`    — a non-working day on the schedule.
- *  - `upcoming`    — a working day, no punch yet, but the shift isn't due yet (live board only).
- *  - `absent`      — a working day past due (or a finished day) with no punches.
- *  - `late`        — first punch landed after shift start + grace (fixed shifts).
- *  - `present`     — on a working day, on time (or a flexible shift).
+ *  - `no_schedule`: no weekly schedule resolved for the employee that day, and no punch.
+ *  - `present_unscheduled`: no schedule resolved, but the employee timed in. Never late.
+ *  - `holiday`: the date is a company holiday.
+ *  - `rest_day`: a non-working day on the schedule.
+ *  - `upcoming`: a working day, no punch yet, but the shift isn't due yet (live board only).
+ *  - `absent`: a working day past due (or a finished day) with no punches.
+ *  - `late`: first punch landed after shift start + grace (fixed shifts).
+ *  - `present`: on a working day, on time (or a flexible shift).
  */
 export type AttendanceStatus =
   | 'no_schedule'

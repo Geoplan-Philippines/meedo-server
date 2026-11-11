@@ -9,7 +9,7 @@ export class CreateAttendanceEventDTO {
   eventType!: ManualEventType;
 
   /**
-   * When the event occurred. Optional — defaults to now. Lets clients record a
+   * When the event occurred. Optional, and defaults to now. Lets clients record a
    * tap they forgot to log earlier, but never a future timestamp.
    */
   @IsOptional()

@@ -1,30 +1,18 @@
-# 🦁 Meedo Backend Server
+# Meedo backend server
 
-[![NestJS](https://img.shields.io/badge/NestJS-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)](https://nestjs.com/)
-[![Bun](https://img.shields.io/badge/Bun-000000?style=for-the-badge&logo=bun&logoColor=white)](https://bun.sh/)
-[![Prisma](https://img.shields.io/badge/Prisma-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+NestJS API for Meedo. It uses Prisma, PostgreSQL, and the `pgvector` extension for face-recognition embeddings.
 
-A robust, high-performance NestJS backend service for the **Meedo** application. Powered by **Prisma** ORM and **PostgreSQL**, this service features an advanced face recognition module utilizing vector embeddings via **pgvector**.
+See [the data model guide](docs/DATA_MODEL.md) for internal projects, membership, tickets, timesheets, notifications, and manual Apptivo sync. Run `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit` to type-check application code and specs. The seed refuses production and non-local targets unless `SEED_ALLOWED_DATABASE_NAME` exactly names the database.
 
-See [the data model guide](docs/DATA_MODEL.md) for internal projects, membership, tickets, timesheets, notifications and manual Apptivo sync. Run `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit` to type-check application code and specs. The seed refuses production and non-local targets unless `SEED_ALLOWED_DATABASE_NAME` exactly names the database.
+## Stack
 
----
+- [NestJS](https://nestjs.com/) and [TypeScript](https://www.typescriptlang.org/)
+- [Bun](https://bun.sh/) for install and scripts
+- [Prisma](https://www.prisma.io/) for queries and migrations
+- [PostgreSQL](https://www.postgresql.org/) with `pgvector` for face-recognition embeddings
+- Better Auth for authentication
 
-## 🚀 Key Features
-
-*   **NestJS Architecture:** Built on top of TypeScript for clean, modular, and maintainable enterprise-grade backend design.
-*   **Bun Runtime:** Supercharged performance and faster package resolutions.
-*   **Prisma ORM:** Fully type-safe database queries and automated migrations.
-*   **Vector Embeddings:** Face recognition analytics powered by PostgreSQL's `pgvector` extension.
-*   **Secure Authentication:** Structured authentication flow integrated with Better Auth.
-
----
-
-## 📂 Project Structure
-
-Here is a quick overview of the key directories in the repository:
+## Project structure
 
 ```text
 ├── prisma/                 # Database schema definitions and migration history
@@ -38,32 +26,31 @@ Here is a quick overview of the key directories in the repository:
 └── package.json            # Scripts, metadata, and dependencies
 ```
 
----
+## Setup
 
-## ⚙️ Quick Start Guide
+### 1. Clone the repository
 
-Follow these steps to set up the development environment on your local machine:
-
-### 1. Clone the Repository
-Clone the repository and navigate to the project root:
 ```bash
 git clone https://github.com/Geoplan-Philippines/meedo-server.git
 cd meedo-server
 ```
 
-### 2. Install Dependencies
-This project uses **Bun** as the primary package manager. Run the following command to install dependencies:
+### 2. Install dependencies
+
+This project uses Bun.
+
 ```bash
 bun install
 ```
 
-### 3. Configure Environment Variables
-Copy the env template file to create your local environment file:
+### 3. Configure environment variables
+
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and fill in the required configurations:
+Open `.env` and set these values:
+
 ```env
 # Basic App Settings
 NODE_ENV=development
@@ -84,89 +71,80 @@ FACE_API_BASE_URL=http://localhost:8001/api/v1
 FACE_API_TIMEOUT_MS=8000
 ```
 
----
+## Database
 
-## 🗄️ Database Setup
+### 1. Generate the Prisma client
 
-Configure Prisma and initialize the database schema with the following commands:
-
-### 1. Generate Prisma Client
 ```bash
 bunx prisma generate
 ```
 
-### 2. Run Database Migrations
+### 2. Run migrations
+
 ```bash
 bunx prisma migrate dev
 ```
 
-### 3. Enable pgvector Extension
-Run the following SQL query inside your PostgreSQL database (using **pgAdmin Query Tool**, **psql**, or your favorite database manager) to enable vector support:
+### 3. Enable pgvector
+
+Run this SQL in the database, with pgAdmin, psql, or another SQL client:
+
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-> [!NOTE]
-> If you need to wipe and reset your database schema for clean re-migrations, you can run:
-> ```bash
-> bunx prisma migrate reset
-> ```
+To wipe the schema and reapply migrations:
 
----
+```bash
+bunx prisma migrate reset
+```
 
-## 📦 pgvector Setup (Windows Installation Guide)
+## pgvector on Windows
 
-If the `pgvector` extension is not automatically available via PostgreSQL StackBuilder, you can install it manually by following these steps:
+If StackBuilder does not include `pgvector`, install the binary yourself.
 
-1. **Obtain the Binary:** Download the appropriate pre-compiled `pgvector` zip file matching your PostgreSQL version (e.g., `vector.v0.8.2-pg18.zip`). *Contact the team for the correct binary if needed.*
-2. **Extract Files:** Extract the contents of the zip file.
-3. **Deploy to Postgres Directory:** Copy the extracted folders and merge them directly into your local PostgreSQL installation directory (typically `C:\Program Files\PostgreSQL\<version>\`):
-    *   `bin/` ➔ `C:\Program Files\PostgreSQL\<version>\bin\`
-    *   `lib/` ➔ `C:\Program Files\PostgreSQL\<version>\lib\`
-    *   `share/` ➔ `C:\Program Files\PostgreSQL\<version>\share\`
-4. **Restart PostgreSQL:** Open the Windows **Services** manager (`services.msc`), locate **postgresql-x64-<version>**, and click **Restart**.
-5. **Activate the Extension:** Connect to your database and run:
+1. Download the precompiled zip that matches your PostgreSQL version, for example `vector.v0.8.2-pg18.zip`. Ask the team if you need the binary.
+2. Extract the zip.
+3. Copy the extracted folders into the PostgreSQL install directory, usually `C:\Program Files\PostgreSQL\<version>\`:
+    * `bin/` into `C:\Program Files\PostgreSQL\<version>\bin\`
+    * `lib/` into `C:\Program Files\PostgreSQL\<version>\lib\`
+    * `share/` into `C:\Program Files\PostgreSQL\<version>\share\`
+4. Restart the service. Open `services.msc`, find `postgresql-x64-<version>`, and restart it.
+5. Connect to the database and run:
+
     ```sql
     CREATE EXTENSION IF NOT EXISTS vector;
     ```
 
----
+## Run the server
 
-## 💻 Running the Server
+### Development, with reload
 
-Use the following commands to run the application runtime:
-
-### Development Mode (with Hot Reload)
 ```bash
 bun run start:dev
 ```
 
-### Production Mode
+### Production
+
 ```bash
 bun run build
 bun run start:prod
 ```
 
-The server will initialize and listen on the configured port. By default:
-*   **Server URL:** [http://localhost:8000](http://localhost:8000)
-*   **API Base URL:** [http://localhost:8000/api/v1](http://localhost:8000/api/v1)
+The process listens on the configured port. Defaults:
 
----
+* Server: [http://localhost:8000](http://localhost:8000)
+* API base: [http://localhost:8000/api/v1](http://localhost:8000/api/v1)
 
-## 🧪 API Validation & Health Checks
+## Health check
 
-You can verify the status of the server by hitting the built-in health check endpoint:
-
-| Method | Endpoint | Description |
+| Method | Endpoint | What it checks |
 | :--- | :--- | :--- |
-| **GET** | `/api/v1/health` | Performs health checks on database connectivity and critical services. |
+| GET | `/api/v1/health` | Database connectivity and critical services |
 
----
+## Before you start
 
-## 📝 Important Notes & Best Practices
-
-> [!IMPORTANT]
-> *   **PostgreSQL Status:** Make sure your PostgreSQL server is up and running before booting the backend.
-> *   **Connection Ports:** Double-check the port inside your `DATABASE_URL` (e.g., `5432` or dockerized port `54321`).
-> *   **Face Recognition:** `pgvector` must be successfully registered in the database for face recognition features to operate.
-> *   **Production Credentials:** Never share or check-in actual credentials. Always use a strong, cryptographically secure `BETTER_AUTH_SECRET` in staging/production environments.
+* PostgreSQL has to be running before the API starts.
+* Check the port in `DATABASE_URL` (`5432`, or `54321` when Postgres runs in Docker).
+* Register `pgvector` in the database, or face recognition will not run.
+* Do not commit real credentials. Use a strong random `BETTER_AUTH_SECRET` in staging and production.

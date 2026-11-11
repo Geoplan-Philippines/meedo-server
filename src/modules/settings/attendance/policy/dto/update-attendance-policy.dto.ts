@@ -4,7 +4,7 @@ import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Matches, Max, Min } f
 import { TIME_PATTERN } from '../../shared/attendance-settings.util';
 
 /**
- * Every field is optional — the policy is a single per-org row that is patched.
+ * Every field is optional. The policy is a single per-org row that is patched.
  * Units are chosen to read plainly: times are "HH:mm", grace/lunch/overtime
  * thresholds are minutes, and standard/overtime work is expressed in hours.
  */

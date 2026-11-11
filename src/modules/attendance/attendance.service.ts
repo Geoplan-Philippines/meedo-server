@@ -64,7 +64,7 @@ export class AttendanceService {
   /**
    * Record a manual field/WFH event for the employee and recompute the affected
    * day so `firstIn` / `lastOut` / `billableHours` stay materialized. The event
-   * and the recompute are atomic — a failed recompute rolls back the event.
+   * and the recompute are atomic. A failed recompute rolls back the event.
    */
   async recordAttendanceEvent(
     employeeId: string,
@@ -211,8 +211,8 @@ export class AttendanceService {
    * stamping a system OUT at the auto-clock-out cutoff (18:00 Asia/Manila).
    *
    * Only sessions whose latest event is still an "in" and falls before the
-   * cutoff are closed; anyone who already clocked out — or who later punches out
-   * past 18:00 — keeps their real `lastOut`, since the recompute takes the
+   * cutoff are closed. Anyone who already clocked out, or who later punches out
+   * past 18:00, keeps their real `lastOut`, since the recompute takes the
    * timestamp of the day's latest OUT event. Re-running is safe: an auto-closed
    * day's latest event is now an OUT, so it is skipped. Returns the number of
    * sessions closed.
@@ -268,7 +268,7 @@ export class AttendanceService {
    * OUT was actually written: the bulk read in `runAutoClockOut` can go stale if
    * the employee punches out between that read and here, so the latest event is
    * re-checked inside the transaction and the AUTO OUT is skipped if the session
-   * is no longer open — avoiding a phantom AUTO entry next to a real punch-out.
+   * is no longer open. That avoids a phantom AUTO entry next to a real punch-out.
    */
   private async createAutoClockOut(
     employeeId: string,
@@ -605,7 +605,7 @@ export class AttendanceService {
     const [firstInEvent, latestEvent] = await Promise.all([
       // `firstIn` is anchored to the day's first genuine clock-in / presence
       // event, so OUT types are excluded here. An OUT with no prior IN (a stray
-      // biometric OUT, or a forgotten clock-in) must never seed `firstIn` — that
+      // biometric OUT, or a forgotten clock-in) must never seed `firstIn`. That
       // would otherwise make the OUT both first-in and last-out and materialize a
       // bogus 0-hour record.
       tx.attendanceEvent.findFirst({
@@ -631,8 +631,8 @@ export class AttendanceService {
     const firstIn = firstInEvent.timestamp;
 
     // The day is closed only once its latest event is an explicit clock-out
-    // (`OUT_EVENT_TYPES`); until then the session is still open. A lone clock-in
-    // — or any run of in/presence events with no closing punch — therefore keeps
+    // (`OUT_EVENT_TYPES`). Until then the session is still open. A lone clock-in,
+    // or any run of in/presence events with no closing punch, therefore keeps
     // lastOut/billableHours null instead of back-filling a last-out equal to the
     // first-in. A bare biometric tap never closes the day (see `isOpenSession`),
     // so it stays open until the real OUT or the auto-clock-out at the cutoff.

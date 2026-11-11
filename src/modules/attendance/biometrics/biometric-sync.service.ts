@@ -71,7 +71,7 @@ export class BiometricSyncService {
    * Where this poll starts. Once running, resume from where the last poll ended
    * (minus an overlap) to keep the window tight. On a cold process, resume from
    * the last tap ever stored. Never look back past the lookback floor, so a
-   * first run â€” or one after long downtime â€” can't replay the whole device log.
+   * first run, or one after long downtime, can't replay the whole device log.
    */
   private async resolveWindowStart(now: Date): Promise<Date> {
     const floor = new Date(now.getTime() - SYNC_MAX_LOOKBACK_MS);

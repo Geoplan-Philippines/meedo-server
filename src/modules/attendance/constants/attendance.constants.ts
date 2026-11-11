@@ -5,7 +5,7 @@ import { AttendanceDayStatus } from '../utils/attendance-status.util';
 
 /**
  * Company timezone (IANA). Single source of truth for the cron schedule and the
- * offset below — both describe the same zone, so keep them in sync here.
+ * offset below. Both describe the same zone, so keep them in sync here.
  */
 export const COMPANY_TIMEZONE = 'Asia/Manila';
 
@@ -81,7 +81,7 @@ export interface DailyAttendanceSummary {
   events: AttendanceEventRecord[];
 }
 
-/** Organization roles that may view every employee's attendance, not just their own. */
+/** Organization roles that may view every employee's attendance. Other roles see only their own. */
 export const ORG_MANAGER_ROLES = ['owner', 'admin'] as const;
 
 /** One employee's computed attendance for a day, as shown on the org roster. */

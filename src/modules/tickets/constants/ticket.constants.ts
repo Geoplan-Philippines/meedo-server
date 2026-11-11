@@ -125,7 +125,7 @@ export type TicketView = (typeof TICKET_VIEWS)[number];
 /**
  * Which status lifecycle categories each board view includes. `all` applies no
  * category filter (it is intentionally absent here). Centralized so clients
- * never hardcode what "Backlog" or "Closed" mean — the server owns the mapping.
+ * never hardcode what "Backlog" or "Closed" mean. The server owns the mapping.
  */
 export const TICKET_VIEW_CATEGORIES: Record<Exclude<TicketView, 'all'>, TicketStatusCategory[]> = {
   backlog: [TicketStatusCategory.BACKLOG],

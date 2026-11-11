@@ -7,7 +7,7 @@ export class CreateStatusDTO {
   @IsNotEmpty()
   name!: string;
 
-  // Custom statuses are restricted to the curated palette — no free-form colors.
+  // Custom statuses are restricted to the curated palette. No free-form colors.
   @IsOptional()
   @IsIn([...CUSTOM_STATUS_COLORS])
   color?: string;

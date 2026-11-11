@@ -27,7 +27,7 @@ export class StatusesService {
 
   /**
    * System statuses display in their canonical SYSTEM_STATUSES order rather than
-   * creation order — a self-healed status (e.g. "In Review", added after the
+   * creation order. A self-healed status (e.g. "In Review", added after the
    * original set) must slot into its defined position, not append to the end.
    * Custom statuses keep their createdAt order and follow the system set.
    */
@@ -78,7 +78,7 @@ export class StatusesService {
     });
   }
 
-  /** Standard/built-in statuses are locked — reject any attempt to modify them. */
+  /** Standard and built-in statuses are locked. Reject any attempt to modify them. */
   private async assertNotSystem(id: string, organizationId: string): Promise<void> {
     const status = await this.prisma.ticketStatus.findFirst({
       where: { id, organizationId },
@@ -102,8 +102,8 @@ export class StatusesService {
     }
     await this.prisma.$transaction(async (tx) => {
       // Rename legacy statuses to their canonical names first so the upsert below
-      // promotes the existing row in place — preserving its id and every ticket
-      // pointing at it — instead of creating a duplicate (e.g. the pre-existing
+      // promotes the existing row in place, preserving its id and every ticket
+      // pointing at it, instead of creating a duplicate (e.g. the pre-existing
       // 'Cancelled' alongside a new 'Canceled', or 'Open' alongside 'Todo'). Skip
       // when the canonical name already exists to avoid violating the
       // (organizationId, name) unique constraint.
@@ -122,7 +122,7 @@ export class StatusesService {
       }
 
       // Create any missing system statuses. For an already-existing row (e.g. a
-      // renamed legacy default), only flag it as a system status — never
+      // renamed legacy default), only flag it as a system status. Never
       // overwrite its color or category, which would silently change how existing
       // boards look.
       for (const status of SYSTEM_STATUSES) {
