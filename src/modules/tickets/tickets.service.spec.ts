@@ -237,6 +237,21 @@ describe('TicketsService', () => {
       }));
     });
 
+    it('orders list pages by the chosen field, newest first by default, with an id tiebreak', async () => {
+      mockPrismaService.tickets.findMany.mockResolvedValue([]);
+      mockPrismaService.tickets.count.mockResolvedValue(0);
+
+      await service.getAllTickets({ page: 1, limit: 25 }, 'org-uuid-1');
+      expect(mockPrismaService.tickets.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      }));
+
+      await service.getAllTickets({ page: 1, limit: 25, sortField: 'dueDate', sortOrder: 'asc' }, 'org-uuid-1');
+      expect(mockPrismaService.tickets.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+        orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
+      }));
+    });
+
     it('returns paginated tickets', async () => {
       mockPrismaService.tickets.findMany.mockResolvedValue([mockTicket]);
       mockPrismaService.tickets.count.mockResolvedValue(1);

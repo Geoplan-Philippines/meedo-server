@@ -559,7 +559,8 @@ export class TicketsService {
       ? (sortField as TicketSortField)
       : 'createdAt';
     const direction: Prisma.SortOrder = sortOrder === 'asc' ? 'asc' : 'desc';
-    return { [field]: direction };
+    // The id tiebreak keeps pages stable when tickets share a sort value (bulk imports, equal priorities).
+    return [{ [field]: direction }, { id: 'asc' }];
   }
 
   private assertDueDateNotPast(dueDate: string | undefined): void {

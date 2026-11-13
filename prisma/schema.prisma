@@ -303,6 +303,7 @@ model NewsletterSubscriber {
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
+  @@index([createdAt])
   @@map("newsletter_subscribers")
 }
 
@@ -447,6 +448,7 @@ model Lead {
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
+  @@index([createdAt])
   @@map("leads")
 }
 
@@ -523,6 +525,7 @@ model Tickets {
   @@index([createdById])
   @@index([teamId])
   @@index([isArchived])
+  @@index([organizationId, isArchived, createdAt])
   @@unique([organizationId, ticketNumber])
   @@map("tickets")
 }
