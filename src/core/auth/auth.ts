@@ -5,6 +5,7 @@ import { organization } from "better-auth/plugins";
 import { env } from "../config/env.config";
 import { prisma } from "../database/prisma.client";
 import { sessionHooks, organizationHooks } from "./auth.hooks";
+import { sessionDiagnostics } from "./session-diagnostics.plugin";
 
 export const auth = betterAuth({
   baseURL: env.APP_URL,
@@ -25,6 +26,8 @@ export const auth = betterAuth({
       teams: { enabled: true },
       organizationHooks,
     }),
+    // Says in the API log why a session 401 happened; better-auth reports them all as "Unauthorized".
+    sessionDiagnostics(),
   ],
 
   trustedOrigins: env.CORS_ALLOWED_ORIGINS,
