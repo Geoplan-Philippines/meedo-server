@@ -55,6 +55,8 @@ export class StatusesService {
         ? Prisma.sql`LOWER(s.name) ${direction}`
         : field === 'createdAt'
           ? Prisma.sql`s.created_at ${direction}`
+          : field === 'updatedAt'
+            ? Prisma.sql`s.updated_at ${direction}`
           : Prisma.sql`CASE WHEN s.is_system THEN COALESCE(array_position(${systemNames}::text[], s.name), ${UNRANKED}) ELSE ${UNRANKED} END ${direction}, s.created_at ${direction}`;
     const rows = await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
       SELECT s.id

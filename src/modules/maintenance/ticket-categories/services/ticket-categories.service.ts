@@ -45,7 +45,7 @@ export class TicketCategoriesService {
       ]),
     };
     const field = query.sortField ?? "name";
-    const order = query.sortOrder ?? (field === "createdAt" ? "desc" : "asc");
+    const order = query.sortOrder ?? (field === "name" ? "asc" : "desc");
     const [categories, total] = await Promise.all([
       this.prisma.ticketCategory.findMany({ where, orderBy: [{ [field]: order }, { id: "asc" }], ...pageArgs(query) }),
       this.prisma.ticketCategory.count({ where }),

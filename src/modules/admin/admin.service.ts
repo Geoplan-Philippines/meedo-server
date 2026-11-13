@@ -115,7 +115,7 @@ export class AdminService {
           team: { organizationId },
         },
         orderBy: { createdAt: 'asc' },
-        select: { teamId: true },
+        select: { teamId: true, team: { select: { id: true, name: true } } },
       }),
       prisma.employeeScheduleAssignment.findUnique({
         where: { organizationId_userId: { organizationId, userId: member.userId } },
@@ -126,6 +126,8 @@ export class AdminService {
     return {
       ...member,
       teamId: teamMember?.teamId ?? null,
+      // Lets the edit form show the team without loading every team.
+      team: teamMember?.team ?? null,
       weeklyScheduleId: scheduleAssignment?.weeklyScheduleId ?? null,
     };
   }

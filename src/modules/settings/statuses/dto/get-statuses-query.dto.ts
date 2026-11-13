@@ -5,7 +5,7 @@ import { IsBoolean, IsIn, IsOptional } from 'class-validator';
 import { ListQueryDTO, toBoolean } from '../../../../common/dto/list-query.dto';
 
 /** `position`: standard statuses in their workflow order, then custom ones oldest first. */
-export const STATUS_SORT_FIELDS = ['position', 'name', 'createdAt'] as const;
+export const STATUS_SORT_FIELDS = ['position', 'name', 'createdAt', 'updatedAt'] as const;
 export type StatusSortField = (typeof STATUS_SORT_FIELDS)[number];
 
 /** Search matches the status name. */

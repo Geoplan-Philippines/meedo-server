@@ -13,7 +13,10 @@ export class ShiftsService {
   constructor(private prisma: PrismaService) {}
 
   /** Active shifts first, then archived; ordered by start time then name unless another sort is asked for. */
-  async getShifts(query: GetShiftsQueryDTO, organizationId: string): Promise<PaginatedResponse<Shift>> {
+  async getShifts(
+    query: GetShiftsQueryDTO,
+    organizationId: string,
+  ): Promise<PaginatedResponse<Shift> & { meta: { archivedCount: number } }> {
     const where: Prisma.ShiftWhereInput = {
       organizationId,
       ...(query.includeArchived === false ? { isArchived: false } : {}),
@@ -21,15 +24,18 @@ export class ShiftsService {
     };
     const field = query.sortField ?? 'startTime';
     const order = query.sortOrder ?? 'asc';
-    const [shifts, total] = await Promise.all([
+    const [shifts, total, archivedCount] = await Promise.all([
       this.prisma.shift.findMany({
         where,
         orderBy: [{ isArchived: 'asc' }, { [field]: order }, { name: 'asc' }, { id: 'asc' }],
         ...pageArgs(query),
       }),
       this.prisma.shift.count({ where }),
+      // Lets the screen offer "Show archived (n)" without loading archived rows.
+      this.prisma.shift.count({ where: { organizationId, isArchived: true } }),
     ]);
-    return toPage(shifts, total, query);
+    const page = toPage(shifts, total, query);
+    return { ...page, meta: { ...page.meta, archivedCount } };
   }
 
   async createShift(data: CreateShiftDTO, organizationId: string): Promise<Shift> {
