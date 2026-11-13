@@ -2,7 +2,7 @@
 
 NestJS API for Meedo. It uses Prisma, PostgreSQL, and the `pgvector` extension for face-recognition embeddings.
 
-See [the data model guide](docs/DATA_MODEL.md) for internal projects, membership, tickets, timesheets, notifications, and manual Apptivo sync. Run `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit` to type-check application code and specs. The single demo seed permits local development targets; production and all non-local targets require `SEED_ALLOWED_DATABASE_NAME` to exactly name the database.
+See [the data model guide](docs/DATA_MODEL.md) for internal projects, membership, tickets, timesheets, notifications, and manual Apptivo sync. Run `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit` to type-check application code and specs. The single demo seed writes to the PostgreSQL database configured by the application's `DATABASE_URL`.
 
 ## Stack
 
