@@ -85,6 +85,7 @@ const mockPrismaService = {
     findFirst:  jest.fn(),
     count:      jest.fn(),
     aggregate:  jest.fn(),
+    groupBy:    jest.fn(),
   },
   timesheetPeriodLock: {
     findFirst:  jest.fn(),
@@ -102,6 +103,7 @@ const mockPrismaService = {
     findUnique: jest.fn(),
   },
   $transaction: jest.fn(),
+  $queryRaw: jest.fn(),
 };
 
 describe('TimesheetService', () => {
@@ -383,7 +385,7 @@ describe('TimesheetService', () => {
   it('keeps summary, lock, export and entry filters on date keys across Manila midnight', async () => {
     mockPrismaService.member.findUnique.mockResolvedValue({ id: 'owner-member', role: 'owner' });
     const period = { periodStart: '2026-10-27T16:00:00Z', periodEnd: '2026-10-28' };
-    await expect(service.getSummary('org-1', 'user-1', period)).rejects.toThrow('calendar date');
+    await expect(service.getSummary('org-1', 'user-1', { ...period, page: 1, limit: 10 })).rejects.toThrow('calendar date');
     await expect(service.getPeriodLock('org-1', 'user-1', period)).rejects.toThrow('calendar date');
     await expect(service.lockPeriod('org-1', 'user-1', period)).rejects.toThrow('calendar date');
     await expect(service.exportTimesheet('org-1', 'user-1', period)).rejects.toThrow('calendar date');
@@ -391,25 +393,60 @@ describe('TimesheetService', () => {
   });
 
   describe('getSummary', () => {
-    it('allows admins to view organization summary totals', async () => {
+    const week = { periodStart: '2026-06-22', periodEnd: '2026-06-28', page: 1, limit: 10 };
+    const tabCounts = (counts: Partial<Record<'matching' | 'all_count' | 'submitted' | 'approved' | 'rejected', number>>) => [{
+      matching: BigInt(counts.matching ?? 0), all_count: BigInt(counts.all_count ?? 0), submitted: BigInt(counts.submitted ?? 0),
+      approved: BigInt(counts.approved ?? 0), rejected: BigInt(counts.rejected ?? 0),
+    }];
+
+    beforeEach(() => {
       mockPrismaService.member.findUnique.mockResolvedValue({ id: 'member-1', role: 'admin' });
+      mockPrismaService.timesheetEntry.groupBy.mockResolvedValue([{ status: TimesheetEntryStatus.SUBMITTED, _count: { _all: 1 }, _sum: { hours: 8 } }]);
+      mockPrismaService.timesheetEntry.aggregate.mockResolvedValue({ _sum: { hours: 0 } });
+      mockPrismaService.timesheetPeriodLock.findUnique.mockResolvedValue(null);
+    });
+
+    it('returns one page of employees with week totals and tab counts', async () => {
+      mockPrismaService.$queryRaw
+        .mockResolvedValueOnce([{ user_id: 'user-2' }])
+        .mockResolvedValueOnce(tabCounts({ matching: 1, all_count: 1, submitted: 1 }));
       mockPrismaService.timesheetEntry.findMany.mockResolvedValue([mockSummaryEntry]);
 
-      const result = await service.getSummary('org-1', 'admin-user', {
-        periodStart: '2026-06-22',
-        periodEnd:   '2026-06-28',
-      });
+      const result = await service.getSummary('org-1', 'admin-user', week);
 
-      expect(mockPrismaService.timesheetEntry.findMany.mock.calls[0][0]).toMatchObject({ where: { organizationId: 'org-1' } });
-      expect(result.totalEmployees).toBe(1);
-      expect(result.employees[0].status).toBe('PENDING');
+      expect(mockPrismaService.timesheetEntry.findMany.mock.calls[0][0]).toMatchObject({
+        where: { organizationId: 'org-1', userId: { in: ['user-2'] } },
+      });
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0]).toMatchObject({ userId: 'user-2', status: 'PENDING', department: 'Ops' });
+      expect(result.meta).toMatchObject({
+        total: 1, page: 1, limit: 10, lastPage: 1,
+        totalEmployees: 1, totalEntries: 1, totalHours: 8, overtimeHours: 0,
+        totalsByStatus: { SUBMITTED: 1 },
+        tabCounts: { all: 1, submitted: 1, approved: 0, rejected: 0 },
+      });
+    });
+
+    it('picks the page in SQL by tab and search, ordered by name with limit and offset', async () => {
+      mockPrismaService.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce(tabCounts({ all_count: 4 }));
+
+      const result = await service.getSummary('org-1', 'admin-user', { ...week, page: 3, limit: 5, tab: 'REJECTED', search: 'ops 50%' });
+
+      const pageSql = mockPrismaService.$queryRaw.mock.calls[0][0];
+      expect(pageSql.sql).toContain('has_rejected');
+      expect(pageSql.sql).toContain('t.name ILIKE');
+      expect(pageSql.sql).toMatch(/ORDER BY LOWER\(COALESCE/);
+      // Every search word must match; LIKE wildcards in the search are escaped.
+      expect(pageSql.values).toEqual(expect.arrayContaining(['%ops%', '%50\\%%', 5, 10]));
+      expect(mockPrismaService.timesheetEntry.findMany).not.toHaveBeenCalled();
+      expect(result.data).toEqual([]);
+      expect(result.meta.totalEmployees).toBe(4);
     });
 
     it('rejects members from viewing approval summary', async () => {
-      await expect(service.getSummary('org-1', 'user-1', {
-        periodStart: '2026-06-22',
-        periodEnd:   '2026-06-28',
-      })).rejects.toThrow(ForbiddenException);
+      mockPrismaService.member.findUnique.mockResolvedValue({ id: 'member-2', role: 'member' });
+      await expect(service.getSummary('org-1', 'user-1', week)).rejects.toThrow(ForbiddenException);
+      expect(mockPrismaService.$queryRaw).not.toHaveBeenCalled();
     });
   });
 

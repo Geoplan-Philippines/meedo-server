@@ -1,5 +1,9 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { TicketCategory } from "@prisma/client";
+import { Prisma, TicketCategory } from "@prisma/client";
+
+import { PaginatedResponse } from "../../../../common/responses/paginated-api.response";
+import { containsInsensitive, pageArgs, termSearchWhere, toPage } from "../../../../common/utils/pagination.util";
+import { GetTicketCategoriesQueryDTO } from "../dto/get-ticket-categories-query.dto";
 
 import { PrismaService } from "../../../../core/database/prisma.service";
 import { CreateTicketCategoryDTO } from "../dto/create-ticket-category.dto";
@@ -30,12 +34,23 @@ export class TicketCategoriesService {
   }
 
   async getAllTicketCategories(
+    query: GetTicketCategoriesQueryDTO,
     organizationId: string,
-  ): Promise<TicketCategory[]> {
-    return this.prisma.ticketCategory.findMany({
-      where: { organizationId },
-      orderBy: { name: "asc" },
-    });
+  ): Promise<PaginatedResponse<TicketCategory>> {
+    const where: Prisma.TicketCategoryWhereInput = {
+      organizationId,
+      ...termSearchWhere<Prisma.TicketCategoryWhereInput>(query.search, (term) => [
+        { name: containsInsensitive(term) },
+        { description: containsInsensitive(term) },
+      ]),
+    };
+    const field = query.sortField ?? "name";
+    const order = query.sortOrder ?? (field === "createdAt" ? "desc" : "asc");
+    const [categories, total] = await Promise.all([
+      this.prisma.ticketCategory.findMany({ where, orderBy: [{ [field]: order }, { id: "asc" }], ...pageArgs(query) }),
+      this.prisma.ticketCategory.count({ where }),
+    ]);
+    return toPage(categories, total, query);
   }
 
   async updateTicketCategory(

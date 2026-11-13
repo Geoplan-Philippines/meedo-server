@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { GetShiftsQueryDTO } from './dto/get-shifts-query.dto';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import { CurrentOrganizationId } from '../../../../common/decorators/current-organization-id.decorator';
@@ -12,8 +13,8 @@ export class ShiftsController {
 
   @AllowAnonymous()
   @Get()
-  getShifts(@CurrentOrganizationId() organizationId: string) {
-    return this.shiftsService.getShifts(organizationId);
+  getShifts(@Query() query: GetShiftsQueryDTO, @CurrentOrganizationId() organizationId: string) {
+    return this.shiftsService.getShifts(query, organizationId);
   }
 
   @AllowAnonymous()

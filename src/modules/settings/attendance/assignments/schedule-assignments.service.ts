@@ -1,6 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../../core/database/prisma.service';
+import { ListQueryDTO } from '../../../../common/dto/list-query.dto';
+import { containsInsensitive, pageArgs, termSearchWhere, toPage } from '../../../../common/utils/pagination.util';
 
 const SCHEDULE_SELECT = { id: true, name: true, isDefault: true };
 
@@ -30,6 +33,89 @@ export class ScheduleAssignmentsService {
     ]);
 
     return { teams, employees };
+  }
+
+  /**
+   * One page of the organization's teams, A–Z, each with its explicit schedule
+   * (null when it falls back to the org default). `meta.assignedCount` counts
+   * matching teams that have a schedule of their own.
+   */
+  async listTeamAssignments(organizationId: string, query: ListQueryDTO) {
+    const where: Prisma.TeamWhereInput = {
+      organizationId,
+      ...(query.search ? { name: containsInsensitive(query.search) } : {}),
+    };
+    const [teams, total, assignedCount] = await Promise.all([
+      this.prisma.team.findMany({
+        where,
+        select: { id: true, name: true, scheduleAssignment: { select: { weeklyScheduleId: true, weeklySchedule: { select: SCHEDULE_SELECT } } } },
+        orderBy: [{ name: query.sortOrder ?? 'asc' }, { id: 'asc' }],
+        ...pageArgs(query),
+      }),
+      this.prisma.team.count({ where }),
+      this.prisma.team.count({ where: { ...where, scheduleAssignment: { isNot: null } } }),
+    ]);
+    const page = toPage(
+      teams.map(({ scheduleAssignment, ...team }) => ({
+        ...team,
+        weeklyScheduleId: scheduleAssignment?.weeklyScheduleId ?? null,
+        weeklySchedule: scheduleAssignment?.weeklySchedule ?? null,
+      })),
+      total,
+      query,
+    );
+    return { ...page, meta: { ...page.meta, assignedCount } };
+  }
+
+  /**
+   * One page of organization members by name, each with their personal schedule
+   * override (null when their team or the org default applies).
+   * `meta.assignedCount` counts matching members with an override.
+   */
+  async listEmployeeAssignments(organizationId: string, query: ListQueryDTO) {
+    const where: Prisma.MemberWhereInput = {
+      organizationId,
+      ...termSearchWhere<Prisma.MemberWhereInput>(query.search, (term) => [
+        { user: { name: containsInsensitive(term) } },
+        { user: { email: containsInsensitive(term) } },
+      ]),
+    };
+    const assigned: Prisma.MemberWhereInput = {
+      ...where,
+      user: { scheduleAssignments: { some: { organizationId } } },
+    };
+    const [members, total, assignedCount] = await Promise.all([
+      this.prisma.member.findMany({
+        where,
+        select: {
+          userId: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              scheduleAssignments: { where: { organizationId }, select: { weeklyScheduleId: true, weeklySchedule: { select: SCHEDULE_SELECT } } },
+            },
+          },
+        },
+        orderBy: [{ user: { name: { sort: query.sortOrder ?? 'asc', nulls: 'last' } } }, { id: 'asc' }],
+        ...pageArgs(query),
+      }),
+      this.prisma.member.count({ where }),
+      this.prisma.member.count({ where: assigned }),
+    ]);
+    const page = toPage(
+      members.map(({ userId, user }) => ({
+        userId,
+        name: user.name || user.email,
+        email: user.email,
+        weeklyScheduleId: user.scheduleAssignments[0]?.weeklyScheduleId ?? null,
+        weeklySchedule: user.scheduleAssignments[0]?.weeklySchedule ?? null,
+      })),
+      total,
+      query,
+    );
+    return { ...page, meta: { ...page.meta, assignedCount } };
   }
 
   async assignTeam(organizationId: string, teamId: string, weeklyScheduleId: string) {

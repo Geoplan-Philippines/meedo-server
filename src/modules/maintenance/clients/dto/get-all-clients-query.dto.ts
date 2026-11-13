@@ -2,7 +2,8 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsOptional } from 'class-validator';
 import { ArchivableQueryDTO } from '../../projects/dto/archivable-query.dto';
 
-export const CLIENT_SORT_FIELDS = ['customerName', 'projectCount', 'createdAt'] as const;
+/** `name` is the shown name (display name, else the Apptivo customer name). */
+export const CLIENT_SORT_FIELDS = ['name', 'customerName', 'projectCount', 'createdAt'] as const;
 export type ClientSortField = (typeof CLIENT_SORT_FIELDS)[number];
 
 export class GetAllClientsQueryDTO extends ArchivableQueryDTO {

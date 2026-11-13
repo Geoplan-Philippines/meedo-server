@@ -13,6 +13,17 @@ import { CLIENT_DISPLAY_NAME_SQL, clientDisplayName, normalizeDisplayName } from
 import { diffFields, recordMaintenanceAudit, resolveAdminActor } from '../audit/maintenance-audit';
 import { UpdateClientDTO } from './dto/update-client.dto';
 import { GetClientTreeQueryDTO } from './dto/get-client-tree-query.dto';
+import { GetClientOptionsQueryDTO } from './dto/get-client-options-query.dto';
+import type { SortOrder } from '../../../common/dto/list-query.dto';
+import {
+  PageQuery,
+  containsInsensitive,
+  escapeLikePattern,
+  orderByIds,
+  pageArgs,
+  sqlDirection,
+  toPage,
+} from '../../../common/utils/pagination.util';
 import {
   APPTIVO_SYNC_TRANSACTION_OPTIONS,
 } from '../projects/constants/apptivo-sync.constants';
@@ -40,6 +51,25 @@ export type ClientTreeNode = { id: string; name: string; projectCount: number };
 
 export type ClientRef = { id: string; customerName: string | null };
 
+type ClientListFilters = {
+  organizationId: string;
+  scope: { organizationId: string; userId: string; isAdmin: boolean };
+  includeArchived?: boolean;
+  search?: string;
+};
+
+/** Org, archive, search and member visibility (members see clients of their projects only). */
+function clientListWhere({ organizationId, scope, includeArchived, search }: ClientListFilters): Prisma.ClientWhereInput {
+  return {
+    organizationId,
+    ...(scope.isAdmin ? {} : { projects: { some: { organizationId, ...visibleProjects(scope) } } }),
+    ...(includeArchived ? {} : { isArchived: false }),
+    ...(search
+      ? { OR: [{ displayName: containsInsensitive(search) }, { customerName: containsInsensitive(search) }] }
+      : {}),
+  };
+}
+
 @Injectable()
 export class ClientsService {
   private readonly logger = new Logger(ClientsService.name);
@@ -48,56 +78,62 @@ export class ClientsService {
 
   async getAllClients(query: GetAllClientsQueryDTO, organizationId: string, userId?: string): Promise<PaginatedResponse<ClientView>> {
     const scope = await projectVisibility(this.prisma, organizationId, userId);
-    const { page, limit, includeArchived } = query;
-    const search = query.search?.trim();
+    const filters: ClientListFilters = { organizationId, scope, includeArchived: query.includeArchived, search: query.search };
     const sortOrder = query.sortOrder ?? 'desc';
+    const where = clientListWhere(filters);
+    // Members count only the projects they can see.
+    const include = { _count: { select: { projects: { where: visibleProjects(scope) } } } } satisfies Prisma.ClientInclude;
 
-    const where: Prisma.ClientWhereInput = {
-      organizationId,
-      ...(scope.isAdmin ? {} : { projects: { some: { organizationId, ...visibleProjects(scope) } } }),
-      ...(includeArchived ? {} : { isArchived: false }),
-      ...(search
-        ? {
-            OR: [
-              { displayName: { contains: search, mode: 'insensitive' } },
-              { customerName: { contains: search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+    const loadPage = async () => {
+      if (query.sortField === 'name') {
+        const ids = await this.pageClientIdsByName(filters, query, sortOrder);
+        return ids.length ? orderByIds(await this.prisma.client.findMany({ where: { id: { in: ids } }, include }), ids) : [];
+      }
+      const orderBy: Prisma.ClientOrderByWithRelationInput =
+        query.sortField === 'projectCount'
+          ? { projects: { _count: sortOrder } }
+          : { [query.sortField ?? 'createdAt']: sortOrder };
+      return this.prisma.client.findMany({ where, ...pageArgs(query), orderBy: [orderBy, { id: 'asc' }], include });
     };
 
-    const orderBy: Prisma.ClientOrderByWithRelationInput =
-      query.sortField === 'projectCount'
-        ? { projects: { _count: sortOrder } }
-        : { [query.sortField ?? 'createdAt']: sortOrder };
-
-    const [clients, total] = await Promise.all([
-      this.prisma.client.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: [orderBy, { id: 'asc' }],
-        include: scope.isAdmin ? CLIENT_INCLUDE : { _count: { select: { projects: { where: visibleProjects(scope) } } } },
-      }),
-      this.prisma.client.count({ where }),
-    ]);
-
+    const [clients, total] = await Promise.all([loadPage(), this.prisma.client.count({ where })]);
     const activeCounts = await this.countActiveProjects(clients.map((c) => c.id), visibleProjects(scope));
 
-    return {
-      data: clients.map((client) => ({
+    return toPage(
+      clients.map((client) => ({
         ...client,
         name: clientDisplayName(client),
         projectCount: client._count.projects,
         activeProjectCount: activeCounts.get(client.id) ?? 0,
       })),
-      meta: {
-        total,
-        limit,
-        page,
-        lastPage: Math.ceil(total / limit),
-      },
-    };
+      total,
+      query,
+    );
+  }
+
+  /**
+   * Ids of one page of clients ordered by shown name. The shown name is an
+   * expression (display name, else customer name), which Prisma cannot sort by.
+   * Filters match `clientListWhere`.
+   */
+  private async pageClientIdsByName(filters: ClientListFilters, page: PageQuery, order: SortOrder): Promise<string[]> {
+    const pattern = filters.search ? `%${escapeLikePattern(filters.search)}%` : null;
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT c.id
+      FROM clients c
+      WHERE c.organization_id = ${filters.organizationId}
+        AND (${!!filters.includeArchived} OR c.is_archived = false)
+        AND (${filters.scope.isAdmin} OR EXISTS (
+          SELECT 1 FROM projects p
+          JOIN project_members pm ON pm.project_id = p.id
+          WHERE p.client_id = c.id AND p.organization_id = ${filters.organizationId}
+            AND pm.organization_id = ${filters.organizationId} AND pm.user_id = ${filters.scope.userId}
+        ))
+        AND (${pattern}::text IS NULL OR c.display_name ILIKE ${pattern} OR c.customer_name ILIKE ${pattern})
+      ORDER BY LOWER(${CLIENT_DISPLAY_NAME_SQL}) ${sqlDirection(order)}, c.id
+      LIMIT ${page.limit} OFFSET ${(page.page - 1) * page.limit}
+    `);
+    return rows.map((row) => row.id);
   }
 
   /**
@@ -182,22 +218,31 @@ export class ClientsService {
     };
   }
 
-  /** Every client in the organization as { id, name }, sorted by shown name, for pickers and filters. */
-  async getClientOptions(organizationId: string, includeArchived = false, userId?: string): Promise<ClientOption[]> {
+  /** One page of clients as { id, name }, sorted by shown name and narrowed by search, for pickers and filters. */
+  async getClientOptions(query: GetClientOptionsQueryDTO, organizationId: string, userId?: string): Promise<PaginatedResponse<ClientOption>> {
     const scope = await projectVisibility(this.prisma, organizationId, userId);
-    const clients = await this.prisma.client.findMany({
-      where: { organizationId, ...(includeArchived ? {} : { isArchived: false }), ...(scope.isAdmin ? {} : { projects: { some: { organizationId, ...visibleProjects(scope) } } }) },
-      select: { id: true, customerName: true, displayName: true, isArchived: true },
-    });
+    const filters: ClientListFilters = { organizationId, scope, includeArchived: query.includeArchived, search: query.search };
+    const [ids, total] = await Promise.all([
+      this.pageClientIdsByName(filters, query, query.sortOrder ?? 'asc'),
+      this.prisma.client.count({ where: clientListWhere(filters) }),
+    ]);
+    const clients = ids.length
+      ? await this.prisma.client.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, customerName: true, displayName: true, isArchived: true },
+        })
+      : [];
 
-    return clients
-      .map(({ id, customerName, displayName, isArchived }) => ({
+    return toPage(
+      orderByIds(clients, ids).map(({ id, customerName, displayName, isArchived }) => ({
         id,
         customerName,
         isArchived,
         name: clientDisplayName({ customerName, displayName }),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+      })),
+      total,
+      query,
+    );
   }
 
   /** Admin edit of the shown name. Blank or null resets it to the Apptivo customer name. Audited. */

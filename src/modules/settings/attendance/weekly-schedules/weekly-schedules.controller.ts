@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { GetWeeklySchedulesQueryDTO } from './dto/get-weekly-schedules-query.dto';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import { CurrentOrganizationId } from '../../../../common/decorators/current-organization-id.decorator';
@@ -13,8 +14,8 @@ export class WeeklySchedulesController {
 
   @AllowAnonymous()
   @Get()
-  getSchedules(@CurrentOrganizationId() organizationId: string) {
-    return this.weeklySchedulesService.getSchedules(organizationId);
+  getSchedules(@Query() query: GetWeeklySchedulesQueryDTO, @CurrentOrganizationId() organizationId: string) {
+    return this.weeklySchedulesService.getSchedules(query, organizationId);
   }
 
   @AllowAnonymous()

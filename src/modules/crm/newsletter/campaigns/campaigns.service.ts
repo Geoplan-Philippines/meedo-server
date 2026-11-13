@@ -35,10 +35,12 @@ export class CampaignsService {
         { subject: { contains: search, mode: 'insensitive' as const } },
       ] } : {}),
     };
+    const sortField = query.sortField ?? 'createdAt';
+    const sortOrder = query.sortOrder ?? (sortField === 'createdAt' || sortField === 'updatedAt' ? 'desc' : 'asc');
     const [data, total] = await Promise.all([
       this.prisma.newsletterCampaign.findMany({
         where, skip: (page - 1) * limit, take: limit,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        orderBy: [{ [sortField]: sortOrder }, { id: 'desc' }],
       }),
       this.prisma.newsletterCampaign.count({ where }),
     ]);

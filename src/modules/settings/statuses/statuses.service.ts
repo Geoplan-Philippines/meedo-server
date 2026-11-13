@@ -1,43 +1,72 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { TicketStatus } from '@prisma/client';
+import { Prisma, TicketStatus } from '@prisma/client';
 
 import { PrismaService } from '../../../core/database/prisma.service';
 import { LEGACY_STATUS_NAME_MAP, SYSTEM_STATUSES } from '../../../common/constants/statuses.constants';
+import { PaginatedResponse } from '../../../common/responses/paginated-api.response';
+import {
+  containsInsensitive,
+  escapeLikePattern,
+  orderByIds,
+  sqlDirection,
+  toPage,
+} from '../../../common/utils/pagination.util';
 import { CreateStatusDTO } from './dto/create-status.dto';
+import { GetStatusesQueryDTO } from './dto/get-statuses-query.dto';
 import { UpdateStatusDTO } from './dto/update-status.dto';
+
+/** Sort rank for custom statuses and unknown system names: after every canonical status. */
+const UNRANKED = 2147483647;
 
 
 @Injectable()
 export class StatusesService {
   constructor(private prisma: PrismaService) {}
 
-  async getStatusesByOrganization(organizationId: string): Promise<TicketStatus[]> {
+  async getStatusesByOrganization(query: GetStatusesQueryDTO, organizationId: string): Promise<PaginatedResponse<TicketStatus>> {
     // Self-heal: make sure the built-in system statuses exist for this org
     // (covers organizations created before the standard set was introduced).
     await this.ensureSystemStatuses(organizationId);
-    // Order custom statuses by createdAt here; sortByCanonicalOrder relies on a
-    // stable sort to preserve it (system/custom partitioning is handled there, so
-    // no isSystem hint is needed).
-    const statuses = await this.prisma.ticketStatus.findMany({
-      where: { organizationId },
-      orderBy: { createdAt: 'asc' },
-    });
-    return this.sortByCanonicalOrder(statuses);
+    const where: Prisma.TicketStatusWhereInput = {
+      organizationId,
+      ...(query.isSystem === undefined ? {} : { isSystem: query.isSystem }),
+      ...(query.includeArchived === false ? { isArchived: false } : {}),
+      ...(query.search ? { name: containsInsensitive(query.search) } : {}),
+    };
+    const [ids, total] = await Promise.all([this.pageStatusIds(query, organizationId), this.prisma.ticketStatus.count({ where })]);
+    const statuses = ids.length ? await this.prisma.ticketStatus.findMany({ where: { id: { in: ids } } }) : [];
+    return toPage(orderByIds(statuses, ids), total, query);
   }
 
   /**
-   * System statuses display in their canonical SYSTEM_STATUSES order rather than
-   * creation order. A self-healed status (e.g. "In Review", added after the
-   * original set) must slot into its defined position, not append to the end.
-   * Custom statuses keep their createdAt order and follow the system set.
+   * One page of status ids. By default (`position`) system statuses come first
+   * in their canonical SYSTEM_STATUSES order rather than creation order, so a
+   * self-healed status (e.g. "In Review", added after the original set) slots
+   * into its defined position. Custom statuses follow, oldest first. Filters
+   * match the `where` in getStatusesByOrganization.
    */
-  private sortByCanonicalOrder(statuses: TicketStatus[]): TicketStatus[] {
-    const rank = new Map<string, number>(
-      SYSTEM_STATUSES.map((status, index) => [status.name, index]),
-    );
-    const rankOf = (status: TicketStatus): number =>
-      status.isSystem ? rank.get(status.name) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
-    return [...statuses].sort((a, b) => rankOf(a) - rankOf(b));
+  private async pageStatusIds(query: GetStatusesQueryDTO, organizationId: string): Promise<string[]> {
+    const pattern = query.search ? `%${escapeLikePattern(query.search)}%` : null;
+    const field = query.sortField ?? 'position';
+    const direction = sqlDirection(query.sortOrder);
+    const systemNames = SYSTEM_STATUSES.map((status) => status.name);
+    const orderBy =
+      field === 'name'
+        ? Prisma.sql`LOWER(s.name) ${direction}`
+        : field === 'createdAt'
+          ? Prisma.sql`s.created_at ${direction}`
+          : Prisma.sql`CASE WHEN s.is_system THEN COALESCE(array_position(${systemNames}::text[], s.name), ${UNRANKED}) ELSE ${UNRANKED} END ${direction}, s.created_at ${direction}`;
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT s.id
+      FROM ticket_status s
+      WHERE s.organization_id = ${organizationId}
+        AND (${query.isSystem ?? null}::boolean IS NULL OR s.is_system = ${query.isSystem ?? null}::boolean)
+        AND (${query.includeArchived !== false} OR s.is_archived = false)
+        AND (${pattern}::text IS NULL OR s.name ILIKE ${pattern})
+      ORDER BY ${orderBy}, s.id
+      LIMIT ${query.limit} OFFSET ${(query.page - 1) * query.limit}
+    `);
+    return rows.map((row) => row.id);
   }
 
   async createStatus(data: CreateStatusDTO, organizationId: string): Promise<TicketStatus> {

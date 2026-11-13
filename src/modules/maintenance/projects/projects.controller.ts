@@ -30,14 +30,15 @@ import {
 import type { UserSession } from "@thallesp/nestjs-better-auth";
 import { CurrentOrganizationId } from "../../../common/decorators/current-organization-id.decorator";
 import { getActiveOrganizationId } from "../../../common/utils/active-organization";
-import { PaginatedResponse } from "src/common/responses/paginated-api.response";
 import { ApiPaginatedResponse } from "../../../common/decorators/api-paginated-response.decorator";
 import {
   ProjectsService,
   type ProjectDetail,
+  type ProjectPage,
   type ProjectView,
 } from "./projects.service";
 import { GetAllProjectsQueryDTO } from "./dto/get-all-projects-query.dto";
+import { GetProjectMemberOptionsQueryDTO } from "./dto/get-project-member-options-query.dto";
 import {
   ProjectDetailDTO,
   ProjectResponseDTO,
@@ -67,7 +68,7 @@ export class ProjectsController {
     @Query() query: GetAllProjectsQueryDTO,
     @CurrentOrganizationId() organizationId: string,
     @CurrentUser("id") userId: string,
-  ): Promise<PaginatedResponse<ProjectView>> {
+  ): Promise<ProjectPage> {
     return this.projectsService.getAllProjects(query, organizationId, userId);
   }
 
@@ -99,10 +100,11 @@ export class ProjectsController {
     summary: "Organization members available to add to a project",
   })
   memberOptions(
+    @Query() query: GetProjectMemberOptionsQueryDTO,
     @CurrentOrganizationId() org: string,
     @CurrentUser("id") user: string,
   ) {
-    return this.projectsService.memberOptions(org, user);
+    return this.projectsService.memberOptions(org, user, query);
   }
 
   @Get(":id/members")

@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { GetStatusesQueryDTO } from './dto/get-statuses-query.dto';
 import { StatusesService } from './statuses.service';
 import { CurrentOrganizationId } from '../../../common/decorators/current-organization-id.decorator';
 import { CreateStatusDTO } from './dto/create-status.dto';
@@ -48,7 +49,10 @@ export class StatusesController {
 
   @AllowAnonymous()
   @Get()
-  async getStatusesByOrganization(@CurrentOrganizationId() organizationId: string) {
-    return this.statusesService.getStatusesByOrganization(organizationId);
+  async getStatusesByOrganization(
+    @Query() query: GetStatusesQueryDTO,
+    @CurrentOrganizationId() organizationId: string,
+  ) {
+    return this.statusesService.getStatusesByOrganization(query, organizationId);
   }
 }

@@ -18,6 +18,8 @@ import { GetTimesheetEntriesQueryDTO } from './dto/get-timesheet-entries-query.d
 import { GetTimesheetPeriodLockQueryDTO } from './dto/get-timesheet-period-lock-query.dto';
 import { GetTimesheetProjectsQueryDTO } from './dto/get-timesheet-projects-query.dto';
 import { GetTimesheetSummaryQueryDTO } from './dto/get-timesheet-summary-query.dto';
+import { GetTimesheetSummaryPageQueryDTO, type TimesheetSummaryTab } from './dto/get-timesheet-summary-page-query.dto';
+import { escapeLikePattern, searchTerms, sqlDirection, toPage } from '../../../common/utils/pagination.util';
 import { LockTimesheetPeriodDTO } from './dto/lock-timesheet-period.dto';
 import { SubmitTimesheetWeekDTO } from './dto/submit-timesheet-week.dto';
 import { UnlockTimesheetPeriodDTO } from './dto/unlock-timesheet-period.dto';
@@ -314,23 +316,46 @@ export class TimesheetService {
     return result;
   }
 
+  /**
+   * Approval screen: one page of employees (with all their entries for the
+   * period) plus week-level totals in `meta`. Employees are picked, counted
+   * and ordered in the database; only the page's entries are loaded.
+   */
   async getSummary(
     organizationId: string,
     userId: string | undefined,
-    query: GetTimesheetSummaryQueryDTO,
+    query: GetTimesheetSummaryPageQueryDTO,
   ) {
     const member = await this.resolveMember(organizationId, userId);
     this.ensureAdminMember(member.role);
 
     const { start, end } = parsePeriodRange(query.periodStart, query.periodEnd);
     const where = this.buildSummaryWhere(organizationId, start, end, query);
+    const page = { page: query.page ?? 1, limit: query.limit ?? 10 };
+    const employeeSql = summaryEmployeesSql(organizationId, start, end, query);
 
-    const [entries, lock] = await Promise.all([
-      this.prisma.timesheetEntry.findMany({
-        where,
-        include: TIMESHEET_SUMMARY_ENTRY_INCLUDE,
-        orderBy: [{ user: { name: 'asc' } }, { workDate: 'asc' }, { createdAt: 'asc' }],
-      }),
+    const [pageRows, counts, statusGroups, overtime, lock] = await Promise.all([
+      this.prisma.$queryRaw<{ user_id: string }[]>(Prisma.sql`
+        WITH per_user AS (${employeeSql})
+        SELECT pu.user_id
+        FROM per_user pu
+        JOIN users u ON u.id = pu.user_id
+        WHERE ${summaryTabSql(query.tab)}
+        ORDER BY LOWER(COALESCE(NULLIF(BTRIM(u.name), ''), u.email)) ${sqlDirection(query.sortOrder)}, pu.user_id
+        LIMIT ${page.limit} OFFSET ${(page.page - 1) * page.limit}
+      `),
+      this.prisma.$queryRaw<SummaryTabCountRow[]>(Prisma.sql`
+        WITH per_user AS (${employeeSql})
+        SELECT
+          COUNT(*) FILTER (WHERE ${summaryTabSql(query.tab)}) AS matching,
+          COUNT(*) AS all_count,
+          COUNT(*) FILTER (WHERE has_submitted) AS submitted,
+          COUNT(*) FILTER (WHERE all_approved) AS approved,
+          COUNT(*) FILTER (WHERE has_rejected) AS rejected
+        FROM per_user
+      `),
+      this.prisma.timesheetEntry.groupBy({ by: ['status'], where, _count: { _all: true }, _sum: { hours: true } }),
+      this.prisma.timesheetEntry.aggregate({ where: { ...where, isOvertime: true }, _sum: { hours: true } }),
       this.prisma.timesheetPeriodLock.findUnique({
         where: {
           organizationId_periodStart_periodEnd: {
@@ -342,7 +367,41 @@ export class TimesheetService {
       }),
     ]);
 
-    return buildTimesheetSummary(entries, start, end, lock?.isLocked ?? false, organizationId);
+    const userIds = pageRows.map((row) => row.user_id);
+    const entries = userIds.length
+      ? await this.prisma.timesheetEntry.findMany({
+          where: { ...where, userId: { in: userIds } },
+          include: TIMESHEET_SUMMARY_ENTRY_INCLUDE,
+          orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }],
+        })
+      : [];
+
+    const isLocked = lock?.isLocked ?? false;
+    const employees = buildTimesheetSummary(entries, start, end, isLocked, organizationId).employees;
+    const byUser = new Map(employees.map((employee) => [employee.userId, employee]));
+    const count = counts[0];
+    const result = toPage(userIds.flatMap((id) => byUser.get(id) ?? []), Number(count?.matching ?? 0), page);
+
+    return {
+      ...result,
+      meta: {
+        ...result.meta,
+        periodStart: start,
+        periodEnd: end,
+        isLocked,
+        totalEmployees: Number(count?.all_count ?? 0),
+        totalEntries: statusGroups.reduce((total, group) => total + group._count._all, 0),
+        totalHours: roundHours(statusGroups.reduce((total, group) => total + (group._sum.hours ?? 0), 0)),
+        overtimeHours: roundHours(overtime._sum.hours ?? 0),
+        totalsByStatus: Object.fromEntries(statusGroups.map((group) => [group.status, group._count._all])),
+        tabCounts: {
+          all: Number(count?.all_count ?? 0),
+          submitted: Number(count?.submitted ?? 0),
+          approved: Number(count?.approved ?? 0),
+          rejected: Number(count?.rejected ?? 0),
+        },
+      },
+    };
   }
 
   async bulkApproveEntries(
@@ -1185,6 +1244,63 @@ function parsePeriodRange(periodStart: string, periodEnd: string): { start: Date
   }
 
   return { start, end };
+}
+
+type SummaryTabCountRow = { matching: bigint; all_count: bigint; submitted: bigint; approved: bigint; rejected: bigint };
+
+/**
+ * One row per employee with entries in the period, plus the flags the approval
+ * tabs filter on. Filters mirror `buildSummaryWhere`; `search` also matches the
+ * employee's team names in this organization (the Department column).
+ */
+function summaryEmployeesSql(
+  organizationId: string,
+  start: Date,
+  end: Date,
+  query: GetTimesheetSummaryPageQueryDTO,
+): Prisma.Sql {
+  const like = (value: string | undefined) => (value ? `%${escapeLikePattern(value)}%` : null);
+  const employee = like(query.employee);
+  const tag = like(query.tag);
+  const termFilters = searchTerms(query.search).map((term) => {
+    const pattern = like(term);
+    return Prisma.sql`AND (u.name ILIKE ${pattern} OR u.email ILIKE ${pattern} OR EXISTS (
+      SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id
+      WHERE tm.user_id = u.id AND t.organization_id = ${organizationId} AND t.name ILIKE ${pattern}
+    ))`;
+  });
+  return Prisma.sql`
+    SELECT te.user_id,
+      BOOL_OR(te.status = 'SUBMITTED') AS has_submitted,
+      BOOL_OR(te.status = 'REJECTED') AS has_rejected,
+      BOOL_AND(te.status = 'APPROVED') AS all_approved
+    FROM timesheet_entries te
+    JOIN users u ON u.id = te.user_id
+    LEFT JOIN projects p ON p.id = te.project_id
+    WHERE te.organization_id = ${organizationId}
+      AND te.work_date >= ${start} AND te.work_date <= ${end}
+      AND (${query.userId ?? null}::text IS NULL OR te.user_id = ${query.userId ?? null})
+      AND (${query.projectId ?? null}::text IS NULL OR te.project_id = ${query.projectId ?? null})
+      AND (${query.status ?? null}::text IS NULL OR te.status::text = ${query.status ?? null})
+      AND (${tag}::text IS NULL OR p.work_order_number ILIKE ${tag})
+      AND (${employee}::text IS NULL OR u.name ILIKE ${employee} OR u.email ILIKE ${employee})
+      ${termFilters.length ? Prisma.join(termFilters, ' ') : Prisma.empty}
+    GROUP BY te.user_id
+  `;
+}
+
+/** The approval tab as a condition on `per_user` (see summaryEmployeesSql). */
+function summaryTabSql(tab: TimesheetSummaryTab | undefined): Prisma.Sql {
+  switch (tab) {
+    case 'SUBMITTED':
+      return Prisma.sql`has_submitted`;
+    case 'APPROVED':
+      return Prisma.sql`all_approved`;
+    case 'REJECTED':
+      return Prisma.sql`has_rejected`;
+    default:
+      return Prisma.sql`TRUE`;
+  }
 }
 
 function endOfDate(date: Date): Date {

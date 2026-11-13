@@ -25,7 +25,10 @@ const mockPrismaService = {
     count: jest.fn(),
   },
   $transaction: jest.fn(),
+  $queryRaw: jest.fn(),
 };
+
+const PAGE = { page: 1, limit: 50 };
 
 /** Builds a mock interactive-transaction client for ensureSystemStatuses. */
 const makeTxClient = () => ({
@@ -158,49 +161,74 @@ describe('StatusesService', () => {
   });
 
   describe('getStatusesByOrganization', () => {
-    it('seeds missing system statuses, then returns them in canonical order', async () => {
-      mockPrismaService.ticketStatus.count.mockResolvedValue(0);
+    it('seeds missing system statuses, then returns the page in the order the database chose', async () => {
+      mockPrismaService.ticketStatus.count.mockResolvedValueOnce(0).mockResolvedValueOnce(3);
       mockPrismaService.$transaction.mockResolvedValue(undefined);
 
       const done = { ...mockStatus, id: 's-done', name: 'Done', isSystem: true };
       const backlog = { ...mockStatus, id: 's-backlog', name: 'Backlog', isSystem: true };
       const custom = { ...mockStatus, id: 's-custom', name: 'My Custom', isSystem: false };
-      // Deliberately unsorted, with a custom status wedged between system ones.
+      // The raw query picks and orders the page; findMany returns rows in any order.
+      mockPrismaService.$queryRaw.mockResolvedValue([{ id: 's-backlog' }, { id: 's-done' }, { id: 's-custom' }]);
       mockPrismaService.ticketStatus.findMany.mockResolvedValue([done, custom, backlog]);
 
-      const result = await service.getStatusesByOrganization('org-geo');
+      const result = await service.getStatusesByOrganization(PAGE, 'org-geo');
 
-      expect(mockPrismaService.ticketStatus.count).toHaveBeenCalledWith({
+      expect(mockPrismaService.ticketStatus.count).toHaveBeenNthCalledWith(1, {
         where: { organizationId: 'org-geo', isSystem: true },
       });
       expect(mockPrismaService.$transaction).toHaveBeenCalledTimes(1);
       expect(mockPrismaService.ticketStatus.findMany).toHaveBeenCalledWith({
-        where: { organizationId: 'org-geo' },
-        orderBy: { createdAt: 'asc' },
+        where: { id: { in: ['s-backlog', 's-done', 's-custom'] } },
       });
-      // Backlog (rank 0) before Done (rank 4); custom (non-system) sorts last.
-      expect(result.map((s) => s.id)).toEqual(['s-backlog', 's-done', 's-custom']);
+      expect(result.data.map((s) => s.id)).toEqual(['s-backlog', 's-done', 's-custom']);
+      expect(result.meta).toEqual({ total: 3, page: 1, limit: 50, lastPage: 1 });
+    });
+
+    it('orders standard statuses by their canonical position in SQL, then custom ones oldest first', async () => {
+      mockPrismaService.ticketStatus.count.mockResolvedValue(SYSTEM_STATUSES.length);
+      mockPrismaService.$queryRaw.mockResolvedValue([]);
+
+      await service.getStatusesByOrganization({ ...PAGE, page: 2, limit: 5 }, 'org-geo');
+
+      const sql = mockPrismaService.$queryRaw.mock.calls[0][0];
+      expect(sql.sql).toContain('array_position');
+      expect(sql.sql).toMatch(/LIMIT \? OFFSET \?/);
+      expect(sql.values).toContainEqual(SYSTEM_STATUSES.map((status) => status.name));
+      expect(sql.values).toEqual(expect.arrayContaining([5, 5]));
+      // No ids, no second lookup.
+      expect(mockPrismaService.ticketStatus.findMany).not.toHaveBeenCalled();
+    });
+
+    it('applies the standard/custom, archived and search filters to the total', async () => {
+      mockPrismaService.ticketStatus.count.mockResolvedValue(SYSTEM_STATUSES.length);
+      mockPrismaService.$queryRaw.mockResolvedValue([]);
+
+      await service.getStatusesByOrganization({ ...PAGE, isSystem: false, includeArchived: false, search: 'qa' }, 'org-geo');
+
+      expect(mockPrismaService.ticketStatus.count).toHaveBeenLastCalledWith({
+        where: { organizationId: 'org-geo', isSystem: false, isArchived: false, name: { contains: 'qa', mode: 'insensitive' } },
+      });
     });
 
     it('skips seeding when the full system set already exists', async () => {
       mockPrismaService.ticketStatus.count.mockResolvedValue(SYSTEM_STATUSES.length);
-      mockPrismaService.ticketStatus.findMany.mockResolvedValue([]);
+      mockPrismaService.$queryRaw.mockResolvedValue([]);
 
-      await service.getStatusesByOrganization('org-geo');
+      await service.getStatusesByOrganization(PAGE, 'org-geo');
 
       expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
-      expect(mockPrismaService.ticketStatus.findMany).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('ensureSystemStatuses seeding (via getStatusesByOrganization)', () => {
     const runSeeding = async (tx: ReturnType<typeof makeTxClient>) => {
       mockPrismaService.ticketStatus.count.mockResolvedValue(0);
-      mockPrismaService.ticketStatus.findMany.mockResolvedValue([]);
+      mockPrismaService.$queryRaw.mockResolvedValue([]);
       mockPrismaService.$transaction.mockImplementation(
         async (cb: (client: unknown) => Promise<unknown>) => cb(tx),
       );
-      await service.getStatusesByOrganization('org-geo');
+      await service.getStatusesByOrganization(PAGE, 'org-geo');
     };
 
     it('renames legacy statuses in place and upserts the canonical set without clobbering', async () => {

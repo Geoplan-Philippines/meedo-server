@@ -19,7 +19,7 @@ export class HolidaysController {
     @Query() query: GetHolidaysQueryDTO,
     @CurrentOrganizationId() organizationId: string,
   ) {
-    return this.holidaysService.getHolidays(organizationId, query.year);
+    return this.holidaysService.getHolidays(query, organizationId);
   }
 
   @AllowAnonymous()

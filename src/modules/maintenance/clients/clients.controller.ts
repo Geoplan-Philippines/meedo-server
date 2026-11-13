@@ -71,19 +71,16 @@ export class ClientsController {
   @AllowAnonymous()
   @Get("options")
   @ApiOperation({
-    summary: "All clients as { id, name } for pickers, sorted by shown name",
+    summary: "Picker rows: one page of clients as { id, name }, sorted by shown name",
+    description: "Search matches display name and customer name.",
   })
-  @ApiOkResponse({ type: ClientOptionDTO, isArray: true })
+  @ApiPaginatedResponse(ClientOptionDTO)
   async getClientOptions(
     @Query() query: GetClientOptionsQueryDTO,
     @CurrentOrganizationId() organizationId: string,
     @CurrentUser("id") userId: string,
-  ): Promise<ClientOption[]> {
-    return this.clientsService.getClientOptions(
-      organizationId,
-      query.includeArchived,
-      userId,
-    );
+  ): Promise<PaginatedResponse<ClientOption>> {
+    return this.clientsService.getClientOptions(query, organizationId, userId);
   }
 
   @AllowAnonymous()

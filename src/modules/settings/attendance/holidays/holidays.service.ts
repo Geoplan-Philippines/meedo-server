@@ -2,6 +2,9 @@ import { Injectable, Logger, NotFoundException, ServiceUnavailableException } fr
 import { Holiday, HolidayType, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../../core/database/prisma.service';
+import { PaginatedResponse } from '../../../../common/responses/paginated-api.response';
+import { containsInsensitive, pageArgs, toPage } from '../../../../common/utils/pagination.util';
+import { GetHolidaysQueryDTO } from './dto/get-holidays-query.dto';
 import { CreateHolidayDTO } from './dto/create-holiday.dto';
 import { GenerateHolidaysDTO } from './dto/generate-holidays.dto';
 import { UpdateHolidayDTO } from './dto/update-holiday.dto';
@@ -33,7 +36,8 @@ export class HolidaysService {
 
   constructor(private prisma: PrismaService) {}
 
-  async getHolidays(organizationId: string, year?: number): Promise<Holiday[]> {
+  async getHolidays(query: GetHolidaysQueryDTO, organizationId: string): Promise<PaginatedResponse<Holiday>> {
+    const { year } = query;
     const where: Prisma.HolidayWhereInput = {
       organizationId,
       ...(year !== undefined
@@ -44,9 +48,16 @@ export class HolidaysService {
             },
           }
         : {}),
+      ...(query.search ? { name: containsInsensitive(query.search) } : {}),
     };
+    const field = query.sortField ?? 'date';
+    const order = query.sortOrder ?? 'asc';
 
-    return this.prisma.holiday.findMany({ where, orderBy: { date: 'asc' } });
+    const [holidays, total] = await Promise.all([
+      this.prisma.holiday.findMany({ where, orderBy: [{ [field]: order }, { id: 'asc' }], ...pageArgs(query) }),
+      this.prisma.holiday.count({ where }),
+    ]);
+    return toPage(holidays, total, query);
   }
 
   async createHoliday(data: CreateHolidayDTO, organizationId: string): Promise<Holiday> {

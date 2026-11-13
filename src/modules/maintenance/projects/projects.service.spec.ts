@@ -159,7 +159,7 @@ describe('ProjectsService', () => {
         ],
       };
       expect(mockPrismaService.project.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where, orderBy: [{ reportedDate: 'asc' }, { id: 'asc' }] }),
+        expect.objectContaining({ where, orderBy: [{ reportedDate: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }] }),
       );
       expect(mockPrismaService.project.count).toHaveBeenCalledWith({ where });
     });

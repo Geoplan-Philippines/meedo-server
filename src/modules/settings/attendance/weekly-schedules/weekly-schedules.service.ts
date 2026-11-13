@@ -2,6 +2,9 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../../core/database/prisma.service';
+import { PaginatedResponse } from '../../../../common/responses/paginated-api.response';
+import { containsInsensitive, pageArgs, toPage } from '../../../../common/utils/pagination.util';
+import { GetWeeklySchedulesQueryDTO } from './dto/get-weekly-schedules-query.dto';
 import { CreateWeeklyScheduleDTO } from './dto/create-weekly-schedule.dto';
 import { SetScheduleDaysDTO } from './dto/set-schedule-days.dto';
 import { UpdateWeeklyScheduleDTO } from './dto/update-weekly-schedule.dto';
@@ -22,13 +25,24 @@ type WeeklyScheduleWithDays = Prisma.WeeklyScheduleGetPayload<{ include: typeof 
 export class WeeklySchedulesService {
   constructor(private prisma: PrismaService) {}
 
-  /** Default schedule first, then alphabetical. */
-  async getSchedules(organizationId: string): Promise<WeeklyScheduleWithDays[]> {
-    return this.prisma.weeklySchedule.findMany({
-      where: { organizationId },
-      include: SCHEDULE_INCLUDE,
-      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
-    });
+  /** Default schedule first, then alphabetical unless another sort is asked for. */
+  async getSchedules(query: GetWeeklySchedulesQueryDTO, organizationId: string): Promise<PaginatedResponse<WeeklyScheduleWithDays>> {
+    const where: Prisma.WeeklyScheduleWhereInput = {
+      organizationId,
+      ...(query.search ? { name: containsInsensitive(query.search) } : {}),
+    };
+    const field = query.sortField ?? 'name';
+    const order = query.sortOrder ?? (field === 'createdAt' ? 'desc' : 'asc');
+    const [schedules, total] = await Promise.all([
+      this.prisma.weeklySchedule.findMany({
+        where,
+        include: SCHEDULE_INCLUDE,
+        orderBy: [{ isDefault: 'desc' }, { [field]: order }, { id: 'asc' }],
+        ...pageArgs(query),
+      }),
+      this.prisma.weeklySchedule.count({ where }),
+    ]);
+    return toPage(schedules, total, query);
   }
 
   async getSchedule(id: string, organizationId: string): Promise<WeeklyScheduleWithDays> {

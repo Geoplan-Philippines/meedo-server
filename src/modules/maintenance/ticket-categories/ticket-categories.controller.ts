@@ -7,9 +7,12 @@ import {
   Delete,
   Param,
   ParseUUIDPipe,
+  Query,
 } from "@nestjs/common";
 
 import { TicketCategory } from "@prisma/client";
+import { PaginatedResponse } from "../../../common/responses/paginated-api.response";
+import { GetTicketCategoriesQueryDTO } from "./dto/get-ticket-categories-query.dto";
 import { AllowAnonymous, OrgRoles } from "@thallesp/nestjs-better-auth";
 import { CurrentUser } from "../../../common/decorators/current-user.decorator";
 
@@ -42,9 +45,10 @@ export class TicketCategoriesController {
   @AllowAnonymous()
   @Get()
   async getAllTicketCategories(
+    @Query() query: GetTicketCategoriesQueryDTO,
     @CurrentOrganizationId() organizationId: string,
-  ): Promise<TicketCategory[]> {
-    return this.ticketCategoriesService.getAllTicketCategories(organizationId);
+  ): Promise<PaginatedResponse<TicketCategory>> {
+    return this.ticketCategoriesService.getAllTicketCategories(query, organizationId);
   }
 
   @AllowAnonymous()

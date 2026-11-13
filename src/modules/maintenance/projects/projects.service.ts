@@ -8,6 +8,8 @@ import { MaintenanceAuditEntity, Prisma, TicketPriority, TimesheetEntryStatus } 
 import { env } from '../../../core/config/env.config';
 import { PrismaService } from '../../../core/database/prisma.service';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
+import { containsInsensitive, pageArgs, termSearchWhere, toPage } from 'src/common/utils/pagination.util';
+import { GetProjectMemberOptionsQueryDTO } from './dto/get-project-member-options-query.dto';
 import { GetAllProjectsQueryDTO } from './dto/get-all-projects-query.dto';
 import { WorkOrder, ProjectSyncCounts } from './types/project.type';
 import { APPTIVO_SYNC_TRANSACTION_OPTIONS } from './constants/apptivo-sync.constants';
@@ -45,6 +47,16 @@ export type ProjectView = Omit<ProjectWithClient, 'client'> & {
 
 export type EffectiveSlaPolicy = SlaPolicyRule & { scope: SlaPolicyScope };
 
+/** A projects page; the grouped screen also asks for per-client totals (`withClientTotals`). */
+export type ProjectPage = PaginatedResponse<ProjectView> & {
+  meta: PaginatedResponse<ProjectView>['meta'] & {
+    clientCount?: number;
+    clientTotals?: { clientId: string | null; count: number }[];
+  };
+};
+
+const NULLABLE_PROJECT_SORT_FIELDS: ReadonlySet<string> = new Set(['workOrderNumber', 'quoteSubject', 'reportedDate']);
+
 export type ProjectDetail = ProjectView & {
   ticketCount: number;
   openTicketCount: number;
@@ -73,9 +85,9 @@ export class ProjectsService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string, userId?: string): Promise<PaginatedResponse<ProjectView>> {
+  async getAllProjects(query: GetAllProjectsQueryDTO, organizationId: string, userId?: string): Promise<ProjectPage> {
     const scope = await projectVisibility(this.prisma, organizationId, userId);
-    const { page, limit, clientId, includeArchived, status, unassigned, teamId } = query;
+    const { clientId, includeArchived, status, unassigned, teamId } = query;
     const search = query.search?.trim();
 
     const where: Prisma.ProjectWhereInput = {
@@ -102,25 +114,37 @@ export class ProjectsService {
         : {}),
     };
 
-    const [projects, total] = await Promise.all([
+    const sortField = query.sortField ?? 'createdAt';
+    const sortOrder = query.sortOrder ?? 'desc';
+    // Internal projects have no WO number, quote or reported date; keep them after dated rows.
+    const sort = NULLABLE_PROJECT_SORT_FIELDS.has(sortField) ? { sort: sortOrder, nulls: 'last' as const } : sortOrder;
+
+    const [projects, total, clientGroups] = await Promise.all([
       this.prisma.project.findMany({
         where,
-        skip: (page - 1) * limit,
-        take: limit,
+        ...pageArgs(query),
         // The id tiebreak keeps pages stable when the sort field has duplicates.
-        orderBy: [{ [query.sortField ?? 'createdAt']: query.sortOrder ?? 'desc' }, { id: 'asc' }],
+        orderBy: [{ [sortField]: sort }, { id: 'asc' }],
         include: PROJECT_INCLUDE,
       }),
       this.prisma.project.count({ where }),
+      query.withClientTotals
+        ? this.prisma.project.groupBy({ by: ['clientId'], where, _count: { _all: true } })
+        : Promise.resolve(null),
     ]);
 
+    const page = toPage(projects.map(toProjectView), total, query);
+    if (!clientGroups) return page;
+
+    const onPage = new Set(projects.map((project) => project.clientId));
     return {
-      data: projects.map(toProjectView),
+      ...page,
       meta: {
-        total,
-        limit,
-        page,
-        lastPage: Math.ceil(total / limit),
+        ...page.meta,
+        clientCount: clientGroups.filter((group) => group.clientId !== null).length,
+        clientTotals: clientGroups
+          .filter((group) => onPage.has(group.clientId))
+          .map((group) => ({ clientId: group.clientId, count: group._count._all })),
       },
     };
   }
@@ -255,9 +279,27 @@ export class ProjectsService {
     return this.prisma.projectMember.findMany({ where: { projectId: id, organizationId }, include: { user: { select: { id: true, name: true, email: true } } }, orderBy: { createdAt: 'asc' } });
   }
 
-  async memberOptions(organizationId: string, userId?: string) {
+  /** One page of organization members an admin can add, by name; `projectId` leaves out its current members. */
+  async memberOptions(organizationId: string, userId: string | undefined, query: GetProjectMemberOptionsQueryDTO) {
     await resolveAdminActor(this.prisma, organizationId, userId);
-    return this.prisma.member.findMany({ where: { organizationId }, select: { user: { select: { id: true, name: true, email: true } } } });
+    const where: Prisma.MemberWhereInput = {
+      organizationId,
+      ...(query.projectId ? { user: { projectMemberships: { none: { projectId: query.projectId, organizationId } } } } : {}),
+      ...termSearchWhere<Prisma.MemberWhereInput>(query.search, (term) => [
+        { user: { name: containsInsensitive(term) } },
+        { user: { email: containsInsensitive(term) } },
+      ]),
+    };
+    const [data, total] = await Promise.all([
+      this.prisma.member.findMany({
+        where,
+        select: { user: { select: { id: true, name: true, email: true } } },
+        orderBy: [{ user: { name: { sort: query.sortOrder ?? 'asc', nulls: 'last' } } }, { id: 'asc' }],
+        ...pageArgs(query),
+      }),
+      this.prisma.member.count({ where }),
+    ]);
+    return toPage(data, total, query);
   }
 
   async changeMember(id: string, recipientUserId: string, add: boolean, organizationId: string, userId?: string) {

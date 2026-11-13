@@ -123,7 +123,7 @@ describe('ClientsService', () => {
       await service.getAllClients({ page: 3, limit: 10 }, 'org-uuid-1', 'example-user');
 
       expect(mockPrismaService.client.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ skip: 20, take: 10, include: { _count: { select: { projects: true } } } }),
+        expect.objectContaining({ skip: 20, take: 10, include: { _count: { select: { projects: { where: {} } } } } }),
       );
     });
 

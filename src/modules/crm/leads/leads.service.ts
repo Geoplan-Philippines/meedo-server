@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../core/database/prisma.service';
-import { Lead, LeadStatus } from '@prisma/client';
+import { Lead, LeadStatus, Prisma } from '@prisma/client';
 import { CreateLeadDTO } from './dto/create-lead.dto';
 import { GetAllLeadsQueryDTO } from './dto/get-all-leads-query.dto';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
+import { containsInsensitive, pageArgs, termSearchWhere, toPage } from 'src/common/utils/pagination.util';
 
 @Injectable()
 export class LeadsService {
@@ -26,25 +27,29 @@ export class LeadsService {
   }
 
   async getAllLeads(query: GetAllLeadsQueryDTO): Promise<PaginatedResponse<Lead>> {
-    const { page, limit } = query;
-    
+    const where: Prisma.LeadWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...termSearchWhere<Prisma.LeadWhereInput>(query.search, (term) => [
+        { firstName: containsInsensitive(term) },
+        { lastName: containsInsensitive(term) },
+        { email: containsInsensitive(term) },
+        { company: containsInsensitive(term) },
+      ]),
+    };
+    const sortField = query.sortField ?? 'createdAt';
+    const sortOrder = query.sortOrder ?? (sortField === 'createdAt' ? 'desc' : 'asc');
+    // Company and phone are optional; empty values go last in either direction.
+    const sort = sortField === 'company' || sortField === 'phoneNumber' ? { sort: sortOrder, nulls: 'last' as const } : sortOrder;
+
     const [leads, total] = await Promise.all([
       this.prisma.lead.findMany({
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
+        where,
+        ...pageArgs(query),
+        orderBy: [{ [sortField]: sort }, { id: 'asc' }],
       }),
-      this.prisma.lead.count(),
+      this.prisma.lead.count({ where }),
     ]);
 
-    return {
-      data: leads,
-      meta: {
-        total,
-        limit,
-        page,
-        lastPage: Math.ceil(total / limit),
-      },
-    };
+    return toPage(leads, total, query);
   }
 }

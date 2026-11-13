@@ -1,7 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Shift } from '@prisma/client';
+import { Prisma, Shift } from '@prisma/client';
 
 import { PrismaService } from '../../../../core/database/prisma.service';
+import { PaginatedResponse } from '../../../../common/responses/paginated-api.response';
+import { containsInsensitive, pageArgs, toPage } from '../../../../common/utils/pagination.util';
+import { GetShiftsQueryDTO } from './dto/get-shifts-query.dto';
 import { CreateShiftDTO } from './dto/create-shift.dto';
 import { UpdateShiftDTO } from './dto/update-shift.dto';
 
@@ -9,12 +12,24 @@ import { UpdateShiftDTO } from './dto/update-shift.dto';
 export class ShiftsService {
   constructor(private prisma: PrismaService) {}
 
-  /** Active shifts first, then archived; ordered by start time then name. */
-  async getShifts(organizationId: string): Promise<Shift[]> {
-    return this.prisma.shift.findMany({
-      where: { organizationId },
-      orderBy: [{ isArchived: 'asc' }, { startTime: 'asc' }, { name: 'asc' }],
-    });
+  /** Active shifts first, then archived; ordered by start time then name unless another sort is asked for. */
+  async getShifts(query: GetShiftsQueryDTO, organizationId: string): Promise<PaginatedResponse<Shift>> {
+    const where: Prisma.ShiftWhereInput = {
+      organizationId,
+      ...(query.includeArchived === false ? { isArchived: false } : {}),
+      ...(query.search ? { name: containsInsensitive(query.search) } : {}),
+    };
+    const field = query.sortField ?? 'startTime';
+    const order = query.sortOrder ?? 'asc';
+    const [shifts, total] = await Promise.all([
+      this.prisma.shift.findMany({
+        where,
+        orderBy: [{ isArchived: 'asc' }, { [field]: order }, { name: 'asc' }, { id: 'asc' }],
+        ...pageArgs(query),
+      }),
+      this.prisma.shift.count({ where }),
+    ]);
+    return toPage(shifts, total, query);
   }
 
   async createShift(data: CreateShiftDTO, organizationId: string): Promise<Shift> {

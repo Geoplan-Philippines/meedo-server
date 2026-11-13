@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Put, Query } from '@nestjs/common
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import { CurrentOrganizationId } from '../../../../common/decorators/current-organization-id.decorator';
+import { ListQueryDTO } from '../../../../common/dto/list-query.dto';
 import { AssignScheduleDTO } from './dto/assign-schedule.dto';
 import { ScheduleResolverService } from './resolver/schedule-resolver.service';
 import { ScheduleAssignmentsService } from './schedule-assignments.service';
@@ -17,6 +18,18 @@ export class ScheduleAssignmentsController {
   @Get()
   listAssignments(@CurrentOrganizationId() organizationId: string) {
     return this.assignmentsService.listAssignments(organizationId);
+  }
+
+  /** One page of teams with their explicit schedule; search matches the team name. */
+  @Get('teams')
+  listTeamAssignments(@Query() query: ListQueryDTO, @CurrentOrganizationId() organizationId: string) {
+    return this.assignmentsService.listTeamAssignments(organizationId, query);
+  }
+
+  /** One page of members with their personal schedule; search matches name and email. */
+  @Get('employees')
+  listEmployeeAssignments(@Query() query: ListQueryDTO, @CurrentOrganizationId() organizationId: string) {
+    return this.assignmentsService.listEmployeeAssignments(organizationId, query);
   }
 
   @AllowAnonymous()

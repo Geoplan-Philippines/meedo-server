@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../core/database/prisma.service';
-import { NewsletterSubscriber } from '@prisma/client';
+import { NewsletterSubscriber, Prisma } from '@prisma/client';
+import { containsInsensitive, pageArgs, termSearchWhere, toPage } from 'src/common/utils/pagination.util';
 import { CreateSubscriberDTO } from './dto/create-subscriber.dto';
 import { GetAllSubscribersQueryDTO } from './dto/get-all-subscribers-query.dto';
 import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
@@ -20,25 +21,22 @@ export class SubscribersService {
   async getAllSubscribers(
     query: GetAllSubscribersQueryDTO
   ): Promise<PaginatedResponse<NewsletterSubscriber>> {
-    const { page, limit } = query;
-    
+    const where: Prisma.NewsletterSubscriberWhereInput = termSearchWhere<Prisma.NewsletterSubscriberWhereInput>(
+      query.search,
+      (term) => [{ email: containsInsensitive(term) }, { name: containsInsensitive(term) }],
+    );
+    const sortField = query.sortField ?? 'createdAt';
+    const sortOrder = query.sortOrder ?? (sortField === 'createdAt' ? 'desc' : 'asc');
+
     const [subscribers, total] = await Promise.all([
       this.prisma.newsletterSubscriber.findMany({
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
+        where,
+        ...pageArgs(query),
+        orderBy: [{ [sortField]: sortField === 'name' ? { sort: sortOrder, nulls: 'last' } : sortOrder }, { id: 'asc' }],
       }),
-      this.prisma.newsletterSubscriber.count(),
+      this.prisma.newsletterSubscriber.count({ where }),
     ]);
 
-    return {
-      data: subscribers,
-      meta: {
-        total,
-        limit,
-        page,
-        lastPage: Math.ceil(total / limit),
-      },
-    }
+    return toPage(subscribers, total, query);
   }
 }

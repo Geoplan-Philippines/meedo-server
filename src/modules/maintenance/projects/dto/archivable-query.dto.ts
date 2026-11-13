@@ -2,11 +2,12 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
+import { SORT_ORDERS, type SortOrder, trimToUndefined } from '../../../../common/dto/list-query.dto';
+
+export { SORT_ORDERS, type SortOrder };
+
 /** Maintenance lists allow bigger pages than the app-wide 50 so pickers and grouped views load in a few requests. */
 export const MAINTENANCE_PAGE_LIMIT_MAX = 200;
-
-export const SORT_ORDERS = ['asc', 'desc'] as const;
-export type SortOrder = (typeof SORT_ORDERS)[number];
 
 /** Pagination, search, sort direction and the opt-in flag for rows archived by the Apptivo sync. */
 export class ArchivableQueryDTO {
@@ -33,6 +34,7 @@ export class ArchivableQueryDTO {
 
   @ApiPropertyOptional({ maxLength: 100, description: 'Case-insensitive search' })
   @IsOptional()
+  @Transform(trimToUndefined)
   @IsString()
   @MaxLength(100)
   search?: string;

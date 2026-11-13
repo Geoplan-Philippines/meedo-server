@@ -41,4 +41,13 @@ export class GetAllProjectsQueryDTO extends ArchivableQueryDTO {
   @IsOptional()
   @IsIn(PROJECT_SORT_FIELDS)
   sortField?: ProjectSortField;
+
+  @ApiPropertyOptional({
+    default: false,
+    description: 'Add meta.clientTotals (matching projects per client on this page) and meta.clientCount, for the grouped projects screen.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  withClientTotals?: boolean;
 }

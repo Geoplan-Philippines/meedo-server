@@ -14,6 +14,7 @@ import { GetTimesheetPeriodLockQueryDTO } from './dto/get-timesheet-period-lock-
 import { GetTimesheetTicketsQueryDTO } from './dto/get-timesheet-tickets-query.dto';
 import { GetTimesheetProjectsQueryDTO } from './dto/get-timesheet-projects-query.dto';
 import { GetTimesheetSummaryQueryDTO } from './dto/get-timesheet-summary-query.dto';
+import { GetTimesheetSummaryPageQueryDTO } from './dto/get-timesheet-summary-page-query.dto';
 import { LockTimesheetPeriodDTO } from './dto/lock-timesheet-period.dto';
 import { SubmitTimesheetWeekDTO } from './dto/submit-timesheet-week.dto';
 import { UnlockTimesheetPeriodDTO } from './dto/unlock-timesheet-period.dto';
@@ -109,9 +110,9 @@ export class TimesheetController {
 
   @Get('summary')
   @ApiOperation({ summary: 'Get approver summary for timesheet review.' })
-  @ApiOkResponse({ description: 'Employee, daily, project, and status summary for a period.' })
+  @ApiOkResponse({ description: 'One page of employees (data) with week totals and tab counts (meta) for a period.' })
   getSummary(
-    @Query() query: GetTimesheetSummaryQueryDTO,
+    @Query() query: GetTimesheetSummaryPageQueryDTO,
     @CurrentOrganizationId() organizationId: string,
     @Session() session?: UserSession,
   ) {
