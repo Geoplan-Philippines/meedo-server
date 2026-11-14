@@ -54,62 +54,66 @@ jobs:
 
             # Staging only. geo-postgres also answers to the name "meedo-v3-db-stg" on geo-network,
             # so each new DB connection landed on one of two databases at random (sessions "vanished",
-            # users were logged out, writes were split). Give the real staging DB a name only it has
-            # and point DATABASE_URL at it. Runs once; later deploys see the env already changed.
+            # users were logged out, writes were split). Give the real staging DB container a network
+            # alias only it has and point DATABASE_URL at it. That container is not in the compose
+            # file, so the alias is set with docker network connect; it stays on the container across
+            # restarts. Runs once; later deploys find the env already changed.
             if [ "${{ env.TAG }}" = "stg" ]; then
             bash <<'APPLY_DB_ALIAS'
             set -euo pipefail
-            DB=meedo-v3-db-stg; ALIAS=meedo-stg-postgres; STATE=.db-alias-fix.state
+            DB=meedo-v3-db-stg; API=meedo-v3-api-stg; NET=geo-network; ALIAS=meedo-stg-postgres; STATE=.db-alias-fix.state
             ENVFILES=$(grep -l "@$DB:5432/" .env .env.* *.env 2>/dev/null | grep -v '\.bak-' || true)
             if [ -z "$ENVFILES" ]; then echo "[MESSAGE] No env file here uses @$DB:5432/; nothing to change"; exit 0; fi
-            if [ -e docker-compose.override.yml ] && ! grep -q "$ALIAS" docker-compose.override.yml; then
-              echo "[ERROR] docker-compose.override.yml exists and was not written by this step; leaving it alone"; exit 1
+            aliases() { docker inspect "$DB" -f "{{json (index .NetworkSettings.Networks \"$NET\").Aliases}}"; }
+            if aliases | grep -q "\"$ALIAS\""; then
+              echo "[MESSAGE] $DB already has the alias $ALIAS"
+            else
+              OLD=()
+              for a in $(aliases | tr -d '[]"' | tr ',' ' '); do [ "$a" = null ] || OLD+=(--alias "$a"); done
+              docker network disconnect "$NET" "$DB"
+              if ! docker network connect "${OLD[@]}" --alias "$ALIAS" "$NET" "$DB"; then
+                docker network connect "${OLD[@]}" "$NET" "$DB" || docker network connect "$NET" "$DB" ||
+                  echo "[ERROR] $DB could not be reconnected to $NET; reconnect it by hand"
+                echo "[ERROR] could not add the alias $ALIAS; env left unchanged"; exit 1
+              fi
             fi
-            if ! docker compose config --networks | grep -qx geo-network; then
-              echo "[ERROR] the compose file has no network named geo-network; cannot add the alias"; exit 1
-            fi
-            SERVICE=$(docker inspect "$DB" -f '{{index .Config.Labels "com.docker.compose.service"}}')
+            ADDRS=$(docker exec "$API" nslookup "$ALIAS" 2>/dev/null | awk '/^Address/ && $2 !~ /:53$/ {print $2}' | sort -u)
+            DBIP=$(docker inspect "$DB" -f "{{with index .NetworkSettings.Networks \"$NET\"}}{{.IPAddress}}{{end}}")
+            if [ "$ADDRS" != "$DBIP" ]; then echo "[ERROR] $ALIAS resolves to '$(echo $ADDRS)', expected only $DBIP; env left unchanged"; exit 1; fi
             STAMP=$(date +%Y%m%d%H%M%S)
-            rollback() {
-              for f in $ENVFILES; do [ -f "$f.bak-$STAMP" ] && cp "$f.bak-$STAMP" "$f"; done
-              rm -f docker-compose.override.yml "$STATE"
-              docker compose up -d --no-deps "$SERVICE" || true
-            }
-            trap 'echo "[ERROR] staging DB alias step failed; restoring the previous setup"; rollback' ERR
             for f in $ENVFILES; do cp "$f" "$f.bak-$STAMP"; done
-            printf '%s\n' "$STAMP" "$SERVICE" $ENVFILES > "$STATE"
-            printf 'services:\n  %s:\n    networks:\n      geo-network:\n        aliases:\n          - %s\n' "$SERVICE" "$ALIAS" > docker-compose.override.yml
-            docker compose config "$SERVICE" | grep -q "$ALIAS"
+            printf '%s\n' "$STAMP" $ENVFILES > "$STATE"
             for f in $ENVFILES; do sed -i "s#@$DB:5432/#@$ALIAS:5432/#" "$f"; done
-            docker compose up -d --no-deps "$SERVICE"
-            echo "[MESSAGE] Staging DB is now reachable as $ALIAS (env backups: *.bak-$STAMP)"
+            echo "[MESSAGE] DATABASE_URL now uses $ALIAS ($DBIP only). Env backups: *.bak-$STAMP"
             APPLY_DB_ALIAS
             fi
 
             echo "[MESSAGE] Deploying service..."
             docker compose up -d --force-recreate api
 
-            # Staging only: the API must start and its DB host must resolve to exactly one container.
-            # If the step above changed anything and this fails, it is undone and the deploy fails.
+            # Staging only: the API must start and its DB host must resolve to the staging DB container only.
+            # If the step above changed the env and this fails, the env is restored and the deploy fails.
             CHECK_STATUS=0
             if [ "${{ env.TAG }}" = "stg" ]; then
             bash <<'CHECK_DB_HOST' || CHECK_STATUS=1
             set -uo pipefail
-            API=meedo-v3-api-stg; STATE=.db-alias-fix.state
-            health() { docker exec "$API" sh -c 'wget -qO- "http://localhost:${PORT:-8000}/api/v1/health"' >/dev/null 2>&1; }
+            API=meedo-v3-api-stg; DB=meedo-v3-db-stg; NET=geo-network; STATE=.db-alias-fix.state
+            # 127.0.0.1, not localhost: on Alpine localhost is ::1 and the API listens on IPv4.
+            health() { docker exec "$API" sh -c 'wget -qO- "http://127.0.0.1:${PORT:-8000}/api/v1/health"' >/dev/null 2>&1; }
             for i in $(seq 1 40); do health && break; sleep 3; done
             ok=1; health || { echo "[ERROR] API health check failed"; ok=0; }
             HOST=$(docker exec "$API" printenv DATABASE_URL | sed -E 's#^[^@]*@([^:/]+).*#\1#')
             ADDRS=$(docker exec "$API" nslookup "$HOST" 2>/dev/null | awk '/^Address/ && $2 !~ /:53$/ {print $2}' | sort -u)
-            echo "[MESSAGE] DB host $HOST resolves to: $(echo $ADDRS)"
-            [ "$(printf '%s\n' "$ADDRS" | grep -c .)" = 1 ] || { echo "[ERROR] DB host must resolve to exactly one address"; ok=0; }
+            DBIP=$(docker inspect "$DB" -f "{{with index .NetworkSettings.Networks \"$NET\"}}{{.IPAddress}}{{end}}" 2>/dev/null)
+            echo "[MESSAGE] DB host $HOST resolves to: $(echo $ADDRS) ($DB on $NET: ${DBIP:-not connected})"
+            [ -n "$DBIP" ] && [ "$ADDRS" = "$DBIP" ] || { echo "[ERROR] DB host must resolve to $DB only"; ok=0; }
             if [ "$ok" = 1 ]; then rm -f "$STATE"; echo "[MESSAGE] Database host check passed"; exit 0; fi
             if [ -f "$STATE" ]; then
-              STAMP=$(sed -n 1p "$STATE"); SERVICE=$(sed -n 2p "$STATE")
-              for f in $(tail -n +3 "$STATE"); do cp "$f.bak-$STAMP" "$f"; done
-              rm -f docker-compose.override.yml "$STATE"
-              docker compose up -d --no-deps "$SERVICE" api
-              echo "[ERROR] Restored the previous DB settings"
+              STAMP=$(sed -n 1p "$STATE")
+              for f in $(tail -n +2 "$STATE"); do cp "$f.bak-$STAMP" "$f"; done
+              rm -f "$STATE"
+              docker compose up -d --force-recreate api
+              echo "[ERROR] Restored the previous DATABASE_URL"
             fi
             exit 1
             CHECK_DB_HOST
