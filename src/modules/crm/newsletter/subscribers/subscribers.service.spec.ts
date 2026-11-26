@@ -14,6 +14,13 @@ const mockSubscriber = {
   organizationId: org,
   email: 'cdalisay@example.com',
   name: 'Clark Dalisay',
+  source: null,
+  status: 'SUBSCRIBED' as const,
+  unsubscribedAt: null,
+  consentAt: new Date(),
+  isArchived: false,
+  values: {},
+  unsubscribeToken: 'secret-token',
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -21,10 +28,15 @@ const mockSubscriber = {
 const mockPrismaService = {
   organization: { findUnique: jest.fn() },
   member: { findUnique: jest.fn() },
+  fieldDefinition: { findMany: jest.fn() },
   newsletterSubscriber: {
     create: jest.fn(),
     findMany: jest.fn(),
+    findFirst: jest.fn(),
+    findUnique: jest.fn(),
     count: jest.fn(),
+    update: jest.fn(),
+    updateMany: jest.fn(),
   },
 };
 
@@ -54,8 +66,15 @@ describe('SubscribersService', () => {
         select: { id: true },
       });
       expect(mockPrismaService.newsletterSubscriber.create).toHaveBeenCalledWith({
-        data: { email: 'juan@example.com', name: 'Juan Dela Cruz', organizationId: org },
+        data: expect.objectContaining({
+          email: 'juan@example.com',
+          name: 'Juan Dela Cruz',
+          organizationId: org,
+          values: {},
+        }),
       });
+      const created = mockPrismaService.newsletterSubscriber.create.mock.calls[0][0].data as { unsubscribeToken: string };
+      expect(created.unsubscribeToken).toEqual(expect.any(String));
     });
 
     it('fails clearly when the default organization is not seeded', async () => {
@@ -81,10 +100,11 @@ describe('SubscribersService', () => {
 
       const result = await service.getAllSubscribers({ page: 1, limit: 10 }, org, user);
 
-      expect(result.data).toEqual([mockSubscriber]);
+      expect(result.data[0]).not.toHaveProperty('unsubscribeToken');
+      expect(result.data[0].id).toBe(mockSubscriber.id);
       expect(result.meta.total).toBe(1);
       expect(mockPrismaService.newsletterSubscriber.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { organizationId: org } }),
+        expect.objectContaining({ where: { organizationId: org, isArchived: false } }),
       );
     });
 
@@ -122,6 +142,34 @@ describe('SubscribersService', () => {
       mockPrismaService.member.findUnique.mockResolvedValue(null);
       await expect(service.getAllSubscribers({ page: 1, limit: 10 }, org, user)).rejects.toThrow(ForbiddenException);
       expect(mockPrismaService.newsletterSubscriber.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('unsubscribeByToken', () => {
+    it('marks a subscribed row unsubscribed and is idempotent', async () => {
+      mockPrismaService.newsletterSubscriber.findUnique.mockResolvedValue(mockSubscriber);
+      mockPrismaService.newsletterSubscriber.updateMany.mockResolvedValue({ count: 1 });
+      await service.unsubscribeByToken('secret-token');
+      await service.unsubscribeByToken('secret-token');
+      expect(mockPrismaService.newsletterSubscriber.updateMany).toHaveBeenCalledWith({
+        where: { id: mockSubscriber.id, status: 'SUBSCRIBED' },
+        data: { status: 'UNSUBSCRIBED', unsubscribedAt: expect.any(Date) },
+      });
+    });
+
+    it('does not write when already unsubscribed', async () => {
+      mockPrismaService.newsletterSubscriber.findUnique.mockResolvedValue({
+        ...mockSubscriber,
+        status: 'UNSUBSCRIBED',
+      });
+      await service.unsubscribeByToken('secret-token');
+      expect(mockPrismaService.newsletterSubscriber.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('does not leak missing tokens', async () => {
+      mockPrismaService.newsletterSubscriber.findUnique.mockResolvedValue(null);
+      await expect(service.unsubscribeByToken('missing')).resolves.toBeUndefined();
+      expect(mockPrismaService.newsletterSubscriber.updateMany).not.toHaveBeenCalled();
     });
   });
 });

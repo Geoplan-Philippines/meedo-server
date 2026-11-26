@@ -69,6 +69,7 @@ describe('CRM lists page, search and sort in the database', () => {
 
     const where = {
       organizationId: org,
+      isArchived: false,
       AND: [{ OR: [{ email: insensitive('sub') }, { name: insensitive('sub') }] }],
     };
     expect(prisma.newsletterSubscriber.findMany).toHaveBeenCalledWith({

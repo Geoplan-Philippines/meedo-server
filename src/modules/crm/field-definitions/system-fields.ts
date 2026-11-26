@@ -18,6 +18,9 @@ export const LEAD_WRITABLE_COLUMNS = [
 
 export type LeadWritableColumn = (typeof LEAD_WRITABLE_COLUMNS)[number];
 
+export const SUBSCRIBER_WRITABLE_COLUMNS = ['name', 'email', 'source'] as const;
+export type SubscriberWritableColumn = (typeof SUBSCRIBER_WRITABLE_COLUMNS)[number];
+
 export type SystemFieldSeed = {
   key: string;
   label: string;
@@ -78,4 +81,8 @@ export async function seedSystemFields(
 
 export async function seedLeadSystemFields(prisma: PrismaClient, organizationId: string): Promise<void> {
   await seedSystemFields(prisma, organizationId, 'lead');
+}
+
+export async function seedSubscriberSystemFields(prisma: PrismaClient, organizationId: string): Promise<void> {
+  await seedSystemFields(prisma, organizationId, 'subscriber');
 }

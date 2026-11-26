@@ -298,11 +298,23 @@ model TicketCategory {
   @@unique([organizationId, name])
 }
 
+enum SubscriberStatus {
+  SUBSCRIBED
+  UNSUBSCRIBED
+}
+
 model NewsletterSubscriber {
   id                            String                    @id @default(uuid())
   organizationId                String                    @map("organization_id")
   email                         String
   name                          String?
+  source                        String?
+  status                        SubscriberStatus          @default(SUBSCRIBED)
+  unsubscribedAt                DateTime?                 @map("unsubscribed_at")
+  consentAt                     DateTime?                 @map("consent_at")
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+  values                        Json                      @default("{}")
+  unsubscribeToken              String                    @unique @map("unsubscribe_token")
 
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -310,6 +322,8 @@ model NewsletterSubscriber {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([organizationId, email])
+  @@index([organizationId, isArchived, createdAt])
+  @@index([organizationId, status])
   @@index([organizationId, createdAt])
   @@index([createdAt])
   @@map("newsletter_subscribers")

@@ -110,6 +110,13 @@ export class FieldDefinitionsService {
           WHERE "organization_id" = ${organizationId}
         `;
       }
+      if (field.collection === 'subscriber') {
+        await tx.$executeRaw`
+          UPDATE "newsletter_subscribers"
+          SET "values" = COALESCE("values", '{}'::jsonb) - ${field.key}
+          WHERE "organization_id" = ${organizationId}
+        `;
+      }
       await tx.fieldDefinition.delete({ where: { id } });
     });
     return { id };

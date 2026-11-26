@@ -13,7 +13,7 @@ export class ResponseInteceptor<T> implements NestInterceptor<T, ApiResponse<T>>
 
     return next.handle().pipe(
       map((data) => {
-        if (data instanceof StreamableFile) {
+        if (data instanceof StreamableFile || typeof data === 'string') {
           return data as unknown as ApiResponse<T>;
         }
 

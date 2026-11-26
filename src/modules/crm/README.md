@@ -31,5 +31,10 @@ Lead custom fields live in `field_definitions` (`collection = lead`) with values
 in `leads.values`. System field keys are locked. Authenticated lead detail,
 status, archive, restore, manual create, and CSV export are org-scoped.
 
+Subscribers use the same field-definition table (`collection = subscriber`) with
+`SUBSCRIBED` / `UNSUBSCRIBED` status, archive, export, and real stats. Public
+`GET` and `POST /public/unsubscribe/:token` are anonymous and idempotent and
+return the same confirmation whether the token is valid.
+
 Sending, providers, schedules, recipients, sync, and Apptivo overlap/reconciliation
 are intentionally not built. Campaign content is stored only; nothing sends it.
