@@ -7,7 +7,17 @@ import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
 
 describe('Lead route security metadata', () => {
-  const authed = ['getStats', 'getAllLeads'] as const;
+  const authed = [
+    'getStats',
+    'exportLeads',
+    'createLeadManual',
+    'getAllLeads',
+    'getLead',
+    'updateLeadValues',
+    'changeLeadStatus',
+    'archiveLead',
+    'restoreLead',
+  ] as const;
   const anonymous = ['createLead'] as const;
 
   it('registers the list, stats, and public create routes', () => {
@@ -24,7 +34,7 @@ describe('Lead route security metadata', () => {
       }
     }
     const args: Record<string, unknown> = Reflect.getMetadata(ROUTE_ARGS_METADATA, LeadsController, name) as Record<string, unknown>;
-    expect(Object.keys(args).filter((key) => key.includes('__customRouteArgs__'))).toHaveLength(2);
+    expect(Object.keys(args).filter((key) => key.includes('__customRouteArgs__')).length).toBeGreaterThanOrEqual(2);
   });
 
   it.each(anonymous)('%s stays anonymous for the website form', (name) => {

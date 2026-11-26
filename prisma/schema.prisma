@@ -133,6 +133,7 @@ model Organization {
   newsletterCampaigns           NewsletterCampaign[]
   newsletterSubscribers         NewsletterSubscriber[]
   leads                         Lead[]
+  fieldDefinitions              FieldDefinition[]
   projectMembers                ProjectMember[]
   notifications                 Notification[]
 
@@ -450,9 +451,12 @@ model Lead {
   email                         String
   company                       String?
   phoneNumber                   String?                   @map("phone_number")
+  source                        String?
   status                        LeadStatus                @default(NEW)
   isArchived                    Boolean                   @default(false) @map("is_archived")
   message                       String
+  values                        Json                      @default("{}")
+  receivedAt                    DateTime                  @default(now()) @map("received_at")
 
   organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -460,10 +464,49 @@ model Lead {
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
   @@unique([organizationId, email])
+  @@index([organizationId, isArchived, createdAt])
   @@index([organizationId, createdAt])
   @@index([organizationId, status])
   @@index([createdAt])
   @@map("leads")
+}
+
+enum FieldCollection {
+  lead
+  subscriber
+}
+
+enum FieldType {
+  text
+  long_text
+  number
+  select
+  url
+  date
+  datetime
+}
+
+model FieldDefinition {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
+  collection                    FieldCollection
+  key                           String
+  label                         String
+  type                          FieldType
+  options                       String[]                  @default([])
+  isRequired                    Boolean                   @default(false) @map("is_required")
+  isReadOnly                    Boolean                   @default(false) @map("is_read_only")
+  isSystem                      Boolean                   @default(false) @map("is_system")
+  position                      Int
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, collection, key])
+  @@index([organizationId, collection, position])
+  @@map("field_definitions")
 }
 
 enum TicketStatusCategory {

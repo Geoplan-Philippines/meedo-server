@@ -27,5 +27,9 @@ still assign the seeded default organization `geoplan-philippines-inc`. Email is
 unique per organization and lowercased at write. `LeadStatus` uses `NEW` rather
 than `PENDING`.
 
+Lead custom fields live in `field_definitions` (`collection = lead`) with values
+in `leads.values`. System field keys are locked. Authenticated lead detail,
+status, archive, restore, manual create, and CSV export are org-scoped.
+
 Sending, providers, schedules, recipients, sync, and Apptivo overlap/reconciliation
 are intentionally not built. Campaign content is stored only; nothing sends it.

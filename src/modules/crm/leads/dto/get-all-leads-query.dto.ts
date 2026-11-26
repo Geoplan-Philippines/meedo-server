@@ -1,8 +1,9 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { LeadStatus } from '@prisma/client';
-import { IsEnum, IsIn, IsOptional } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsEnum, IsIn, IsOptional } from 'class-validator';
 
-import { ListQueryDTO } from 'src/common/dto/list-query.dto';
+import { ListQueryDTO, toBoolean } from 'src/common/dto/list-query.dto';
 
 export const LEAD_SORT_FIELDS = ['createdAt', 'firstName', 'lastName', 'email', 'company', 'phoneNumber', 'status'] as const;
 export type LeadSortField = (typeof LEAD_SORT_FIELDS)[number];
@@ -18,4 +19,10 @@ export class GetAllLeadsQueryDTO extends ListQueryDTO {
   @IsOptional()
   @IsEnum(LeadStatus)
   status?: LeadStatus;
+
+  @ApiPropertyOptional({ type: Boolean, default: false, description: 'When true, list only archived leads.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  isArchived?: boolean;
 }

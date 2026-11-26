@@ -38,7 +38,7 @@ describe('CRM lists page, search and sort in the database', () => {
     const result = await leads.getAllLeads({ page: 3, limit: 10 }, org, user);
 
     expect(prisma.lead.findMany).toHaveBeenCalledWith({
-      where: { organizationId: org },
+      where: { organizationId: org, isArchived: false },
       skip: 20,
       take: 10,
       orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
@@ -51,6 +51,7 @@ describe('CRM lists page, search and sort in the database', () => {
 
     const where = {
       organizationId: org,
+      isArchived: false,
       status: LeadStatus.QUALIFIED,
       AND: ['jane', 'acme'].map((term) => ({
         OR: [{ firstName: insensitive(term) }, { lastName: insensitive(term) }, { email: insensitive(term) }, { company: insensitive(term) }],

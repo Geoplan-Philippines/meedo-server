@@ -18,9 +18,12 @@ const mockLead = {
   email: 'cdalisay@example.com',
   company: 'Geoplan',
   phoneNumber: null,
+  source: null,
   status: 'NEW' as const,
   isArchived: false,
   message: 'I am interested',
+  values: {},
+  receivedAt: new Date('2026-01-01T00:00:00.000Z'),
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -28,11 +31,15 @@ const mockLead = {
 const mockPrismaService = {
   organization: { findUnique: jest.fn() },
   member: { findUnique: jest.fn() },
+  fieldDefinition: { findMany: jest.fn() },
   lead: {
     create: jest.fn(),
     findMany: jest.fn(),
+    findFirst: jest.fn(),
     count: jest.fn(),
     groupBy: jest.fn(),
+    update: jest.fn(),
+    updateMany: jest.fn(),
   },
 };
 
@@ -61,7 +68,7 @@ describe('LeadsService', () => {
     await expect(service.getStats(org, user)).resolves.toEqual({ total: 3, new: 2, contacted: 0, qualified: 1, lost: 0 });
     expect(mockPrismaService.lead.groupBy).toHaveBeenCalledWith({
       by: ['status'],
-      where: { organizationId: org },
+      where: { organizationId: org, isArchived: false },
       _count: { _all: true },
     });
   });
@@ -86,6 +93,7 @@ describe('LeadsService', () => {
           email: 'juan@example.com',
           message: 'I am interested',
           organizationId: org,
+          values: {},
         },
       });
     });
@@ -123,7 +131,7 @@ describe('LeadsService', () => {
       expect(result.data).toEqual([mockLead]);
       expect(result.meta.total).toBe(1);
       expect(mockPrismaService.lead.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { organizationId: org } }),
+        expect.objectContaining({ where: { organizationId: org, isArchived: false } }),
       );
     });
 
@@ -175,7 +183,39 @@ describe('LeadsService', () => {
     mockPrismaService.lead.count.mockResolvedValue(0);
     await service.getAllLeads({ page: 1, limit: 10, status: LeadStatus.NEW }, org, user);
     expect(mockPrismaService.lead.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { organizationId: org, status: LeadStatus.NEW } }),
+      expect.objectContaining({ where: { organizationId: org, isArchived: false, status: LeadStatus.NEW } }),
     );
+  });
+
+  it('rejects unknown and readonly values together on manual create', async () => {
+    mockPrismaService.fieldDefinition.findMany.mockResolvedValue([
+      { key: 'firstName', type: 'text', options: [], isRequired: true, isReadOnly: false },
+      { key: 'lastName', type: 'text', options: [], isRequired: true, isReadOnly: false },
+      { key: 'email', type: 'text', options: [], isRequired: true, isReadOnly: false },
+      { key: 'message', type: 'long_text', options: [], isRequired: true, isReadOnly: false },
+      { key: 'status', type: 'select', options: ['NEW'], isRequired: false, isReadOnly: true },
+    ]);
+    await expect(service.createLeadManual({ values: { status: 'NEW', extra: 1 } }, org, user))
+      .rejects.toMatchObject({ response: { message: expect.arrayContaining([
+        'status: Field is read-only',
+        'extra: Unknown field',
+        'firstName: This field is required',
+      ]) } });
+    expect(mockPrismaService.lead.create).not.toHaveBeenCalled();
+  });
+
+  it('archives a lead in the active organization without changing status', async () => {
+    mockPrismaService.lead.findFirst.mockResolvedValue(mockLead);
+    mockPrismaService.lead.updateMany.mockResolvedValue({ count: 1 });
+    await service.archiveLead(mockLead.id, org, user);
+    expect(mockPrismaService.lead.updateMany).toHaveBeenCalledWith({
+      where: { id: mockLead.id, organizationId: org },
+      data: { isArchived: true },
+    });
+  });
+
+  it('does not find another organization lead', async () => {
+    mockPrismaService.lead.findFirst.mockResolvedValue(null);
+    await expect(service.getLead(mockLead.id, org, user)).rejects.toThrow('Lead not found in this organization.');
   });
 });
