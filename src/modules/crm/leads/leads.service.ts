@@ -9,6 +9,7 @@ import { requireCrmMembership } from '../crm-membership';
 import { normalizeEmail } from '../crm.constants';
 import { resolveDefaultOrganizationId } from '../default-organization';
 import { formatFieldValueErrors, parseFieldValues } from '../field-definitions/parse-field-values';
+import { CrmEventsService } from '../integration/crm-events.service';
 import { ChangeLeadStatusDTO } from './dto/change-lead-status.dto';
 import { CreateLeadDTO } from './dto/create-lead.dto';
 import { GetAllLeadsQueryDTO } from './dto/get-all-leads-query.dto';
@@ -17,11 +18,14 @@ import { asValueMap, leadCurrentValues, leadFieldValue, splitLeadValues } from '
 
 @Injectable()
 export class LeadsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly events: CrmEventsService,
+  ) {}
 
   async createLead(data: CreateLeadDTO): Promise<Lead> {
     const organizationId = await resolveDefaultOrganizationId(this.prisma);
-    return this.prisma.lead.create({
+    const lead = await this.prisma.lead.create({
       data: {
         ...data,
         email: normalizeEmail(data.email),
@@ -29,13 +33,15 @@ export class LeadsService {
         values: {},
       },
     });
+    await this.events.enqueue(organizationId, 'lead.created', { id: lead.id, organizationId });
+    return lead;
   }
 
   async createLeadManual(body: LeadValuesDTO, organizationId: string, userId: string): Promise<Lead> {
     await requireCrmMembership(this.prisma, organizationId, userId);
     const parsed = await this.parseValues(organizationId, body.values, { mode: 'create' });
     const { columns, custom } = splitLeadValues(parsed, {});
-    return this.prisma.lead.create({
+    const lead = await this.prisma.lead.create({
       data: {
         organizationId,
         firstName: String(columns.firstName ?? ''),
@@ -48,6 +54,8 @@ export class LeadsService {
         values: custom as Prisma.InputJsonValue,
       },
     });
+    await this.events.enqueue(organizationId, 'lead.created', { id: lead.id, organizationId });
+    return lead;
   }
 
   async getStats(

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { LeadStatus } from '@prisma/client';
 
 import { PrismaService } from '../../core/database/prisma.service';
+import { CrmEventsService } from './integration/crm-events.service';
 import { LeadsService } from './leads/leads.service';
 import { SubscribersService } from './newsletter/subscribers/subscribers.service';
 
@@ -22,7 +23,12 @@ describe('CRM lists page, search and sort in the database', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [LeadsService, SubscribersService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        LeadsService,
+        SubscribersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: CrmEventsService, useValue: { enqueue: jest.fn() } },
+      ],
     }).compile();
     leads = module.get(LeadsService);
     subscribers = module.get(SubscribersService);

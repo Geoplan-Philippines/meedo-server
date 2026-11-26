@@ -9,6 +9,7 @@ import { requireCrmMembership } from '../../crm-membership';
 import { generateUnsubscribeToken, normalizeEmail } from '../../crm.constants';
 import { resolveDefaultOrganizationId } from '../../default-organization';
 import { formatFieldValueErrors, parseFieldValues } from '../../field-definitions/parse-field-values';
+import { CrmEventsService } from '../../integration/crm-events.service';
 import { CreateSubscriberDTO } from './dto/create-subscriber.dto';
 import { GetAllSubscribersQueryDTO } from './dto/get-all-subscribers-query.dto';
 import { SubscriberValuesDTO } from './dto/subscriber-values.dto';
@@ -24,7 +25,10 @@ import {
 
 @Injectable()
 export class SubscribersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly events: CrmEventsService,
+  ) {}
 
   async createSubscriber(data: CreateSubscriberDTO): Promise<SubscriberResponse> {
     const organizationId = await resolveDefaultOrganizationId(this.prisma);
@@ -38,6 +42,7 @@ export class SubscribersService {
         values: {},
       },
     });
+    await this.events.enqueue(organizationId, 'subscriber.created', { id: created.id, organizationId });
     return hideUnsubscribeToken(created);
   }
 
@@ -149,10 +154,16 @@ export class SubscribersService {
       where: { unsubscribeToken: token },
     });
     if (!subscriber || subscriber.status === SubscriberStatus.UNSUBSCRIBED) return;
-    await this.prisma.newsletterSubscriber.updateMany({
+    const updated = await this.prisma.newsletterSubscriber.updateMany({
       where: { id: subscriber.id, status: SubscriberStatus.SUBSCRIBED },
       data: { status: SubscriberStatus.UNSUBSCRIBED, unsubscribedAt: new Date() },
     });
+    if (updated.count > 0) {
+      await this.events.enqueue(subscriber.organizationId, 'subscriber.unsubscribed', {
+        id: subscriber.id,
+        organizationId: subscriber.organizationId,
+      });
+    }
   }
 
   private async setArchived(

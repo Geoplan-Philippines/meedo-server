@@ -6,6 +6,8 @@ One CRM module composes submodules without moving existing code:
 - `newsletter/subscribers/`: existing controller, service, DTOs and specs.
 - `newsletter/campaigns/`: authenticated, organization-scoped drafts and archives;
   controller, service, DTOs, shared limits, and specs.
+- `integration/`: per-organization website key, signed webhook outbox, and public
+  integration guide. Public submit lives in `public/` next to unsubscribe.
 
 Add future CRM areas as sibling submodules here (or under `newsletter/` for
 newsletter-specific features), each with its own module, controller, service,
@@ -35,6 +37,14 @@ Subscribers use the same field-definition table (`collection = subscriber`) with
 `SUBSCRIBED` / `UNSUBSCRIBED` status, archive, export, and real stats. Public
 `GET` and `POST /public/unsubscribe/:token` are anonymous and idempotent and
 return the same confirmation whether the token is valid.
+
+Website integration keys are `mdo_pk_` plus 32 random bytes (base64url), stored
+as a SHA-256 hash and display prefix. `POST /public/:orgSlug/leads` and
+`POST /public/:orgSlug/subscribers` require `x-integration-key`, are anonymous,
+throttled, and capped per organization per UTC day. A non-empty `honeypot`
+returns `{ id }` without creating a row. Webhooks are signed
+`X-Meedo-Signature: sha256=<hex>` and delivered from an outbox. The public
+guide is `GET /docs/integration.md`.
 
 Sending, providers, schedules, recipients, sync, and Apptivo overlap/reconciliation
 are intentionally not built. Campaign content is stored only; nothing sends it.

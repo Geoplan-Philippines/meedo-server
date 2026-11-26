@@ -134,6 +134,10 @@ model Organization {
   newsletterSubscribers         NewsletterSubscriber[]
   leads                         Lead[]
   fieldDefinitions              FieldDefinition[]
+  integrationKey                IntegrationKey?
+  webhookEndpoints              WebhookEndpoint[]
+  webhookDeliveries             WebhookDelivery[]
+  publicSubmitCounters          PublicSubmitCounter[]
   projectMembers                ProjectMember[]
   notifications                 Notification[]
 
@@ -521,6 +525,80 @@ model FieldDefinition {
   @@unique([organizationId, collection, key])
   @@index([organizationId, collection, position])
   @@map("field_definitions")
+}
+
+model IntegrationKey {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @unique @map("organization_id")
+  keyHash                       String                    @unique @map("key_hash")
+  prefix                        String
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@map("integration_keys")
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+model WebhookEndpoint {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
+  url                           String
+  secret                        String
+  secretPrefix                  String                    @map("secret_prefix")
+  events                        String[]
+  isEnabled                     Boolean                   @default(true) @map("is_enabled")
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries                    WebhookDelivery[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id                            String                    @id @default(uuid())
+  endpointId                    String                    @map("endpoint_id")
+  organizationId                String                    @map("organization_id")
+  event                         String
+  payload                       Json
+  status                        WebhookDeliveryStatus     @default(PENDING)
+  attemptCount                  Int                       @default(0) @map("attempt_count")
+  nextAttemptAt                 DateTime                  @default(now()) @map("next_attempt_at")
+  lastError                     String?                   @map("last_error") @db.Text
+  responseStatus                Int?                      @map("response_status")
+  deliveredAt                   DateTime?                 @map("delivered_at")
+
+  endpoint                      WebhookEndpoint           @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+  @@index([organizationId])
+  @@map("webhook_deliveries")
+}
+
+model PublicSubmitCounter {
+  organizationId                String                    @map("organization_id")
+  day                           DateTime                  @db.Date
+  count                         Int                       @default(0)
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, day])
+  @@map("public_submit_counters")
 }
 
 enum TicketStatusCategory {

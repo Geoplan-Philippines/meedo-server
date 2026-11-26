@@ -4,6 +4,7 @@ import { LeadStatus } from '@prisma/client';
 
 import { PrismaService } from '../../../core/database/prisma.service';
 import { DEFAULT_PUBLIC_ORG_SLUG } from '../crm.constants';
+import { CrmEventsService } from '../integration/crm-events.service';
 import { LeadsService } from './leads.service';
 
 const org = 'org-a';
@@ -28,6 +29,8 @@ const mockLead = {
   updatedAt: new Date(),
 };
 
+const mockEvents = { enqueue: jest.fn() };
+
 const mockPrismaService = {
   organization: { findUnique: jest.fn() },
   member: { findUnique: jest.fn() },
@@ -51,11 +54,13 @@ describe('LeadsService', () => {
       providers: [
         LeadsService,
         { provide: PrismaService, useValue: mockPrismaService },
+        { provide: CrmEventsService, useValue: mockEvents },
       ],
     }).compile();
 
     service = module.get<LeadsService>(LeadsService);
     jest.resetAllMocks();
+    mockEvents.enqueue.mockResolvedValue(undefined);
     mockPrismaService.member.findUnique.mockResolvedValue({ id: 'member-a', role: 'member' });
     mockPrismaService.organization.findUnique.mockResolvedValue({ id: org });
   });
@@ -96,6 +101,7 @@ describe('LeadsService', () => {
           values: {},
         },
       });
+      expect(mockEvents.enqueue).toHaveBeenCalledWith(org, 'lead.created', { id: mockLead.id, organizationId: org });
     });
 
     it('fails clearly when the default organization is not seeded', async () => {

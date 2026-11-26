@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../../../../core/database/prisma.service';
 import { DEFAULT_PUBLIC_ORG_SLUG } from '../../crm.constants';
+import { CrmEventsService } from '../../integration/crm-events.service';
 import { SubscribersService } from './subscribers.service';
 
 const org = 'org-a';
@@ -24,6 +25,8 @@ const mockSubscriber = {
   createdAt: new Date(),
   updatedAt: new Date(),
 };
+
+const mockEvents = { enqueue: jest.fn() };
 
 const mockPrismaService = {
   organization: { findUnique: jest.fn() },
@@ -48,11 +51,13 @@ describe('SubscribersService', () => {
       providers: [
         SubscribersService,
         { provide: PrismaService, useValue: mockPrismaService },
+        { provide: CrmEventsService, useValue: mockEvents },
       ],
     }).compile();
 
     service = module.get<SubscribersService>(SubscribersService);
     jest.resetAllMocks();
+    mockEvents.enqueue.mockResolvedValue(undefined);
     mockPrismaService.member.findUnique.mockResolvedValue({ id: 'member-a', role: 'member' });
     mockPrismaService.organization.findUnique.mockResolvedValue({ id: org });
   });
@@ -75,6 +80,10 @@ describe('SubscribersService', () => {
       });
       const created = mockPrismaService.newsletterSubscriber.create.mock.calls[0][0].data as { unsubscribeToken: string };
       expect(created.unsubscribeToken).toEqual(expect.any(String));
+      expect(mockEvents.enqueue).toHaveBeenCalledWith(org, 'subscriber.created', {
+        id: mockSubscriber.id,
+        organizationId: org,
+      });
     });
 
     it('fails clearly when the default organization is not seeded', async () => {
@@ -155,6 +164,10 @@ describe('SubscribersService', () => {
         where: { id: mockSubscriber.id, status: 'SUBSCRIBED' },
         data: { status: 'UNSUBSCRIBED', unsubscribedAt: expect.any(Date) },
       });
+      expect(mockEvents.enqueue).toHaveBeenCalledWith(org, 'subscriber.unsubscribed', {
+        id: mockSubscriber.id,
+        organizationId: org,
+      });
     });
 
     it('does not write when already unsubscribed', async () => {
@@ -164,6 +177,7 @@ describe('SubscribersService', () => {
       });
       await service.unsubscribeByToken('secret-token');
       expect(mockPrismaService.newsletterSubscriber.updateMany).not.toHaveBeenCalled();
+      expect(mockEvents.enqueue).not.toHaveBeenCalled();
     });
 
     it('does not leak missing tokens', async () => {

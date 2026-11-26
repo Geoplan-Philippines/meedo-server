@@ -18,12 +18,25 @@ async function bootstrap() {
 
   app.use(helmet());
 
-  app.enableCors({
-    origin: env.CORS_ALLOWED_ORIGINS,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-org-id'],
-    exposedHeaders: ['Content-Disposition'],
-    credentials: true,
+  app.enableCors((request, callback) => {
+    const path = `${request.originalUrl ?? ''} ${request.url ?? ''} ${request.path ?? ''}`;
+    const isPublicApi = path.includes('/public/');
+    if (isPublicApi) {
+      callback(null, {
+        origin: '*',
+        methods: ['POST', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'x-integration-key'],
+        credentials: false,
+      });
+      return;
+    }
+    callback(null, {
+      origin: env.CORS_ALLOWED_ORIGINS,
+      methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-org-id'],
+      exposedHeaders: ['Content-Disposition'],
+      credentials: true,
+    });
   });
 
   if (env.NODE_ENV !== 'production') {

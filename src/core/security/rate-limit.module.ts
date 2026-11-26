@@ -5,6 +5,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
   imports: [
     ThrottlerModule.forRoot([
       {
+        name: 'default',
         ttl: 60_000,
         limit: 100,
       },
