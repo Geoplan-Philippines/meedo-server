@@ -1,6 +1,7 @@
 import { prisma } from "../database/prisma.client";
 
 import { SYSTEM_STATUSES } from "src/common/constants/statuses.constants";
+import { seedLeadSystemFields, seedSubscriberSystemFields } from "src/modules/crm/field-definitions/system-fields";
 
 export const sessionHooks = {
   create: {
@@ -32,5 +33,7 @@ export const organizationHooks = {
         organizationId: organization.id,
       })),
     });
+    await seedLeadSystemFields(prisma, organization.id);
+    await seedSubscriberSystemFields(prisma, organization.id);
   },
 };

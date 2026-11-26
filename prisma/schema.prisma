@@ -131,6 +131,13 @@ model Organization {
   clients                       Client[]
   maintenanceAuditLogs          MaintenanceAuditLog[]
   newsletterCampaigns           NewsletterCampaign[]
+  newsletterSubscribers         NewsletterSubscriber[]
+  leads                         Lead[]
+  fieldDefinitions              FieldDefinition[]
+  integrationKey                IntegrationKey?
+  webhookEndpoints              WebhookEndpoint[]
+  webhookDeliveries             WebhookDelivery[]
+  publicSubmitCounters          PublicSubmitCounter[]
   projectMembers                ProjectMember[]
   notifications                 Notification[]
 
@@ -295,14 +302,33 @@ model TicketCategory {
   @@unique([organizationId, name])
 }
 
+enum SubscriberStatus {
+  SUBSCRIBED
+  UNSUBSCRIBED
+}
+
 model NewsletterSubscriber {
   id                            String                    @id @default(uuid())
-  email                         String                    @unique
+  organizationId                String                    @map("organization_id")
+  email                         String
   name                          String?
+  source                        String?
+  status                        SubscriberStatus          @default(SUBSCRIBED)
+  unsubscribedAt                DateTime?                 @map("unsubscribed_at")
+  consentAt                     DateTime?                 @map("consent_at")
+  isArchived                    Boolean                   @default(false) @map("is_archived")
+  values                        Json                      @default("{}")
+  unsubscribeToken              String                    @unique @map("unsubscribe_token")
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
+  @@unique([organizationId, email])
+  @@index([organizationId, isArchived, createdAt])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@index([createdAt])
   @@map("newsletter_subscribers")
 }
@@ -437,19 +463,142 @@ model Notification {
 
 model Lead {
   id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
   firstName                     String                    @map("first_name")
   lastName                      String                    @map("last_name")
-  email                         String                    @unique
+  email                         String
   company                       String?
   phoneNumber                   String?                   @map("phone_number")
-  status                        LeadStatus                @default(PENDING)
+  source                        String?
+  status                        LeadStatus                @default(NEW)
+  isArchived                    Boolean                   @default(false) @map("is_archived")
   message                       String
+  values                        Json                      @default("{}")
+  receivedAt                    DateTime                  @default(now()) @map("received_at")
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   createdAt                     DateTime                  @default(now()) @map("created_at")
   updatedAt                     DateTime                  @updatedAt @map("updated_at")
 
+  @@unique([organizationId, email])
+  @@index([organizationId, isArchived, createdAt])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, status])
   @@index([createdAt])
   @@map("leads")
+}
+
+enum FieldCollection {
+  lead
+  subscriber
+}
+
+enum FieldType {
+  text
+  long_text
+  number
+  select
+  url
+  date
+  datetime
+}
+
+model FieldDefinition {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
+  collection                    FieldCollection
+  key                           String
+  label                         String
+  type                          FieldType
+  options                       String[]                  @default([])
+  isRequired                    Boolean                   @default(false) @map("is_required")
+  isReadOnly                    Boolean                   @default(false) @map("is_read_only")
+  isSystem                      Boolean                   @default(false) @map("is_system")
+  position                      Int
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, collection, key])
+  @@index([organizationId, collection, position])
+  @@map("field_definitions")
+}
+
+model IntegrationKey {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @unique @map("organization_id")
+  keyHash                       String                    @unique @map("key_hash")
+  prefix                        String
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@map("integration_keys")
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+model WebhookEndpoint {
+  id                            String                    @id @default(uuid())
+  organizationId                String                    @map("organization_id")
+  url                           String
+  secret                        String
+  secretPrefix                  String                    @map("secret_prefix")
+  events                        String[]
+  isEnabled                     Boolean                   @default(true) @map("is_enabled")
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries                    WebhookDelivery[]
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+  updatedAt                     DateTime                  @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id                            String                    @id @default(uuid())
+  endpointId                    String                    @map("endpoint_id")
+  organizationId                String                    @map("organization_id")
+  event                         String
+  payload                       Json
+  status                        WebhookDeliveryStatus     @default(PENDING)
+  attemptCount                  Int                       @default(0) @map("attempt_count")
+  nextAttemptAt                 DateTime                  @default(now()) @map("next_attempt_at")
+  lastError                     String?                   @map("last_error") @db.Text
+  responseStatus                Int?                      @map("response_status")
+  deliveredAt                   DateTime?                 @map("delivered_at")
+
+  endpoint                      WebhookEndpoint           @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt                     DateTime                  @default(now()) @map("created_at")
+
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+  @@index([organizationId])
+  @@map("webhook_deliveries")
+}
+
+model PublicSubmitCounter {
+  organizationId                String                    @map("organization_id")
+  day                           DateTime                  @db.Date
+  count                         Int                       @default(0)
+
+  organization                  Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, day])
+  @@map("public_submit_counters")
 }
 
 enum TicketStatusCategory {
@@ -1011,7 +1160,7 @@ enum FaceEmbeddingModel {
 }
 
 enum LeadStatus {
-  PENDING
+  NEW
   CONTACTED
   QUALIFIED
   LOST

@@ -1,4 +1,7 @@
+import { Transform } from 'class-transformer';
 import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+
+import { lowercaseEmail } from '../../crm.constants';
 
 export class CreateLeadDTO {
   @IsString()
@@ -11,6 +14,7 @@ export class CreateLeadDTO {
   @MaxLength(100)
   lastName!: string;
 
+  @Transform(lowercaseEmail)
   @IsEmail()
   @IsNotEmpty()
   email!: string;

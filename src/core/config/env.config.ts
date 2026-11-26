@@ -15,6 +15,8 @@ const schema = z.object({
     .default('http://localhost:4200')
     .transform((s) => s.split(',').map((o) => o.trim()).filter(Boolean)),
 
+  PUBLIC_SUBMIT_DAILY_CAP: z.coerce.number().int().positive().default(1000),
+
   FACE_RECOGNITION_API_URL: z.string().default('http://localhost:5000'),
   FACE_RECOGNITION_API_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 

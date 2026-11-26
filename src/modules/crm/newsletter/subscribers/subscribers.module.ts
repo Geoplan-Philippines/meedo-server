@@ -1,10 +1,14 @@
 import { Module } from '@nestjs/common';
-import { SubscribersService } from './subscribers.service';
+
+import { IntegrationModule } from '../../integration/integration.module';
+import { PublicUnsubscribeController } from '../../public/public-unsubscribe.controller';
 import { SubscribersController } from './subscribers.controller';
+import { SubscribersService } from './subscribers.service';
 
 @Module({
-  controllers: [SubscribersController],
+  imports: [IntegrationModule],
+  controllers: [SubscribersController, PublicUnsubscribeController],
   providers: [SubscribersService],
+  exports: [SubscribersService],
 })
-
-export class SubscribersModule { }
+export class SubscribersModule {}
