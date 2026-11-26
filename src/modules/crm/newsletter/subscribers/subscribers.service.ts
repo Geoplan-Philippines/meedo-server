@@ -1,30 +1,45 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../../../core/database/prisma.service';
 import { NewsletterSubscriber, Prisma } from '@prisma/client';
-import { containsInsensitive, pageArgs, termSearchWhere, toPage } from 'src/common/utils/pagination.util';
+
+import { PaginatedResponse } from '../../../../common/responses/paginated-api.response';
+import { containsInsensitive, pageArgs, termSearchWhere, toPage } from '../../../../common/utils/pagination.util';
+import { PrismaService } from '../../../../core/database/prisma.service';
+import { requireCrmMembership } from '../../crm-membership';
+import { normalizeEmail } from '../../crm.constants';
+import { resolveDefaultOrganizationId } from '../../default-organization';
 import { CreateSubscriberDTO } from './dto/create-subscriber.dto';
 import { GetAllSubscribersQueryDTO } from './dto/get-all-subscribers-query.dto';
-import { PaginatedResponse } from 'src/common/responses/paginated-api.response';
 
 @Injectable()
 export class SubscribersService {
   constructor(private prisma: PrismaService) {}
 
   async createSubscriber(
-    data: CreateSubscriberDTO
+    data: CreateSubscriberDTO,
   ): Promise<NewsletterSubscriber> {
+    const organizationId = await resolveDefaultOrganizationId(this.prisma);
     return this.prisma.newsletterSubscriber.create({
-      data,
+      data: {
+        ...data,
+        email: normalizeEmail(data.email),
+        organizationId,
+      },
     });
   }
 
   async getAllSubscribers(
-    query: GetAllSubscribersQueryDTO
+    query: GetAllSubscribersQueryDTO,
+    organizationId: string,
+    userId: string,
   ): Promise<PaginatedResponse<NewsletterSubscriber>> {
-    const where: Prisma.NewsletterSubscriberWhereInput = termSearchWhere<Prisma.NewsletterSubscriberWhereInput>(
-      query.search,
-      (term) => [{ email: containsInsensitive(term) }, { name: containsInsensitive(term) }],
-    );
+    await requireCrmMembership(this.prisma, organizationId, userId);
+    const where: Prisma.NewsletterSubscriberWhereInput = {
+      organizationId,
+      ...termSearchWhere<Prisma.NewsletterSubscriberWhereInput>(
+        query.search,
+        (term) => [{ email: containsInsensitive(term) }, { name: containsInsensitive(term) }],
+      ),
+    };
     const sortField = query.sortField ?? 'createdAt';
     const sortOrder = query.sortOrder ?? (sortField === 'createdAt' ? 'desc' : 'asc');
 

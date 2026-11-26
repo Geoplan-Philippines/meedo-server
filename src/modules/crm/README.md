@@ -21,8 +21,11 @@ Campaign limits are name 200, subject 200 and stored body 20,000 characters.
 Trim required text before validation. Updates only affect drafts; archive and
 restore are scoped state transitions, with no hard-delete endpoint.
 
-Legacy leads and subscribers intentionally remain public and organization-unscoped.
-Their existing access decorators and behavior are unchanged.
+Lead and subscriber list reads require a login and membership in the active
+organization. Anonymous `POST /crm/leads` and `POST /crm/newsletter/subscribers`
+still assign the seeded default organization `geoplan-philippines-inc`. Email is
+unique per organization and lowercased at write. `LeadStatus` uses `NEW` rather
+than `PENDING`.
 
 Sending, providers, schedules, recipients, sync, and Apptivo overlap/reconciliation
 are intentionally not built. Campaign content is stored only; nothing sends it.
